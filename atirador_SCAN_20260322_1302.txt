@@ -1,0 +1,41 @@
+==========================================================
+🎯 SETUP ATIRADOR v5.2
+📅 22/03/2026 13:02 BRT
+📋 Log: atirador_LOG_20260322_1302.log
+==========================================================
+📊 CONTEXTO DE MERCADO: CAUTELOSO (Medo Extremo)
+   Fear & Greed: 10 | BTC 4H: NEUTRAL
+   Threshold alerta: 20 pts | Risk Score: 0
+==========================================================
+
+💼 GESTÃO DE RISCO — Estratégia de Recuperação
+   Banca: $100.00 | Risco fixo/trade: $5.00 | Perda máx/dia: $10.00
+   Ganho/trade (RR1:2): $10.00 | Para dobrar banca: ~10 winners
+   P&L hoje: $+0.00 | Trades abertos: 0/2
+   ✅ Pode operar — 2 slot(s) disponível(is)
+
+🔍 PIPELINE
+   Fonte de dados: OKX (perpetuals USDT)
+   Universo: 300 tokens | Qualificados (vol≥$2.0M, OI≥$5M): 101
+   Gate 4H (não SELL): 24 | Gate 1H (BUY+): 18
+   Análise completa: 10 | Análise leve: 8
+   📡 Fontes tentadas:
+      ⛔ CoinGecko/bybit_futures: HTTP 404 em 1.99s — HTTP 404 — Erro cliente
+      ⛔ CoinGecko/okex_swap: HTTP 404 em 1.93s — HTTP 404 — Erro cliente
+      ⛔ CoinGecko/binance_futures: HTTP 404 em 1.92s — HTTP 404 — Erro cliente
+      ✅ OKX: HTTP 200 em 2.45s — 101 qualificados
+   ⚠️  Sem dados TradingView (3): SATS, BONK, NEIRO
+
+ℹ️  Nenhum alerta forte (score ≥ 20) no momento.
+   Score máximo desta execução: 8/26 (faltam 12 pts para alerta)
+
+🔎 RADAR (score baixo, análise completa) — Score 5–9:
+   ⚠️  Não operar — insuficiente. Monitorar para confluência.
+   · ORDER | 8/26 | BUY 4H
+   · SIGN | 6/26 | BUY 4H
+   · LIGHT | 6/26 | BUY 4H
+
+----------------------------------------------------------
+⏱️  Execução: 32.6s | Analisados: 300 tokens
+📁 Estado diário: /tmp/atirador_state.json
+📋 Log completo: /tmp/atirador_logs/atirador_LOG_20260322_1302.log

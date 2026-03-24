@@ -1,0 +1,43 @@
+==========================================================
+🎯 SETUP ATIRADOR v6.4.0
+📅 23/03/2026 14:28 BRT
+📋 Log: atirador_LOG_20260323_1428.log
+==========================================================
+📊 CONTEXTO DE MERCADO
+   Fear & Greed: 8 | BTC 4H: NEUTRAL
+   LONG:  CAUTELOSO (Medo Extremo) | Threshold: 20 pts
+   SHORT: CAUTELOSO (Medo Extremo — risco de squeeze) | Threshold: 20 pts
+   Risk Score: 0
+==========================================================
+
+💼 GESTÃO DE RISCO — Sizing Risk-First [v6.4.0]
+   Banca: $100.00 | Risco fixo/trade: $5.00 | Perda máx/dia: $10.00
+   Margem máx/trade: $35 | Máx exposição simultânea: $70
+   Ganho/trade (RR1:2): $10.00 | Para dobrar banca: ~10 winners
+   P&L hoje: $+0.00 | Trades abertos: 0/2
+   ✅ Pode operar — 2 slot(s) disponível(is)
+
+🔍 PIPELINE
+   Fonte de dados: OKX (perpetuals USDT)
+   Universo: 300 tokens | Qualificados: 105 (⚠️ 105 com OI estimado)
+   Gate 4H: LONG=43 | SHORT=56
+   Gate 1H: LONG=36 | SHORT=23
+   Análise completa: LONG=20 | SHORT=20 | Obs: LONG=0 SHORT=3
+   ✅  Candle 15m fechado (795s após fechamento, último: 14:15:00 BRT)
+   📡 Fonte ativa: OKX | HTTP 200 | 0.46s
+   ⚠️  Sem dados TradingView (3): SATS, BONK, NEIRO
+
+──────────────────────────────────────────────────────────
+📈 OPERAÇÕES LONG
+──────────────────────────────────────────────────────────
+ℹ️  Nenhum alerta LONG forte (score ≥ 20) no momento.
+
+──────────────────────────────────────────────────────────
+📉 OPERAÇÕES SHORT
+──────────────────────────────────────────────────────────
+ℹ️  Nenhum alerta SHORT forte (score ≥ 20) no momento.
+
+----------------------------------------------------------
+⏱️  Execução: 12.3s | Analisados: 300 tokens
+📁 Estado diário: /tmp/atirador_state.json
+📋 Log completo: /tmp/atirador_logs/atirador_LOG_20260323_1428.log
