@@ -1,0 +1,43 @@
+name: Setup Atirador — Scan Programado
+
+on:
+  schedule:
+    # 3 execuções por dia — horário UTC (Brasil = UTC-3, então UTC+3h)
+    - cron: '0 9 * * *'    # 06:00 BRT
+    - cron: '0 15 * * *'   # 12:00 BRT
+    - cron: '0 21 * * *'   # 18:00 BRT
+  workflow_dispatch:
+    # Botão "Run workflow" no GitHub — execução manual a qualquer momento
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Executar scan
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python setup_atirador.py
+
+      - name: Salvar relatório como artefato
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-report-${{ github.run_number }}
+          path: /tmp/atirador_SCAN_*.txt
+          if-no-files-found: ignore
+          retention-days: 30
