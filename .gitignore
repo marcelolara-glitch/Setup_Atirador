@@ -11,6 +11,7 @@ __pycache__/
 
 # Logs e resultados gerados em runtime (ficam em /tmp/ ou raiz durante testes)
 atirador_LOG_*
+!logs/atirador_LOG_*
 atirador_SCAN_*
 atirador_state_*.json
 atirador_state_v2.json

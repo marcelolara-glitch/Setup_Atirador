@@ -35,6 +35,15 @@ jobs:
       - name: Instalar dependências
         run: pip install -r requirements.txt
 
+      - name: Restaurar estado diário
+        run: |
+          if [ -f states/atirador_state.json ]; then
+            cp states/atirador_state.json /tmp/atirador_state.json
+            echo "Estado diário restaurado — score_history disponível para setas de tendência."
+          else
+            echo "Sem estado anterior — primeira rodada, todas as setas serão 🆕."
+          fi
+
       - name: Executar scan
         id: scan
         env:
@@ -60,9 +69,13 @@ jobs:
           done
           find logs/ -type f -name "*.log" -mtime +7 -delete 2>/dev/null || true
 
+          # Estado diário — persiste score_history e OI entre runs (necessário para setas ↑↓)
+          mkdir -p states
+          [ -f /tmp/atirador_state.json ] && cp /tmp/atirador_state.json states/atirador_state.json
+
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add logs/
+          git add logs/ states/
           git diff --cached --quiet || git commit -m "logs: run $(date +'%Y%m%d_%H%M') [ci skip]"
           git fetch "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD
           git rebase FETCH_HEAD
