@@ -1,0 +1,32 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Credenciais — NUNCA commitar
+.env
+.env.local
+.env.*.local
+
+# Logs e resultados gerados em runtime (ficam em /tmp/ ou raiz durante testes)
+atirador_LOG_*
+atirador_SCAN_*
+atirador_state_*.json
+atirador_state_v2.json
+atirador_execution_*
+
+# Cache de execução
+atirador_cache/
+.cache/
+
+# Arquivos temporários
+*.tmp
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
