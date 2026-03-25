@@ -355,7 +355,7 @@ def _score_trend_line(r: dict, state: dict, direction: str) -> str:
     oi_str = f" | OI{'+'if oi_sc>0 else ''}{oi_sc}" if oi_sc != 0 else ""
     s4h   = r.get("summary_4h", "?")
     sym_s = r.get("base_coin", "?")
-    return f"  🟡 {sym_s:<6} {score}/26 {trend}  {s4h}{oi_str}"
+    return f"  🟡 {sym_s:<6} {score}/25 {trend}  {s4h}{oi_str}"
 
 
 def _tg_breakdown_pilares(bd: list, direction: str) -> str:
@@ -392,7 +392,7 @@ def _tg_call_long(r: dict, ctx: dict, pode_operar: bool, state: dict = None) -> 
     bd_str = _tg_breakdown_pilares(r.get("breakdown", []), "LONG")
 
     msg = (
-        f"🚀 <b>LONG {sym}</b>{bloq}  {trend}  {score}/28\n"
+        f"🚀 <b>LONG {sym}</b>{bloq}  {trend}  {score}/25\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 Entrada  <b>${t['entry']:.4f}</b>\n"
         f"🎯 TP1      ${t['tp1']:.4f}  (+{t['sl_distance_pct']:.2f}%) → fechar 50%\n"
@@ -403,7 +403,7 @@ def _tg_call_long(r: dict, ctx: dict, pode_operar: bool, state: dict = None) -> 
         f"{'⚠️' if t.get('margem_excedida') else ''}  |  "
         f"Risco ${t['risco_usd']:.2f}  |  Ganho ${t['ganho_rr2_usd']:.2f}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🧱 <b>PILARES ({score}/28)</b>\n"
+        f"🧱 <b>PILARES ({score}/25)</b>\n"
         f"{bd_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 Vol ${r['turnover_24h']/1e6:.1f}M  |  "
@@ -430,7 +430,7 @@ def _tg_call_short(r: dict, ctx: dict, pode_operar: bool, state: dict = None) ->
     bd_str = _tg_breakdown_pilares(r.get("breakdown_short", []), "SHORT")
 
     msg = (
-        f"📉 <b>SHORT {sym}</b>{bloq}  {trend}  {score}/28\n"
+        f"📉 <b>SHORT {sym}</b>{bloq}  {trend}  {score}/25\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 Entrada  <b>${t['entry']:.4f}</b>\n"
         f"🎯 TP1      ${t['tp1']:.4f}  (−{t['sl_distance_pct']:.2f}%) → fechar 50%\n"
@@ -441,7 +441,7 @@ def _tg_call_short(r: dict, ctx: dict, pode_operar: bool, state: dict = None) ->
         f"{'⚠️' if t.get('margem_excedida') else ''}  |  "
         f"Risco ${t['risco_usd']:.2f}  |  Ganho ${t['ganho_rr2_usd']:.2f}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🧱 <b>PILARES ({score}/28)</b>\n"
+        f"🧱 <b>PILARES ({score}/25)</b>\n"
         f"{bd_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 Vol ${r['turnover_24h']/1e6:.1f}M  |  "
@@ -491,7 +491,7 @@ def _tg_quase(r: dict, direction: str, ctx: dict, state: dict) -> str:
     fontes_str = ", ".join(fontes[:5]) if fontes else "—"
 
     msg = (
-        f"⚠️ <b>QUASE — {diric} {sym}</b>  {trend}  {score}/28\n"
+        f"⚠️ <b>QUASE — {diric} {sym}</b>  {trend}  {score}/25\n"
         f"  {s4h} 4H  |  {s1h} 1H  |  thr ≥{thr}  |  faltam <b>{falta} pts</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🧱 PILARES\n"
@@ -587,7 +587,7 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
             tokens.append(f"{sym} {sc}{tr}")
         tok_str = "  ".join(tokens) if tokens else "—"
         gap_str = f"faltam {falta} pts" if falta > 0 else "✅ threshold atingido"
-        return (f"{ico} {direction}  máx {max_sc}/28 — {gap_str}\n"
+        return (f"{ico} {direction}  máx {max_sc}/25 — {gap_str}\n"
                 f"  {tok_str}")
 
     msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -2950,7 +2950,7 @@ def score_oi_trend(current_oi_usd: float, symbol: str, state: dict, direction: s
 def calculate_score(d, candles_15m=None, candles_1h=None, candles_4h=None,
                     fg_value=50, log_breakdown=True, direction="LONG", state=None):
     """
-    Score com 3 camadas independentes. Max: 28 pts (P9 OI acrescenta até +2).
+    Score com 3 camadas independentes. Max: 25 pts (P9 OI acrescenta até +2, base=23).
     [v6.0/v6.1.2] Parâmetro direction="LONG"|"SHORT" inverte a lógica dos pilares.
     [v6.2.0] state passado para P9 (score_oi_trend), opcional — sem state P9=0.
     [v6.4.0 A9] data_missing rastreado separadamente do score. Dado ausente
@@ -3099,11 +3099,11 @@ def calculate_score(d, candles_15m=None, candles_1h=None, candles_4h=None,
     data_quality = round(1.0 - data_missing / total_kline_pilares, 2)  # 1.0=perfeito, 0.0=sem klines
     if data_missing > 0:
         reasons.append(f"⚠️ {data_missing}/{total_kline_pilares} pilares sem dado (klines ausentes)")
-    if not reasons: reasons.append(f"Score {final_sc}/28 (sem sinal dominante)")
+    if not reasons: reasons.append(f"Score {final_sc}/25 (sem sinal dominante)")
 
     if log_breakdown:
         sym = d.get("base_coin", "?")
-        LOG.debug(f"  SCORE {sym} [{direction}]: {final_sc}/28 | DQ={data_quality:.0%} | klines: "
+        LOG.debug(f"  SCORE {sym} [{direction}]: {final_sc}/25 | DQ={data_quality:.0%} | klines: "
                   f"15m={'✅' if candles_15m else '❌'} "
                   f"1H={'✅' if candles_1h else '❌'} "
                   f"4H={'✅' if candles_4h else '❌'}")
@@ -3424,7 +3424,7 @@ async def run_scan_async():
                 pump_bloqueados.append(d)
                 LOG.warning(f"  🚫  {d['base_coin']:<8} PUMP BLOCK LONG | {d.get('price_change_24h',0):.1f}%")
             else:
-                LOG.debug(f"  {d['base_coin']:<8} score parcial LONG: {sc_p}/26 "
+                LOG.debug(f"  {d['base_coin']:<8} score parcial LONG: {sc_p}/25 "
                           f"[FR={d.get('funding_rate',0):.4%} "
                           f"BB={d.get('bb_lower_15m',0):.4f}–{d.get('bb_upper_15m',0):.4f}]")
 
@@ -3436,7 +3436,7 @@ async def run_scan_async():
                 pump_bloqueados_short.append(d)
                 LOG.warning(f"  🚫  {d['base_coin']:<8} DUMP BLOCK SHORT | {d.get('price_change_24h',0):.1f}%")
             else:
-                LOG.debug(f"  {d['base_coin']:<8} score parcial SHORT: {sc_p}/26 "
+                LOG.debug(f"  {d['base_coin']:<8} score parcial SHORT: {sc_p}/25 "
                           f"[FR={d.get('funding_rate',0):.4%} "
                           f"BB={d.get('bb_lower_15m',0):.4f}–{d.get('bb_upper_15m',0):.4f}]")
 
@@ -3551,12 +3551,12 @@ async def run_scan_async():
                     continue
                 trade = calc_trade_params(d["price"], d.get("atr_15m", 0), score=sc, threshold=ctx["threshold"])
                 if trade:
-                    LOG.info(f"  📈 LONG {sym}: score={sc}/26 | entry={trade['entry']:.4f} | "
+                    LOG.info(f"  📈 LONG {sym}: score={sc}/25 | entry={trade['entry']:.4f} | "
                              f"SL={trade['sl_distance_pct']:.2f}% | alav={trade['alavancagem']}x ✅")
                     d["trade"] = trade; d["direction"] = "LONG"
                     results.append(d)
                 else:
-                    LOG.warning(f"  📈 LONG {sym}: score={sc}/26 | trade_params=❌ "
+                    LOG.warning(f"  📈 LONG {sym}: score={sc}/25 | trade_params=❌ "
                                 f"(ATR={d.get('atr_15m',0):.4f} — inválido para SL dinâmico)")
 
             # Score SHORT
@@ -3581,12 +3581,12 @@ async def run_scan_async():
                     continue
                 trade = calc_trade_params_short(d["price"], d.get("atr_15m", 0), score=sc, threshold=ctx["threshold_short"])
                 if trade:
-                    LOG.info(f"  📉 SHORT {sym}: score={sc}/26 | entry={trade['entry']:.4f} | "
+                    LOG.info(f"  📉 SHORT {sym}: score={sc}/25 | entry={trade['entry']:.4f} | "
                              f"SL={trade['sl_distance_pct']:.2f}% | alav={trade['alavancagem']}x ✅")
                     d["trade_short"] = trade; d["direction"] = "SHORT"
                     results_short.append(d)
                 else:
-                    LOG.warning(f"  📉 SHORT {sym}: score={sc}/26 | trade_params=❌ "
+                    LOG.warning(f"  📉 SHORT {sym}: score={sc}/25 | trade_params=❌ "
                                 f"(ATR={d.get('atr_15m',0):.4f} — inválido para SL dinâmico)")
 
         # Análise leve LONG (sem klines)
@@ -3599,7 +3599,7 @@ async def run_scan_async():
             if trade:
                 d["trade"] = trade; d["direction"] = "LONG"
                 observacoes.append(d)
-                LOG.debug(f"  {d['base_coin']:<8} score parcial LONG={sc}/26 → Em Observação")
+                LOG.debug(f"  {d['base_coin']:<8} score parcial LONG={sc}/25 → Em Observação")
 
         # [v6.3.0 A8] Análise leve SHORT — paridade com LONG
         # Tokens SHORT posições 21-30 (após o top_full_short de 20) também entram
@@ -3611,7 +3611,7 @@ async def run_scan_async():
             d["score_short"] = sc; d["reasons_short"] = reasons; d["breakdown_short"] = bd
             if sc >= 0:
                 obs_short.append(d)
-                LOG.debug(f"  {d['base_coin']:<8} score parcial SHORT={sc}/26 → Em Observação SHORT")
+                LOG.debug(f"  {d['base_coin']:<8} score parcial SHORT={sc}/25 → Em Observação SHORT")
 
         # -------------------------------------------------------------------
         # ETAPA 4c — Armazena OI score nos resultados (para exibição no radar)
@@ -3744,14 +3744,14 @@ async def run_scan_async():
             max_sc = max((r["score"] for r in results), default=0)
             report += f"ℹ️  Nenhum alerta LONG forte (score ≥ {ctx['threshold']}) no momento.\n"
             if results:
-                report += f"   Score máximo: {max_sc}/28 (faltam {ctx['threshold'] - max_sc} pts)\n"
+                report += f"   Score máximo: {max_sc}/25 (faltam {ctx['threshold'] - max_sc} pts)\n"
         else:
-            report += f"🔥 {len(alertas_long)} ALERTA(S) LONG — Score ≥ {ctx['threshold']}/26:\n\n"
+            report += f"🔥 {len(alertas_long)} ALERTA(S) LONG — Score ≥ {ctx['threshold']}/25:\n\n"
             for r in alertas_long:
                 t    = r["trade"]
                 bloq = " ⛔ BLOQUEADO" if not pode_operar else ""
                 report += f"🚀 LONG {r['base_coin']}{bloq}\n"
-                report += f"   Score: {r['score']}/26 | 4H: {r['summary_4h']} | 1H: {r['summary_1h']}\n"
+                report += f"   Score: {r['score']}/25 | 4H: {r['summary_4h']} | 1H: {r['summary_1h']}\n"
                 report += f"   Razões: {', '.join(r['reasons'][:4])}\n"
                 report += f"   Preço: ${r['price']:.4f} | Vol 24h: ${r['turnover_24h']/1e6:.1f}M\n"
                 report += f"   Alavancagem: {t['alavancagem']}x | Risco: ${t['risco_usd']:.2f} | Ganho: ${t['ganho_rr2_usd']:.2f}\n"
@@ -3766,12 +3766,12 @@ async def run_scan_async():
         if oport_long:
             report += f"\n📈 OPORTUNIDADES LONG em Formação — Score 10–{ctx['threshold']-1}:\n"
             for r in oport_long[:5]:
-                report += f"   ▶ {r['base_coin']} | {r['score']}/26 | {', '.join(r['reasons'][:2])}\n"
+                report += f"   ▶ {r['base_coin']} | {r['score']}/25 | {', '.join(r['reasons'][:2])}\n"
         if radar_long:
             report += f"\n🔎 RADAR LONG — Score 5–13:\n"
             report += f"   ⚠️  Não operar — insuficiente. Monitorar.\n"
             for r in radar_long[:5]:
-                report += f"   · {r['base_coin']} | {r['score']}/28 | {r['summary_4h']} 4H\n"
+                report += f"   · {r['base_coin']} | {r['score']}/25 | {r['summary_4h']} 4H\n"
 
         # ─── SEÇÃO SHORT ──────────────────────────────────────────────────
         report += f"\n{'─'*58}\n📉 OPERAÇÕES SHORT\n{'─'*58}\n"
@@ -3784,14 +3784,14 @@ async def run_scan_async():
             max_sc_s = max((r.get("score_short", 0) for r in results_short), default=0)
             report += f"ℹ️  Nenhum alerta SHORT forte (score ≥ {ctx['threshold_short']}) no momento.\n"
             if results_short:
-                report += f"   Score máximo SHORT: {max_sc_s}/28 (faltam {ctx['threshold_short'] - max_sc_s} pts)\n"
+                report += f"   Score máximo SHORT: {max_sc_s}/25 (faltam {ctx['threshold_short'] - max_sc_s} pts)\n"
         else:
-            report += f"🔥 {len(alertas_short)} ALERTA(S) SHORT — Score ≥ {ctx['threshold_short']}/26:\n\n"
+            report += f"🔥 {len(alertas_short)} ALERTA(S) SHORT — Score ≥ {ctx['threshold_short']}/25:\n\n"
             for r in alertas_short:
                 t    = r["trade_short"]
                 bloq = " ⛔ BLOQUEADO" if not pode_operar else ""
                 report += f"📉 SHORT {r['base_coin']}{bloq}\n"
-                report += f"   Score: {r['score_short']}/26 | 4H: {r['summary_4h']} | 1H: {r['summary_1h']}\n"
+                report += f"   Score: {r['score_short']}/25 | 4H: {r['summary_4h']} | 1H: {r['summary_1h']}\n"
                 report += f"   Razões: {', '.join(r.get('reasons_short', [])[:4])}\n"
                 report += f"   Preço: ${r['price']:.4f} | Vol 24h: ${r['turnover_24h']/1e6:.1f}M\n"
                 report += f"   Alavancagem: {t['alavancagem']}x | Risco: ${t['risco_usd']:.2f} | Ganho: ${t['ganho_rr2_usd']:.2f}\n"
@@ -3807,7 +3807,7 @@ async def run_scan_async():
             report += f"\n🔎 RADAR SHORT — Score 5–{ctx['threshold_short']-1}:\n"
             report += f"   ⚠️  Não operar — insuficiente. Monitorar.\n"
             for r in radar_short[:5]:
-                report += f"   · {r['base_coin']} | {r.get('score_short',0)}/28 | {r['summary_4h']} 4H\n"
+                report += f"   · {r['base_coin']} | {r.get('score_short',0)}/25 | {r['summary_4h']} 4H\n"
 
         # Em Observação — LONG leve
         obs_relevantes = [o for o in observacoes if o["score"] >= 8]
@@ -3815,7 +3815,7 @@ async def run_scan_async():
             report += f"\n👁️  EM OBSERVAÇÃO LONG — análise leve ({len(obs_relevantes)} tokens):\n"
             for o in obs_relevantes[:5]:
                 oi_tag = " ⚠️OI?" if o.get("oi_estimado") else ""
-                report += f"   · {o['base_coin']} | Score parcial: {o['score']}/28 | {o['summary_4h']} 4H{oi_tag}\n"
+                report += f"   · {o['base_coin']} | Score parcial: {o['score']}/25 | {o['summary_4h']} 4H{oi_tag}\n"
 
         # [v6.3.0 A8] Em Observação — SHORT leve (paridade)
         obs_short_rel = [o for o in obs_short if o.get("score_short", 0) >= 8]
@@ -3823,7 +3823,7 @@ async def run_scan_async():
             report += f"\n👁️  EM OBSERVAÇÃO SHORT — análise leve ({len(obs_short_rel)} tokens):\n"
             for o in obs_short_rel[:5]:
                 oi_tag = " ⚠️OI?" if o.get("oi_estimado") else ""
-                report += f"   · {o['base_coin']} | Score parcial: {o.get('score_short',0)}/28 | {o['summary_4h']} 4H{oi_tag}\n"
+                report += f"   · {o['base_coin']} | Score parcial: {o.get('score_short',0)}/25 | {o['summary_4h']} 4H{oi_tag}\n"
 
         elapsed = time.time() - t_start
         report += f"\n{'-'*58}\n"
