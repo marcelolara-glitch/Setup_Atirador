@@ -1912,6 +1912,69 @@ def _parse_bitget_tickers(items):
     return qualified, rej_vol, rej_oi
 
 
+def _parse_okx_tickers(items):
+    """
+    [v6.6.2] Normaliza tickers OKX (já mesclados com OI real por _fetch_okx_tickers_with_oi).
+
+    Campos OKX relevantes (após mesclagem):
+      instId      → "BTC-USDT-SWAP" → normaliza para "BTCUSDT"
+      last        → preço atual
+      open24h     → preço de abertura 24h atrás (para calcular variação %)
+      volCcy24h   → volume 24h em USDT (turnover)
+      oiUsd       → OI em USD (injetado pelo fetch; real ou 0 como fallback)
+      oi_real     → bool indicando se o OI é real ou estimado
+      fundingRate → taxa de financiamento (injetada pelo fetch via endpoint dedicado)
+    """
+    qualified  = []
+    rej_symbol = rej_vol = rej_oi = 0
+
+    for t in items:
+        inst_id = t.get("instId", "")
+        if not inst_id.endswith("-USDT-SWAP"):
+            rej_symbol += 1; continue
+
+        # Normaliza "BTC-USDT-SWAP" → "BTCUSDT"
+        sym = inst_id.replace("-USDT-SWAP", "") + "USDT"
+
+        turnover = sf(t.get("volCcy24h", 0))
+        if turnover < MIN_TURNOVER_24H:
+            rej_vol += 1; continue
+
+        price = sf(t.get("last", 0))
+        if price <= 0:
+            rej_symbol += 1; continue
+
+        oi_usd  = sf(t.get("oiUsd", 0))
+        oi_real = t.get("oi_real", False)
+
+        # Fallback estimado se OI não veio ou é zero
+        oi_estimado = False
+        if oi_usd <= 0:
+            oi_usd      = turnover * 0.1
+            oi_estimado = True
+
+        if oi_usd < MIN_OI_USD:
+            rej_oi += 1; continue
+
+        # Variação % 24h: (last - open24h) / open24h * 100
+        open24h = sf(t.get("open24h", 0))
+        price_change = ((price - open24h) / open24h * 100) if open24h > 0 else 0.0
+
+        base = sym.replace("USDT", "")
+        qualified.append({
+            "symbol"          : sym,
+            "base_coin"       : base,
+            "price"           : price,
+            "turnover_24h"    : turnover,
+            "oi_usd"          : oi_usd,
+            "oi_estimado"     : oi_estimado and not oi_real,
+            "volume_24h"      : sf(t.get("vol24h", 0)),
+            "funding_rate"    : sf(t.get("fundingRate", 0)),
+            "price_change_24h": price_change,
+        })
+    return qualified, rej_vol, rej_oi
+
+
 def _try_source(nome, url, parse_fn, extract_fn, timeout=None, parse_kwargs=None):
     """
     Tenta buscar tickers de uma fonte com diagnóstico completo.
