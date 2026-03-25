@@ -2,9 +2,8 @@ name: Atirador Bot — Polling Telegram
 
 on:
   schedule:
-    # A cada 30 min — seguro para repo privado (free tier: ~1.440 runs/mês + 360 scan = 1.800 total)
-    # Se tornar repo público (Actions ilimitado), mudar para '*/5 * * * *'
-    - cron: '*/30 * * * *'
+    # A cada 5 min — repo público (Actions ilimitado)
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 concurrency:
