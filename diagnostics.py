@@ -3,15 +3,29 @@
 diagnostics.py — Diagnóstico pós-rodada do Setup Atirador
 ===========================================================
 Analisa o log da última execução em busca de problemas críticos que
-comprometam o resultado do scan (não apenas crashes, mas dados ausentes,
-colunas removidas, estado não salvo, heartbeat não enviado, etc.).
+comprometam o resultado do scan.
 
-Envia alerta Telegram APENAS se houver pelo menos 1 crítico.
-Sem críticos → sem mensagem (evita spam).
+Critérios de CRÍTICO (apenas o que realmente impede ou compromete o resultado):
+  - Scan encerrou com falha (exit code != 0)
+  - Traceback Python não tratado
+  - TODAS AS 3 FONTES FALHARAM (sem dados para analisar)
+  - TV batch falhou após todos os retries (scoring comprometido)
+  - Heartbeat Telegram não enviado (usuário não foi notificado)
+  - Erro ao salvar estado diário (afeta próxima rodada: OI/trends)
+  - Log não gerado (script crashou antes do logger init)
+  - [ERROR] em excesso (> 10 linhas = problema sistêmico de API)
 
-Chamado pelo workflow com:
-  SCAN_OUTCOME = steps.scan.outcome  (success | failure | cancelled)
-  TELEGRAM_TOKEN / TELEGRAM_CHAT_ID  (mesmos secrets do scan)
+Critérios de AVISO (informativo, listado junto se houver crítico):
+  - [ERROR] e [WARNING] individuais (falhas por-item tratadas graciosamente)
+  - Coluna inválida / removida (TV API às vezes retorna dados ruins, é tratado)
+  - trade_params=❌ (score válido, só parâmetros de trade não calculados)
+  - Fear & Greed falhou (fallback funciona)
+  - Timeout com retry (auto-recuperado)
+  - OKX/Gate.io indisponíveis (fallback Bitget)
+  - DADO AUSENTE (por token/pilar, tratado com score 0)
+
+Envia Telegram APENAS se houver pelo menos 1 crítico.
+Sem críticos → nenhuma mensagem (zero spam).
 """
 import glob
 import os
@@ -28,69 +42,70 @@ TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 SCAN_OUTCOME     = os.getenv("SCAN_OUTCOME", "unknown")
 
-# Limite: se DADO AUSENTE aparecer mais do que isso no log, vira crítico
-DADO_AUSENTE_CRITICO = 10
+# Número de linhas [ERROR] que indica problema sistêmico (não apenas por-item)
+ERRORS_CRITICO_THRESHOLD = 10
 
-# ── Padrões CRÍTICOS (comprometem o resultado) ────────────────────────────────
+# ── Padrões CRÍTICOS ──────────────────────────────────────────────────────────
 #
-# Cada entrada: (regex, descrição curta, conta_ocorrencias)
-#   conta_ocorrencias=True  → conta todas as linhas que casam
-#   conta_ocorrencias=False → reporta as primeiras 3 linhas que casam
+# Somente o que realmente compromete o resultado final.
+# LOG.error() neste codebase inclui erros por-item tratados (klines, JSON);
+# por isso [ERROR] não entra como crítico unitário — só acima do threshold.
+#
+# Cada entrada: (regex, descrição, count_mode)
+#   count_mode=False → reporta primeiras 3 ocorrências com contexto de linha
+#   count_mode=True  → reporta como "label (×N)"
 #
 CRITICOS = [
-    # Crash Python
+    # Crash Python não tratado
     (r"Traceback \(most recent call last\)",
-     "Traceback — exceção Python não tratada",       False),
+     "Traceback — exceção Python não tratada",
+     False),
 
-    # Nível ERROR no log
-    (r"\[ERROR\s*\]",
-     "Linha de nível ERROR no log",                  False),
-
-    # Todas as fontes de dados falharam — scan sem dados
+    # Todas as fontes de dados falharam — zero tokens analisados
     (r"TODAS AS 3 FONTES FALHARAM",
      "Todas as fontes de dados falharam — sem dados para analisar",
-                                                     False),
+     False),
 
-    # TV batch falhou — indicadores ausentes afetam scoring de múltiplos pilares
-    (r"❌\s+TV batch falhou após",
-     "TV batch falhou — indicadores TradingView indisponíveis",
-                                                     False),
+    # TV batch falhou após todos os retries — scoring comprometido para todos os tokens
+    # (diferente de erros por-item que são tratados individualmente)
+    (r"TV batch falhou após \d+ tentativas",
+     "TV batch falhou — scoring comprometido (BB, Volume, ATR sem dados)",
+     False),
 
-    # Coluna inválida detectada e removida — pilar específico sem dado
-    (r"❌.*Coluna inválida detectada",
-     "Coluna inválida detectada — pilar afetado",    False),
-    (r"⚠️.*Colunas removidas por falha de API",
-     "Colunas removidas por falha de API",           False),
-
-    # Trade válido mas sem parâmetros — sinal gerado porém inoperável
-    (r"trade_params=❌",
-     "trade_params=❌ — sinal sem entrada/SL/TP válidos",
-                                                     True),
-
-    # Estado diário não salvo — afeta OI trend e setas na próxima rodada
-    (r"⚠️.*Erro ao salvar estado",
-     "Erro ao salvar estado diário — afeta próxima rodada",
-                                                     False),
-
-    # Heartbeat Telegram não enviado — usuário não recebeu notificação
-    (r"📵\s+Telegram heartbeat: falha",
+    # Heartbeat Telegram não enviado — usuário não recebeu notificação do scan
+    (r"📵\s+Telegram heartbeat: falha no envio",
      "Heartbeat Telegram não enviado — usuário não notificado",
-                                                     False),
+     False),
 
-    # Fear & Greed falhou — afeta thresholds de score
-    (r"⚠️.*Fear & Greed falhou",
-     "Fear & Greed indisponível — thresholds baseados em valor padrão",
-                                                     False),
+    # Estado diário não salvo — afeta OI trend e setas de tendência na próxima rodada
+    (r"Erro ao salvar estado",
+     "Erro ao salvar estado diário — afeta OI/trends na próxima rodada",
+     False),
 ]
 
-# ── Padrões de AVISO (notáveis, listados se houver crítico) ───────────────────
+# ── Padrões de AVISO ──────────────────────────────────────────────────────────
+#
+# Problemas reais mas tratados graciosamente pelo código.
+# Listados na mensagem crítica quando há pelo menos 1 crítico.
+# Nunca disparam alerta sozinhos.
+#
 AVISOS = [
-    (r"📵\s+Telegram",              "Falha de envio Telegram"),
-    (r"DADO AUSENTE",               "Dado ausente (klines)"),
-    (r"Timeout \(tentativa",        "Timeout em API (com retry)"),
-    (r"⚠️.*OKX e Gate\.io indisponíveis",
-                                    "OKX/Gate.io indisponíveis — fallback Bitget"),
-    (r"\[WARNING\s*\]",             "Linha WARNING no log"),
+    (r"\[ERROR\s*\]",
+     "Linha [ERROR] no log (falha por-item ou API)"),
+    (r"📵\s+Telegram",
+     "Falha de envio Telegram"),
+    (r"Coluna inválida detectada|Colunas removidas por falha de API",
+     "Colunas TV inválidas/removidas (tratado)"),
+    (r"trade_params=❌",
+     "trade_params=❌ (score válido, trade inoperável)"),
+    (r"Fear & Greed falhou",
+     "Fear & Greed indisponível (fallback ativo)"),
+    (r"OKX e Gate\.io indisponíveis",
+     "OKX/Gate.io indisponíveis (fallback Bitget)"),
+    (r"Timeout \(tentativa",
+     "Timeout em API (com retry automático)"),
+    (r"DADO AUSENTE",
+     "Dado ausente (klines por token/pilar)"),
 ]
 
 
@@ -130,6 +145,7 @@ def _analyze(path: str) -> dict:
     criticos_found: list[str] = []
     avisos_found:   list[str] = []
 
+    # ── Padrões críticos diretos ──────────────────────────────────────────────
     for pattern, label, count_mode in CRITICOS:
         rx = re.compile(pattern)
         matches = [(i + 1, l.rstrip()) for i, l in enumerate(lines) if rx.search(l)]
@@ -139,19 +155,22 @@ def _analyze(path: str) -> dict:
             criticos_found.append(f"{label} (×{len(matches)})")
         else:
             for lineno, line in matches[:3]:
-                # extrai só a parte da mensagem (após o prefixo de timestamp)
                 msg_part = re.sub(r"^\S+ BRT \[\w+\s*\]\s*", "", line).strip()
                 msg_part = msg_part[:80] + "…" if len(msg_part) > 80 else msg_part
                 criticos_found.append(f"L{lineno}: {label}" +
                                       (f" — {msg_part}" if msg_part else ""))
 
-    # DADO AUSENTE: contar total e adicionar como crítico se excessivo
-    dado_ausente_count = sum(1 for l in lines if "DADO AUSENTE" in l)
-    if dado_ausente_count > DADO_AUSENTE_CRITICO:
+    # ── [ERROR] em excesso = problema sistêmico ───────────────────────────────
+    n_errors = sum(1 for l in lines if re.search(r"\[ERROR\s*\]", l))
+    if n_errors > ERRORS_CRITICO_THRESHOLD:
         criticos_found.append(
-            f"Dados ausentes em excesso — {dado_ausente_count} pilares sem klines"
+            f"[ERROR] em excesso ({n_errors} linhas) — possível problema sistêmico de API"
         )
 
+    # ── DADO AUSENTE excessivo ────────────────────────────────────────────────
+    dado_ausente_count = sum(1 for l in lines if "DADO AUSENTE" in l)
+
+    # ── Padrões de aviso ──────────────────────────────────────────────────────
     for pattern, label in AVISOS:
         rx = re.compile(pattern)
         count = sum(1 for l in lines if rx.search(l))
@@ -159,7 +178,6 @@ def _analyze(path: str) -> dict:
             avisos_found.append(f"{label} (×{count})")
 
     n_warnings = sum(1 for l in lines if re.search(r"\[WARNING", l))
-    n_errors   = sum(1 for l in lines if re.search(r"\[ERROR\s*\]", l))
 
     return {
         "read_error":         None,
@@ -188,7 +206,7 @@ def main() -> int:
             "avisos": [], "n_warnings": 0, "n_errors": 0, "dado_ausente_count": 0,
         }
 
-    # Adiciona falha do scan como crítico, se aplicável
+    # Scan com falha sempre é crítico
     if scan_failed:
         result["criticos"].insert(0, f"Scan encerrou com status: {SCAN_OUTCOME}")
 
