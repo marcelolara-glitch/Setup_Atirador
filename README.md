@@ -1,4 +1,4 @@
-# Setup Atirador v6.6.2
+# Setup Atirador
 
 Scanner profissional de criptomoedas para operações **LONG e SHORT alavancadas** de curto prazo.
 
