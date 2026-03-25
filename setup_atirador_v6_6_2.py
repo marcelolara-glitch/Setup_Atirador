@@ -2973,11 +2973,11 @@ def calculate_score(d, candles_15m=None, candles_1h=None, candles_4h=None,
     s4h = d.get("summary_4h", "NEUTRAL")
     if direction == "SHORT":
         if "BUY" in s4h:
-            return -1, [f"4H {s4h} — descartado (tendência bullish, não short)"], []
+            return -1, [f"4H {s4h} — descartado (tendência bullish, não short)"], [], 1.0
         breakdown.append(("Contexto 4H", 0, 0, f"{s4h} (contexto SHORT, não pontuado)"))
     else:
         if "STRONG_SELL" in s4h or s4h == "SELL":
-            return -1, [f"4H {s4h} — descartado pelo gate macro"], []
+            return -1, [f"4H {s4h} — descartado pelo gate macro"], [], 1.0
         breakdown.append(("Contexto 4H", 0, 0, f"{s4h} (contexto, não pontuado)"))
 
     # -----------------------------------------------------------------------
@@ -3063,7 +3063,7 @@ def calculate_score(d, candles_15m=None, candles_1h=None, candles_4h=None,
     # P7 — Filtro de Pump/Dump
     pump_sc, pump_det = score_pump_filter(d.get("price_change_24h", 0), direction)
     if pump_sc is None:
-        return -99, ["PUMP/DUMP BLOCK"], []
+        return -99, ["PUMP/DUMP BLOCK"], [], 1.0
     sc += pump_sc
     breakdown.append(("P7 Filtro Pump/Dump", pump_sc, 0, pump_det))
 
