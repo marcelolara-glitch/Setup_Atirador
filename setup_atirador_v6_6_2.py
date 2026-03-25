@@ -377,7 +377,7 @@ def _tg_breakdown_pilares(bd: list, direction: str) -> str:
     return "\n".join(linhas)
 
 
-def _tg_call_long(r: dict, ctx: dict, pode_operar: bool, state: dict = None) -> str:
+def _tg_call_long(r: dict, ctx: dict, state: dict = None) -> str:
     """
     [v6.6.2] Mensagem exclusiva de CALL LONG — operacional completa.
     Inclui entrada/SL/TPs, sizing risk-first e breakdown completo de pilares.
@@ -386,13 +386,12 @@ def _tg_call_long(r: dict, ctx: dict, pode_operar: bool, state: dict = None) -> 
     score = r["score"]
     sym   = r["base_coin"]
     thr   = ctx["threshold"]
-    bloq  = " ⛔ BLOQUEADO" if not pode_operar else ""
     trend = get_score_trend(state, r.get("symbol",""), "LONG") if state else "🆕"
 
     bd_str = _tg_breakdown_pilares(r.get("breakdown", []), "LONG")
 
     msg = (
-        f"🚀 <b>LONG {sym}</b>{bloq}  {trend}  {score}/25\n"
+        f"🚀 <b>LONG {sym}</b>  {trend}  {score}/25\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 Entrada  <b>${t['entry']:.4f}</b>\n"
         f"🎯 TP1      ${t['tp1']:.4f}  (+{t['sl_distance_pct']:.2f}%) → fechar 50%\n"
@@ -415,7 +414,7 @@ def _tg_call_long(r: dict, ctx: dict, pode_operar: bool, state: dict = None) -> 
 
 
 
-def _tg_call_short(r: dict, ctx: dict, pode_operar: bool, state: dict = None) -> str:
+def _tg_call_short(r: dict, ctx: dict, state: dict = None) -> str:
     """
     [v6.6.2] Mensagem exclusiva de CALL SHORT — operacional completa.
     Inclui entrada/SL/TPs, sizing risk-first e breakdown completo de pilares.
@@ -424,13 +423,12 @@ def _tg_call_short(r: dict, ctx: dict, pode_operar: bool, state: dict = None) ->
     score = r.get("score_short", 0)
     sym   = r["base_coin"]
     thr   = ctx["threshold_short"]
-    bloq  = " ⛔ BLOQUEADO" if not pode_operar else ""
     trend = get_score_trend(state, r.get("symbol",""), "SHORT") if state else "🆕"
 
     bd_str = _tg_breakdown_pilares(r.get("breakdown_short", []), "SHORT")
 
     msg = (
-        f"📉 <b>SHORT {sym}</b>{bloq}  {trend}  {score}/25\n"
+        f"📉 <b>SHORT {sym}</b>  {trend}  {score}/25\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 Entrada  <b>${t['entry']:.4f}</b>\n"
         f"🎯 TP1      ${t['tp1']:.4f}  (−{t['sl_distance_pct']:.2f}%) → fechar 50%\n"
@@ -507,7 +505,6 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
                           n_short_gate1: int, n_short_gate2: int,
                           results: list, results_short: list,
                           fonte: str, elapsed: float,
-                          pode_operar: bool, pnl_dia: float, n_abertos: int,
                           state: dict, tokens_sem_dados: list,
                           candle_lock: dict = None,
                           obs_long: list = None, obs_short: list = None,
@@ -533,8 +530,6 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
     fgi_txt = ("Medo Extremo" if fgi_val <= 20 else "Medo" if fgi_val <= 40 else
                "Neutro" if fgi_val <= 60 else "Ganância" if fgi_val <= 80 else "Ganância Extrema")
     btc_ico = "📈" if "BUY" in ctx["btc"] else ("📉" if "SELL" in ctx["btc"] else "➡️")
-    slots   = MAX_TRADES_ABERTOS - n_abertos
-    op_ico  = "✅" if pode_operar else "🛑"
     thr_l   = ctx["threshold"]
     thr_s   = ctx["threshold_short"]
 
@@ -544,14 +539,8 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
     msg += f"🌡️ MERCADO\n"
     msg += f"  {fgi_ico} FGI {fgi_val} — {fgi_txt}  |  {btc_ico} BTC 4H: {ctx['btc']}\n"
     msg += f"  📋 LONG ≥{thr_l} {ctx['verdict'].split('(')[0].strip()}  |  SHORT ≥{thr_s} {ctx['verdict_short'].split('(')[0].strip()}\n"
-    msg += f"  {op_ico} P&L <b>${pnl_dia:+.2f}</b>  |  Slots <b>{slots}/{MAX_TRADES_ABERTOS}</b>\n"
 
-    # ── 2. RISCO ────────────────────────────────────────────────────────────
-    msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    msg += f"💼 RISCO\n"
-    msg += f"  Banca ${BANKROLL:.0f}  |  Risco/trade ${RISCO_POR_TRADE_USD:.2f}  |  Perda máx/dia ${MAX_PERDA_DIARIA_USD:.2f}\n"
-
-    # ── 3. PIPELINE ─────────────────────────────────────────────────────────
+    # ── 2. PIPELINE ─────────────────────────────────────────────────────────
     if candle_lock and candle_lock.get("use_prev"):
         cl = f"⚠️ Candle em formação — penúltimo usado"
     elif candle_lock:
@@ -606,9 +595,7 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
 
     msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 
-    if not pode_operar:
-        msg += f"🛑 BOT OFF — {ctx.get('verdict','limites atingidos')}\n"
-    elif alertas_long or alertas_short:
+    if alertas_long or alertas_short:
         n_c = len(alertas_long) + len(alertas_short)
         msg += f"🔥 <b>{n_c} CALL(S) DISPARADA(S) — ver mensagem(ns) exclusiva(s) abaixo</b>\n"
     elif quase_long or quase_short:
@@ -634,7 +621,6 @@ def tg_notify(ctx: dict, results: list, results_short: list,
               n_long_gate1: int, n_long_gate2: int,
               n_short_gate1: int, n_short_gate2: int,
               fonte: str, elapsed: float,
-              pode_operar: bool, pnl_dia: float, n_abertos: int,
               state: dict, tokens_sem_dados: list,
               candle_lock: dict = None,
               obs_long: list = None, obs_short: list = None):
@@ -674,7 +660,7 @@ def tg_notify(ctx: dict, results: list, results_short: list,
             ctx, total_items, qualificados,
             n_long_gate1, n_long_gate2, n_short_gate1, n_short_gate2,
             results, results_short, fonte, elapsed,
-            pode_operar, pnl_dia, n_abertos, state, tokens_sem_dados,
+            state, tokens_sem_dados,
             candle_lock=candle_lock,
             obs_long=obs_long or [], obs_short=obs_short or [],
             n_calls=n_calls,
@@ -704,7 +690,7 @@ def tg_notify(ctx: dict, results: list, results_short: list,
 
     # ── 3. Mensagens de Call — uma por token ─────────────────────────────────
     for r in alertas_long:
-        msg = _tg_call_long(r, ctx, pode_operar, state=state)
+        msg = _tg_call_long(r, ctx, state=state)
         if _tg_send(msg):
             n_enviados += 1
             LOG.info(f"  📲  Telegram CALL LONG {r['base_coin']}: enviado ✅")
@@ -712,7 +698,7 @@ def tg_notify(ctx: dict, results: list, results_short: list,
             LOG.warning(f"  📵  Telegram CALL LONG {r['base_coin']}: falha")
 
     for r in alertas_short:
-        msg = _tg_call_short(r, ctx, pode_operar, state=state)
+        msg = _tg_call_short(r, ctx, state=state)
         if _tg_send(msg):
             n_enviados += 1
             LOG.info(f"  📲  Telegram CALL SHORT {r['base_coin']}: enviado ✅")
@@ -784,8 +770,6 @@ MIN_OI_USD       = 5_000_000
 #
 BANKROLL              = 100.0
 RISCO_POR_TRADE_USD   = 5.00    # Risco fixo em $ por trade (loss máximo)
-MAX_PERDA_DIARIA_USD  = 10.00   # 2 losses = stop do dia (10% da banca)
-MAX_TRADES_ABERTOS    = 2
 MARGEM_MAX_POR_TRADE  = 35.0    # [v6.4.0 A1] Máximo de margem alocada por trade ($)
                                  # Com 2 trades: máx $70 expostos de $100 de banca
 ALAVANCAGEM_MIN       = 2.0     # [v6.4.0 A2] ↑1x→2x — 1x é inútil para scalp
@@ -975,18 +959,9 @@ def save_telegram_config(token, chat_id):
 
 def load_daily_state():
     """
-    Carrega estado do dia. Reseta operacional automaticamente em novo dia,
-    mas preserva score_history e oi_history entre dias (dados multi-dia são valiosos).
+    Carrega estado persistente. Preserva score_history e oi_history entre rodadas.
     """
-    today = datetime.now(BRT).strftime("%Y-%m-%d")
     default = {
-        "date": today,
-        "trades_abertos": [],
-        "pnl_dia": 0.0,
-        "trades_executados": 0,
-        "bloqueado": False,
-        "motivo_bloqueio": "",
-        "historico": [],
         "score_history": {},   # [v6.2.0] {symbol: [{ts, score_long, score_short},...]}
         "oi_history": {},      # [v6.2.0] {symbol: [{ts, oi},...]}
     }
@@ -994,14 +969,7 @@ def load_daily_state():
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as f:
                 state = json.load(f)
-            if state.get("date") != today:
-                # Novo dia: reseta operacional, preserva históricos
-                default["historico"]     = state.get("historico", [])
-                default["score_history"] = state.get("score_history", {})
-                default["oi_history"]    = state.get("oi_history", {})
-                save_daily_state(default)
-                return default
-            # Garante campos novos em states antigos (migração transparente)
+            # Garante campos em states antigos (migração transparente)
             if "score_history" not in state: state["score_history"] = {}
             if "oi_history"    not in state: state["oi_history"]    = {}
             return state
@@ -1120,28 +1088,6 @@ def get_score_trend(state: dict, symbol: str, direction: str = "LONG") -> str:
     elif delta <= -1: return "↓"
     else:             return "→"
 
-def check_risk_limits(state):
-    """
-    Verifica limites de risco diário.
-    Retorna (pode_operar: bool, motivo: str)
-    """
-    if state.get("bloqueado"):
-        return False, state.get("motivo_bloqueio", "Estado bloqueado")
-
-    perda_max = MAX_PERDA_DIARIA_USD
-    pnl = state.get("pnl_dia", 0.0)
-    if pnl <= -perda_max:
-        motivo = f"Perda máxima diária atingida (${abs(pnl):.2f} / ${perda_max:.2f})"
-        state["bloqueado"] = True
-        state["motivo_bloqueio"] = motivo
-        save_daily_state(state)
-        return False, motivo
-
-    n_abertos = len(state.get("trades_abertos", []))
-    if n_abertos >= MAX_TRADES_ABERTOS:
-        return False, f"Máx. trades abertos atingido ({n_abertos}/{MAX_TRADES_ABERTOS})"
-
-    return True, "OK"
 
 # ===========================================================================
 # TRADINGVIEW SCANNER API
@@ -3206,11 +3152,6 @@ async def run_scan_async():
     t_start = time.time()
 
     state = load_daily_state()
-    pode_operar, motivo_risco = check_risk_limits(state)
-    LOG.info(f"💼 Estado diário: P&L={state.get('pnl_dia',0):+.2f} | "
-             f"Trades abertos={len(state.get('trades_abertos',[]))}/{MAX_TRADES_ABERTOS} | "
-             f"Pode operar={'✅' if pode_operar else '❌ '+motivo_risco}")
-
     async with aiohttp.ClientSession() as session:
 
         # -------------------------------------------------------------------
@@ -3458,29 +3399,6 @@ async def run_scan_async():
         # -------------------------------------------------------------------
         log_section(f"ETAPA 4 — Klines + Score completo (TOP {KLINE_TOP_N} LONG + SHORT) [v6.2.0]")
 
-        # Símbolos já abertos — bloqueia direção oposta no mesmo ativo
-        syms_abertos_long  = {t.get("symbol") for t in state.get("trades_abertos", [])
-                              if t.get("direction") == "LONG"}
-        syms_abertos_short = {t.get("symbol") for t in state.get("trades_abertos", [])
-                              if t.get("direction") == "SHORT"}
-
-        # [v6.1.2] Loga quais símbolos estão bloqueados por exclusividade
-        if syms_abertos_long:
-            LOG.info(f"  🔒 Trades LONG abertos — bloqueiam SHORT: {sorted(syms_abertos_long)}")
-        if syms_abertos_short:
-            LOG.info(f"  🔒 Trades SHORT abertos — bloqueiam LONG: {sorted(syms_abertos_short)}")
-
-        # Remover conflitos: LONG aberto bloqueia SHORT e vice-versa
-        bloqueados_por_exclusividade_long  = [d for d in gate2_passed if d["symbol"] in syms_abertos_short]
-        bloqueados_por_exclusividade_short = [d for d in gate2_short  if d["symbol"] in syms_abertos_long]
-        for d in bloqueados_por_exclusividade_long:
-            LOG.warning(f"  🔒  {d['base_coin']:<8} LONG bloqueado — SHORT aberto no mesmo ativo")
-        for d in bloqueados_por_exclusividade_short:
-            LOG.warning(f"  🔒  {d['base_coin']:<8} SHORT bloqueado — LONG aberto no mesmo ativo")
-
-        gate2_passed = [d for d in gate2_passed if d["symbol"] not in syms_abertos_short]
-        gate2_short  = [d for d in gate2_short  if d["symbol"] not in syms_abertos_long]
-
         # Contexto de mercado — necessário antes do loop de score (ctx["threshold"])
         btc_4h_val = tv_4h.get("BTCUSDT", {}).get("Recommend.All|240")
         btc_4h_str = recommendation_from_value(btc_4h_val)
@@ -3656,9 +3574,6 @@ async def run_scan_async():
 
         ts_full   = datetime.now(BRT).strftime("%d/%m/%Y %H:%M BRT")
         risco_usd = RISCO_POR_TRADE_USD
-        perda_max = MAX_PERDA_DIARIA_USD
-        pnl_dia   = state.get("pnl_dia", 0.0)
-        n_abertos = len(state.get("trades_abertos", []))
 
         report  = f"{'='*58}\n"
         report += f"🎯 SETUP ATIRADOR v6.6.2\n"
@@ -3672,17 +3587,8 @@ async def run_scan_async():
         report += f"   Risk Score: {ctx['risk_score']}\n"
         report += f"{'='*58}\n\n"
 
-        report += f"💼 GESTÃO DE RISCO — Sizing Risk-First [v6.6.2]\n"
-        report += f"   Banca: ${BANKROLL:.2f} | Risco fixo/trade: ${risco_usd:.2f} | Perda máx/dia: ${perda_max:.2f}\n"
-        report += f"   Margem máx/trade: ${MARGEM_MAX_POR_TRADE:.0f} | Máx exposição simultânea: ${MARGEM_MAX_POR_TRADE*MAX_TRADES_ABERTOS:.0f}\n"
-        ganho_por_trade     = risco_usd * RR_MINIMO
-        winners_para_dobrar = int(BANKROLL / ganho_por_trade)
-        report += f"   Ganho/trade (RR1:2): ${ganho_por_trade:.2f} | Para dobrar banca: ~{winners_para_dobrar} winners\n"
-        report += f"   P&L hoje: ${pnl_dia:+.2f} | Trades abertos: {n_abertos}/{MAX_TRADES_ABERTOS}\n"
-        if not pode_operar:
-            report += f"   🛑 NOVAS ENTRADAS BLOQUEADAS: {motivo_risco}\n"
-        else:
-            report += f"   ✅ Pode operar — {MAX_TRADES_ABERTOS - n_abertos} slot(s) disponível(is)\n"
+        report += f"💼 SIZING Risk-First [v6.6.2]\n"
+        report += f"   Banca: ${BANKROLL:.2f} | Risco fixo/trade: ${risco_usd:.2f} | Margem máx/trade: ${MARGEM_MAX_POR_TRADE:.0f}\n"
         report += "\n"
 
         # [v6.3.0 A6] Contar tokens com OI estimado nos qualificados
@@ -3749,8 +3655,7 @@ async def run_scan_async():
             report += f"🔥 {len(alertas_long)} ALERTA(S) LONG — Score ≥ {ctx['threshold']}/25:\n\n"
             for r in alertas_long:
                 t    = r["trade"]
-                bloq = " ⛔ BLOQUEADO" if not pode_operar else ""
-                report += f"🚀 LONG {r['base_coin']}{bloq}\n"
+                report += f"🚀 LONG {r['base_coin']}\n"
                 report += f"   Score: {r['score']}/25 | 4H: {r['summary_4h']} | 1H: {r['summary_1h']}\n"
                 report += f"   Razões: {', '.join(r['reasons'][:4])}\n"
                 report += f"   Preço: ${r['price']:.4f} | Vol 24h: ${r['turnover_24h']/1e6:.1f}M\n"
@@ -3789,8 +3694,7 @@ async def run_scan_async():
             report += f"🔥 {len(alertas_short)} ALERTA(S) SHORT — Score ≥ {ctx['threshold_short']}/25:\n\n"
             for r in alertas_short:
                 t    = r["trade_short"]
-                bloq = " ⛔ BLOQUEADO" if not pode_operar else ""
-                report += f"📉 SHORT {r['base_coin']}{bloq}\n"
+                report += f"📉 SHORT {r['base_coin']}\n"
                 report += f"   Score: {r['score_short']}/25 | 4H: {r['summary_4h']} | 1H: {r['summary_1h']}\n"
                 report += f"   Razões: {', '.join(r.get('reasons_short', [])[:4])}\n"
                 report += f"   Preço: ${r['price']:.4f} | Vol 24h: ${r['turnover_24h']/1e6:.1f}M\n"
@@ -3845,9 +3749,6 @@ async def run_scan_async():
             n_short_gate2    = len(gate2_short),
             fonte            = DATA_SOURCE,
             elapsed          = elapsed,
-            pode_operar      = pode_operar,
-            pnl_dia          = state.get("pnl_dia", 0.0),
-            n_abertos        = len(state.get("trades_abertos", [])),
             state            = state,
             tokens_sem_dados = tokens_sem_dados,
             candle_lock      = candle_lock,       # [v6.3.0 A4]
