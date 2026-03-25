@@ -3477,6 +3477,11 @@ async def run_scan_async():
         gate2_passed = [d for d in gate2_passed if d["symbol"] not in syms_abertos_short]
         gate2_short  = [d for d in gate2_short  if d["symbol"] not in syms_abertos_long]
 
+        # Contexto de mercado — necessário antes do loop de score (ctx["threshold"])
+        btc_4h_val = tv_4h.get("BTCUSDT", {}).get("Recommend.All|240")
+        btc_4h_str = recommendation_from_value(btc_4h_val)
+        ctx        = analyze_market_context(fg, btc_4h_str)
+
         top_full_long  = gate2_passed[:KLINE_TOP_N]
         top_light_long = gate2_passed[KLINE_TOP_N:KLINE_TOP_N_LIGHT]
         top_full_short = gate2_short[:KLINE_TOP_N]
