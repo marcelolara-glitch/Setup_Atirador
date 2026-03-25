@@ -517,10 +517,11 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
 
     Estrutura (top→bottom = mais crítico primeiro):
       1. Cabeçalho    — versão, timestamp, FGI, BTC, thresholds, P&L, slots
-      2. Pipeline     — universo→gates→análise, fonte, tempo, candle lock
-      3. Radar LONG   — top-5 tokens com score e seta direcional, máx e gap
-      4. Radar SHORT  — idem
-      5. Veredicto    — AGUARDAR / QUASE (msgs separadas) / CALL (ver msg)
+      2. Risco        — banca, risco/trade, perda máx/dia
+      3. Pipeline     — universo→gates→análise, fonte, tempo, candle lock
+      4. Radar LONG   — top-5 tokens com score e seta direcional, máx e gap
+      5. Radar SHORT  — idem
+      6. Veredicto    — AGUARDAR / QUASE (msgs separadas) / CALL (ver msg)
 
     SEM breakdown de pilares — isso fica nas mensagens QUASE e Call.
     Limite: ≤ 4096 chars (1 mensagem Telegram).
@@ -545,7 +546,12 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
     msg += f"  📋 LONG ≥{thr_l} {ctx['verdict'].split('(')[0].strip()}  |  SHORT ≥{thr_s} {ctx['verdict_short'].split('(')[0].strip()}\n"
     msg += f"  {op_ico} P&L <b>${pnl_dia:+.2f}</b>  |  Slots <b>{slots}/{MAX_TRADES_ABERTOS}</b>\n"
 
-    # ── 2. PIPELINE ─────────────────────────────────────────────────────────
+    # ── 2. RISCO ────────────────────────────────────────────────────────────
+    msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    msg += f"💼 RISCO\n"
+    msg += f"  Banca ${BANKROLL:.0f}  |  Risco/trade ${RISCO_POR_TRADE_USD:.2f}  |  Perda máx/dia ${MAX_PERDA_DIARIA_USD:.2f}\n"
+
+    # ── 3. PIPELINE ─────────────────────────────────────────────────────────
     if candle_lock and candle_lock.get("use_prev"):
         cl = f"⚠️ Candle em formação — penúltimo usado"
     elif candle_lock:
@@ -566,7 +572,7 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
     if sem_tv:
         msg += sem_tv
 
-    # ── 3 + 4. RADAR LONG e SHORT ───────────────────────────────────────────
+    # ── 4 + 5. RADAR LONG e SHORT ───────────────────────────────────────────
     def _radar(lista, direction, thr):
         key = "score" if direction == "LONG" else "score_short"
         ico = "📈" if direction == "LONG" else "📉"
@@ -588,7 +594,7 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
     msg += _radar(results,       "LONG",  thr_l) + "\n\n"
     msg += _radar(results_short, "SHORT", thr_s) + "\n"
 
-    # ── 5. VEREDICTO ────────────────────────────────────────────────────────
+    # ── 6. VEREDICTO ────────────────────────────────────────────────────────
     alertas_long  = [r for r in results       if r["score"]             >= thr_l]
     alertas_short = [r for r in results_short if r.get("score_short",0) >= thr_s]
     max_l = max((r["score"]             for r in results),       default=0)
@@ -3341,8 +3347,6 @@ async def run_scan_async():
             report += f"\n   Aguarde próximo scan ou verifique o TradingView manualmente.\n"
             report += f"\n📋 Log completo: {LOG_FILE}\n"
             LOG.info(report)
-            output_path = f"/tmp/atirador_SCAN_{TS_SCAN}.txt"
-            with open(output_path, "w") as f: f.write(report)
             return report
 
         # -------------------------------------------------------------------
@@ -3827,9 +3831,6 @@ async def run_scan_async():
         report += f"📁 Estado diário: {STATE_FILE}\n"
         report += f"📋 Log completo: {LOG_FILE}\n"
 
-        output_path = f"/tmp/atirador_SCAN_{TS_SCAN}.txt"
-        with open(output_path, "w") as f: f.write(report)
-
         # [v6.1.2] Notificações Telegram — calls + heartbeat
         log_section("ETAPA 6 — Notificações Telegram")
         tg_notify(
@@ -3855,8 +3856,7 @@ async def run_scan_async():
         )
 
         LOG.info(report)
-        LOG.info(f"✅ Scan v6.6.2 concluído em {elapsed:.1f}s | Fonte: {DATA_SOURCE} | "
-                 f"Relatório: {output_path} | Log: {LOG_FILE}")
+        LOG.info(f"✅ Scan v6.6.2 concluído em {elapsed:.1f}s | Fonte: {DATA_SOURCE} | Log: {LOG_FILE}")
         return report
 
 
