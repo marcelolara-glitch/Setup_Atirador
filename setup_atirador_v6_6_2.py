@@ -1219,7 +1219,7 @@ COLS_15M_CANDLES = [
     "Candle.EveningStar|15",
     "Candle.3BlackCrows|15",
     "Candle.Harami.Bearish|15",
-    "Candle.Doji.GraveStone|15",
+    # "Candle.Doji.GraveStone|15",  # removida: API retorna data=null → TypeError (confirmado 25/03/2026)
 ]
 
 # Mantido para compatibilidade com partes do código que referenciam COLS_15M
@@ -1259,7 +1259,7 @@ async def fetch_tv_batch_async(session, symbols, columns, retries=3):
                 elapsed = time.time() - t0
                 raw     = await resp.read()
                 data    = json.loads(raw.decode("utf-8"))
-                for item in data.get("data", []):
+                for item in (data.get("data") or []):  # guard: API retorna "data":null para colunas inválidas
                     sym  = item["s"].replace("BYBIT:", "").replace(".P", "")
                     vals = item["d"]
                     none_cols = [c for c, v in zip(columns, vals) if v is None]

@@ -67,8 +67,9 @@ CRITICOS = [
      False),
 
     # TV batch falhou após todos os retries — scoring comprometido para todos os tokens
-    # (diferente de erros por-item que são tratados individualmente)
-    (r"TV batch falhou após \d+ tentativas",
+    # Padrão exige ≥2 tentativas para excluir o teste individual do diagnóstico
+    # de colunas inválidas (retries=1), que é parte do mecanismo de recuperação.
+    (r"TV batch falhou após [2-9]\d* tentativas",
      "TV batch falhou — scoring comprometido (BB, Volume, ATR sem dados)",
      False),
 
