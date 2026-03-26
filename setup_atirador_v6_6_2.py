@@ -980,9 +980,16 @@ def load_daily_state():
 
 
 def save_daily_state(state):
+    # [v6.6.2] Persiste apenas campos canônicos — descarta vestigiais de versões anteriores
+    # (trades_abertos, pnl_dia, bloqueado, historico, etc.) que não são usados pela v6.6.2.
+    canonical = {
+        "date":          state.get("date", datetime.now(BRT).strftime("%Y-%m-%d")),
+        "score_history": state.get("score_history", {}),
+        "oi_history":    state.get("oi_history", {}),
+    }
     try:
         with open(STATE_FILE, "w") as f:
-            json.dump(state, f, indent=2)
+            json.dump(canonical, f, indent=2)
     except Exception as e:
         LOG.warning(f"⚠️  Erro ao salvar estado diário: {e}")
 
@@ -1075,12 +1082,18 @@ def get_score_trend(state: dict, symbol: str, direction: str = "LONG") -> str:
       →   estável (±0)
       ↓   caiu 1-2 pts
       ↓↓  caiu 3+ pts
+      🔄  flip de direção (era dominante na direção oposta na rodada anterior)
       🆕  aparece pela primeira vez (apenas 1 entrada no histórico)
     """
-    field = "long" if direction == "LONG" else "short"
-    hist  = state.get("score_history", {}).get(symbol, [])
-    if len(hist) == 0: return "🆕"
-    if len(hist) == 1: return "🆕"
+    field     = "long" if direction == "LONG" else "short"
+    opp_field = "short" if direction == "LONG" else "long"
+    hist = state.get("score_history", {}).get(symbol, [])
+    if len(hist) <= 1:
+        return "🆕"
+    # [v6.6.2] Detecta flip de direção: token estava dominante na direção oposta
+    last = hist[-1]
+    if last.get(opp_field, 0) > last.get(field, 0):
+        return "🔄"
     delta = hist[-1][field] - hist[-2][field]
     if delta >= 3:    return "↑↑"
     elif delta >= 1:  return "↑"
@@ -2429,7 +2442,8 @@ def score_candles(ind, direction="LONG"):
             "Candle.EveningStar|15"       : ("Evening Star",       2),
             "Candle.3BlackCrows|15"       : ("3 Black Crows",      2),
             "Candle.Harami.Bearish|15"    : ("Harami Bearish",     1),
-            "Candle.Doji.GraveStone|15"   : ("Gravestone Doji",    1),
+            # "Candle.Doji.GraveStone|15" removida de COLS_15M_CANDLES (API retorna data=null)
+            # e removida aqui também para evitar dead code (confirmado 25/03/2026).
         }
     else:
         checks = {
@@ -2894,7 +2908,7 @@ def score_oi_trend(current_oi_usd: float, symbol: str, state: dict, direction: s
         return 0, f"OI estável ({pct_change:+.1f}% vs média, {current_oi_usd/1e6:.1f}M)"
 
 def calculate_score(d, candles_15m=None, candles_1h=None, candles_4h=None,
-                    fg_value=50, log_breakdown=True, direction="LONG", state=None):
+                    fg_value=50, log_breakdown=False, direction="LONG", state=None):
     """
     Score com 3 camadas independentes. Max: 25 pts (P9 OI acrescenta até +2, base=23).
     [v6.0/v6.1.2] Parâmetro direction="LONG"|"SHORT" inverte a lógica dos pilares.
@@ -3047,17 +3061,28 @@ def calculate_score(d, candles_15m=None, candles_1h=None, candles_4h=None,
         reasons.append(f"⚠️ {data_missing}/{total_kline_pilares} pilares sem dado (klines ausentes)")
     if not reasons: reasons.append(f"Score {final_sc}/25 (sem sinal dominante)")
 
-    if log_breakdown:
-        sym = d.get("base_coin", "?")
-        LOG.debug(f"  SCORE {sym} [{direction}]: {final_sc}/25 | DQ={data_quality:.0%} | klines: "
-                  f"15m={'✅' if candles_15m else '❌'} "
-                  f"1H={'✅' if candles_1h else '❌'} "
-                  f"4H={'✅' if candles_4h else '❌'}")
-        for pilar, pts, max_pts, detail in breakdown:
-            bar = "█" * pts if pts > 0 else ("▒" * abs(pts) if pts < 0 else "·")
-            LOG.debug(f"    {pilar:<24} {pts:>+3}/{max_pts} {bar} {detail}")
-
     return final_sc, reasons, breakdown, data_quality
+
+
+# Pontuação mínima para logar o breakdown detalhado de pilares no arquivo de log.
+# Tokens com score abaixo deste valor são resumidos em 1 linha (DEBUG), evitando
+# que o log de ~100KB/rodada seja dominado por tokens que nunca geraram sinal.
+# Abrange: Radar (≥5), Oportunidades (≥10) e Alertas (≥threshold).
+LOG_BREAKDOWN_MIN_SCORE = 5
+
+
+def log_score_breakdown(sym: str, direction: str, score: int,
+                        breakdown: list, data_quality: float,
+                        candles_15m, candles_1h, candles_4h) -> None:
+    """[v6.6.2] Loga breakdown de pilares em INFO para tokens relevantes (score≥LOG_BREAKDOWN_MIN_SCORE)."""
+    LOG.info(f"  SCORE {sym} [{direction}]: {score}/25 | DQ={data_quality:.0%} | klines: "
+             f"15m={'✅' if candles_15m else '❌'} "
+             f"1H={'✅' if candles_1h else '❌'} "
+             f"4H={'✅' if candles_4h else '❌'}")
+    for pilar, pts, max_pts, detail in breakdown:
+        bar = "█" * pts if pts > 0 else ("▒" * abs(pts) if pts < 0 else "·")
+        LOG.info(f"    {pilar:<24} {pts:>+3}/{max_pts} {bar} {detail}")
+
 
 # ===========================================================================
 # CONTEXTO DE MERCADO E THRESHOLD ADAPTATIVO
@@ -3461,6 +3486,10 @@ async def run_scan_async():
                     fg_value=fg.get("value", 50), direction="LONG")
                 d["score"] = sc; d["reasons"] = reasons; d["breakdown"] = bd
                 d["data_quality"] = dq   # [v6.4.0 A9]
+                if sc >= LOG_BREAKDOWN_MIN_SCORE:
+                    log_score_breakdown(sym, "LONG", sc, bd, dq, k15m, k1h, k4h)
+                else:
+                    LOG.debug(f"  SCORE {sym} [LONG]: {sc}/25 | DQ={dq:.0%} (abaixo do radar)")
                 # [v6.3.0 A6] Alerta bloqueado se OI é estimado (não verificado)
                 if d.get("oi_estimado"):
                     LOG.warning(f"  ⚠️  {sym}: OI ESTIMADO (fallback vol*0.1) — alerta LONG bloqueado, vai para Observação")
@@ -3493,6 +3522,10 @@ async def run_scan_async():
                     fg_value=fg.get("value", 50), direction="SHORT", state=state)
                 d["score_short"] = sc; d["reasons_short"] = reasons; d["breakdown_short"] = bd
                 d["data_quality_short"] = dq   # [v6.4.0 A9]
+                if sc >= LOG_BREAKDOWN_MIN_SCORE:
+                    log_score_breakdown(sym, "SHORT", sc, bd, dq, k15m, k1h, k4h)
+                else:
+                    LOG.debug(f"  SCORE {sym} [SHORT]: {sc}/25 | DQ={dq:.0%} (abaixo do radar)")
                 # [v6.3.0 A6] Alerta bloqueado se OI é estimado (não verificado)
                 if d.get("oi_estimado"):
                     LOG.warning(f"  ⚠️  {sym}: OI ESTIMADO (fallback vol*0.1) — alerta SHORT bloqueado")
