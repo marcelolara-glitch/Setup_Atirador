@@ -64,6 +64,25 @@ def _log(line: str):
     print(line)
 
 
+def _tg_register_commands():
+    """Registra o menu de comandos visível no Telegram (setMyCommands)."""
+    commands = [
+        {"command": "status",   "description": "Último scan e sizing de risco"},
+        {"command": "radar",    "description": "Ranking dos tokens do último scan"},
+        {"command": "pilares",  "description": "Explicação dos pilares do score"},
+        {"command": "scan",     "description": "Disparar scan imediato"},
+        {"command": "ajuda",    "description": "Esta mensagem"},
+    ]
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setMyCommands",
+            json={"commands": commands},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
 def _tg_send(text: str) -> bool:
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return False
@@ -329,6 +348,8 @@ def main():
     if not TELEGRAM_CHAT_ID:
         print("⚠  TELEGRAM_CHAT_ID não definido — bot inativo.")
         sys.exit(0)
+
+    _tg_register_commands()
 
     bot_state = _load_bot_state()
     offset    = bot_state.get("last_update_id", 0) + 1
