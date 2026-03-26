@@ -71,6 +71,7 @@ def _tg_register_commands():
         {"command": "radar",    "description": "Ranking dos tokens do último scan"},
         {"command": "pilares",  "description": "Explicação dos pilares do score"},
         {"command": "scan",     "description": "Disparar scan imediato"},
+        {"command": "analisar", "description": "Análise completa de um token (ex: /analisar BTCUSDT)"},
         {"command": "ajuda",    "description": "Esta mensagem"},
     ]
     try:
@@ -164,11 +165,13 @@ def cmd_ajuda() -> str:
     return (
         "🤖 <b>ATIRADOR — Comandos</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "/status   — último scan e sizing de risco\n"
-        "/radar    — ranking dos tokens do último scan\n"
-        "/pilares  — explicação dos pilares do score\n"
-        "/scan     — disparar scan imediato\n"
-        "/ajuda    — esta mensagem"
+        "/status           — último scan e sizing de risco\n"
+        "/radar            — ranking dos tokens do último scan\n"
+        "/pilares          — explicação dos pilares do score\n"
+        "/scan             — disparar scan imediato\n"
+        "/analisar SYMBOL  — análise completa de 1 token\n"
+        "                    ex: /analisar BTCUSDT\n"
+        "/ajuda            — esta mensagem"
     )
 
 
@@ -321,6 +324,49 @@ def cmd_scan() -> str:
         return f"❌ Erro ao disparar scan: {exc}"
 
 
+def cmd_analisar(symbol: str | None) -> str:
+    """
+    Dispara análise individual de um token via workflow_dispatch.
+    Retorna mensagem de confirmação ou erro.
+    """
+    if not symbol:
+        return (
+            "⚠️ Informe o símbolo do token.\n"
+            "Exemplo: /analisar BTCUSDT"
+        )
+
+    # Normaliza símbolo
+    sym = symbol.upper().strip().replace("/", "").replace("-", "")
+    if not sym.endswith("USDT"):
+        sym += "USDT"
+
+    if not GITHUB_TOKEN or not GITHUB_REPOSITORY:
+        return "❌ GITHUB_TOKEN ou GITHUB_REPOSITORY não configurados."
+
+    try:
+        resp = requests.post(
+            f"https://api.github.com/repos/{GITHUB_REPOSITORY}/actions/workflows/analisar.yml/dispatches",
+            headers={
+                "Authorization": f"Bearer {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json={"ref": "main", "inputs": {"symbol": sym}},
+            timeout=15,
+        )
+        if resp.status_code in (204, 200):
+            return (
+                f"🔍 <b>Análise de {sym} disparada!</b>\n"
+                f"Resultado completo (score LONG + SHORT, SL, TPs) chega em ~2 min."
+            )
+        return (
+            f"❌ Falha ao disparar análise (HTTP {resp.status_code}).\n"
+            "Tente novamente ou acesse o GitHub Actions manualmente."
+        )
+    except Exception as exc:
+        return f"❌ Erro ao disparar análise de {sym}: {exc}"
+
+
 # ── Polling principal ─────────────────────────────────────────────────────────
 
 HANDLERS = {
@@ -330,6 +376,7 @@ HANDLERS = {
     "/radar":    cmd_radar,
     "/scan":     cmd_scan,
     "/pilares":  cmd_pilares,
+    # /analisar é tratado separadamente no loop (exige argumento)
 }
 
 
@@ -396,6 +443,15 @@ def main():
         if not command:
             _tg_send(cmd_ajuda())
             _log(f"{_ts()} | mensagem sem comando → ajuda enviada")
+            continue
+
+        # /analisar exige argumento — tratado separadamente
+        if command == "/analisar":
+            parts  = text.strip().split(maxsplit=1)
+            symbol = parts[1] if len(parts) > 1 else None
+            response = cmd_analisar(symbol)
+            ok = _tg_send(response)
+            _log(f"{_ts()} | /analisar {symbol} → {'enviado ✅' if ok else 'falhou ❌'}")
             continue
 
         handler = HANDLERS.get(command)

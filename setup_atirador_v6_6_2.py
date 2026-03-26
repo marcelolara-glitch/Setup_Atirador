@@ -1760,6 +1760,63 @@ def _fetch_okx_tickers_with_oi():
         return None
 
 
+async def _fetch_token_okx_async(session: aiohttp.ClientSession, symbol: str) -> dict | None:
+    """
+    [analisar] Busca dados de um único token via OKX (ticker + OI + FR) em paralelo.
+    symbol: formato BTCUSDT → converte para BTC-USDT-SWAP internamente.
+    Retorna dict no mesmo formato de _parse_okx_tickers(), ou None se token não existir.
+    """
+    base    = symbol.replace("USDT", "")
+    inst_id = f"{base}-USDT-SWAP"
+    hdrs    = {"User-Agent": "scanner/6.6.2", "Accept-Encoding": "gzip"}
+
+    async def _get(url):
+        try:
+            async with session.get(url, headers=hdrs,
+                                   timeout=aiohttp.ClientTimeout(total=10)) as r:
+                return await r.json(content_type=None)
+        except Exception as exc:
+            LOG.debug(f"    _fetch_token_okx: {url} → {exc}")
+            return {}
+
+    ticker_r, oi_r, fr_r = await asyncio.gather(
+        _get(f"https://www.okx.com/api/v5/market/ticker?instId={inst_id}"),
+        _get(f"https://www.okx.com/api/v5/public/open-interest?instType=SWAP&instId={inst_id}"),
+        _get(f"https://www.okx.com/api/v5/public/funding-rate?instId={inst_id}"),
+    )
+
+    tickers = ticker_r.get("data", []) if isinstance(ticker_r, dict) else []
+    if not tickers:
+        return None
+
+    t       = tickers[0]
+    price   = sf(t.get("last", 0))
+    if price <= 0:
+        return None
+
+    turnover = sf(t.get("volCcy24h", 0))
+    open24h  = sf(t.get("open24h", 0))
+    pct_chg  = ((price - open24h) / open24h * 100) if open24h > 0 else 0.0
+
+    oi_items = oi_r.get("data", []) if isinstance(oi_r, dict) else []
+    oi_usd   = sf(oi_items[0].get("oiUsd", 0)) if oi_items else 0.0
+
+    fr_items = fr_r.get("data", []) if isinstance(fr_r, dict) else []
+    fr_val   = sf(fr_items[0].get("fundingRate", 0)) if fr_items else 0.0
+
+    return {
+        "symbol"          : symbol,
+        "base_coin"       : base,
+        "price"           : price,
+        "turnover_24h"    : turnover,
+        "oi_usd"          : oi_usd,
+        "oi_estimado"     : oi_usd <= 0,
+        "volume_24h"      : sf(t.get("vol24h", 0)),
+        "funding_rate"    : fr_val,
+        "price_change_24h": pct_chg,
+    }
+
+
 def _fetch_okx_funding_rates(symbols_okx: list) -> dict:
     """
     [v6.6.2] Busca Funding Rates reais da OKX via endpoint dedicado.
@@ -3074,6 +3131,134 @@ def calculate_score(d, candles_15m=None, candles_1h=None, candles_4h=None,
     return final_sc, reasons, breakdown, data_quality
 
 
+def _score_forcado(d: dict, candles_15m, candles_1h, candles_4h,
+                   fg_value: float, state: dict, direction: str) -> tuple:
+    """
+    [analisar] Score com todos os 9 pilares, sem rejeitar pelo gate 4H/1H.
+
+    Diferença de calculate_score():
+      - Gates 4H/1H são avaliados mas NÃO causam retorno -1.
+        Resultado de cada gate incluído no breakdown como entry max_pts=0.
+      - Pump/Dump block (-99) também não é retornado — apenas anotado no breakdown.
+      - Retorna (score, breakdown, data_quality, gate_4h_ok, gate_1h_ok).
+
+    O breakdown tem 2 entradas extras no início (Gate 4H, Gate 1H) com max_pts=0,
+    seguidas dos 9 pilares na ordem normal de calculate_score().
+    """
+    sc           = 0
+    breakdown    = []
+    data_missing = 0
+
+    # ── Gates (informativos) ────────────────────────────────────────────
+    s4h = d.get("summary_4h", "NEUTRAL")
+    if direction == "SHORT":
+        gate_4h_ok = "BUY" not in s4h
+    else:
+        gate_4h_ok = "SELL" not in s4h
+    gate_4h_lbl = "✅ OK" if gate_4h_ok else "❌ falhou (análise forçada)"
+    breakdown.append(("Gate 4H", 0, 0, f"{s4h} — {gate_4h_lbl}"))
+
+    s1h = d.get("summary_1h", "NEUTRAL")
+    if direction == "SHORT":
+        gate_1h_ok = "SELL" in s1h
+    else:
+        gate_1h_ok = "BUY" in s1h
+    gate_1h_lbl = "✅ OK" if gate_1h_ok else "❌ falhou (análise forçada)"
+    breakdown.append(("Gate 1H", 0, 0, f"{s1h} — {gate_1h_lbl}"))
+
+    price = d.get("price", 0)
+
+    # ── P4 — Zonas de Liquidez 4H ───────────────────────────────────────
+    if candles_4h:
+        lz_sc, lz_det = analyze_liquidity_zones_4h(candles_4h, price, direction)
+    else:
+        lz_sc, lz_det = 0, "⚠️ DADO AUSENTE — klines 4H"
+        data_missing += 1
+    sc += lz_sc
+    breakdown.append(("P4 Liquidez 4H", lz_sc, 3, lz_det))
+
+    # ── P5 — Figuras Gráficas 4H ────────────────────────────────────────
+    if candles_4h:
+        cp_sc, cp_det = analyze_chart_patterns_4h(candles_4h, direction)
+    else:
+        cp_sc, cp_det = 0, "⚠️ DADO AUSENTE — klines 4H"
+        data_missing += 1
+    sc += cp_sc
+    breakdown.append(("P5 Figuras 4H", cp_sc, 2, cp_det))
+
+    # ── P6 — CHOCH / BOS 4H ─────────────────────────────────────────────
+    if candles_4h:
+        cb_sc, cb_det = analyze_choch_bos_4h(candles_4h, price, direction)
+    else:
+        cb_sc, cb_det = 0, "⚠️ DADO AUSENTE — klines 4H"
+        data_missing += 1
+    sc += cb_sc
+    breakdown.append(("P6 CHOCH/BOS 4H", cb_sc, 3, cb_det))
+
+    # ── P-1H — Suporte / Resistência 1H ────────────────────────────────
+    if candles_1h:
+        if direction == "SHORT":
+            s1h_sc, s1h_det = analyze_resistance_1h(candles_1h, price)
+        else:
+            s1h_sc, s1h_det = analyze_support_1h(candles_1h, price)
+    else:
+        s1h_sc, s1h_det = 0, "⚠️ DADO AUSENTE — klines 1H"
+        data_missing += 1
+    sc += s1h_sc
+    label_1h = "P-1H Resistência 1H" if direction == "SHORT" else "P-1H Suporte 1H"
+    breakdown.append((label_1h, s1h_sc, 4, s1h_det))
+
+    # ── P1 — Bollinger Bands 15m ────────────────────────────────────────
+    bb_sc, bb_det = score_bollinger(d, direction)
+    sc += bb_sc
+    breakdown.append(("P1 Bollinger 15m", bb_sc, 3, bb_det))
+
+    # ── P2 — Padrões de Candle 15m ──────────────────────────────────────
+    ind_15m = d.get("_ind_15m", {})
+    cp_list, ca_sc = score_candles(ind_15m, direction)
+    sc += ca_sc
+    det_candles = f"Padrões: {', '.join(cp_list)}" if cp_list else "Nenhum padrão detectado"
+    breakdown.append(("P2 Candles 15m", ca_sc, 4, det_candles))
+
+    # ── P3 — Funding Rate ────────────────────────────────────────────────
+    fr = d.get("funding_rate", 0)
+    fr_sc, fr_det = score_funding_rate(fr, direction)
+    sc += fr_sc
+    breakdown.append(("P3 Funding Rate", fr_sc, 2, fr_det))
+
+    # ── P7 — Filtro Pump/Dump (informativo na análise forçada) ──────────
+    pump_sc_raw, pump_det = score_pump_filter(d.get("price_change_24h", 0), direction)
+    if pump_sc_raw is None:
+        pump_sc  = 0
+        pump_det = f"🚫 PUMP/DUMP BLOCK — {pump_det}"
+    else:
+        pump_sc = pump_sc_raw
+    sc += pump_sc
+    breakdown.append(("P7 Pump/Dump", pump_sc, 0, pump_det))
+
+    # ── P8 — Volume 15m ─────────────────────────────────────────────────
+    if candles_15m:
+        vol_sc, vol_det = score_volume_15m(candles_15m, fg_value)
+    else:
+        vol_sc, vol_det = 0, "⚠️ DADO AUSENTE — klines 15m"
+        data_missing += 1
+    sc += vol_sc
+    breakdown.append(("P8 Volume 15m", vol_sc, 2, vol_det))
+
+    # ── P9 — OI Crescente ───────────────────────────────────────────────
+    if state is not None:
+        oi_sc, oi_det = score_oi_trend(d.get("oi_usd", 0), d.get("symbol", ""), state, direction)
+    else:
+        oi_sc, oi_det = 0, "OI sem histórico (primeiro scan)"
+    sc += oi_sc
+    breakdown.append(("P9 OI Crescente", oi_sc, 2, oi_det))
+
+    final_sc     = max(sc, 0)
+    total_klines = 5   # P4, P5, P6, P-1H, P8
+    data_quality = round(1.0 - data_missing / total_klines, 2)
+    return final_sc, breakdown, data_quality, gate_4h_ok, gate_1h_ok
+
+
 # Pontuação mínima para logar o breakdown detalhado de pilares no arquivo de log.
 # Tokens com score abaixo deste valor são resumidos em 1 linha (DEBUG), evitando
 # que o log de ~100KB/rodada seja dominado por tokens que nunca geraram sinal.
@@ -3804,9 +3989,381 @@ async def run_scan_async():
         return report
 
 
+# ===========================================================================
+# ANÁLISE INDIVIDUAL DE TOKEN [analisar]
+# ===========================================================================
+# Exposto via: python setup_atirador.py --analisar BTCUSDT
+# Reutiliza todas as funções de análise existentes (_score_forcado, pilares,
+# calc_trade_params, etc.). Nenhum código de análise duplicado aqui.
+# ===========================================================================
+
+# Hints por pilar quando score = 0 — guia visual para o trader no gráfico.
+# Chave: (nome_pilar, direction). Exibidos somente quando pts=0 e max_pts>0.
+_ANALISAR_HINTS = {
+    ("P1 Bollinger 15m", "LONG") : "→ <25% do canal = +1pt | <5% da banda inferior = +3pts",
+    ("P1 Bollinger 15m", "SHORT"): "→ >75% do canal = +1pt | >95% da banda superior = +3pts",
+    ("P2 Candles 15m",   "LONG") : "→ Observar no 15m: Hammer, Engulfing Bullish, Morning Star",
+    ("P2 Candles 15m",   "SHORT"): "→ Observar no 15m: Shooting Star, Engulfing Bearish, Evening Star",
+    ("P5 Figuras 4H",    "LONG") : "→ Falling Wedge, Triângulo Asc/Simétrico = +2pts",
+    ("P5 Figuras 4H",    "SHORT"): "→ Rising Wedge, Triângulo Desc/Simétrico = +2pts",
+    ("P6 CHOCH/BOS 4H",  "LONG") : "→ BOS Bullish = +2pts | CHOCH Bullish (reversão) = +3pts",
+    ("P6 CHOCH/BOS 4H",  "SHORT"): "→ BOS Bearish = +2pts | CHOCH Bearish (reversão) = +3pts",
+    ("P-1H Suporte 1H",  "LONG") : "→ Order Block 1H alinhado adicionaria +2pts extra",
+    ("P-1H Resistência 1H","SHORT"):"→ Order Block 1H alinhado adicionaria +2pts extra",
+    ("P9 OI Crescente",  "LONG") : "→ Crescimento >5% vs média = +1pt | >15% = +2pts",
+    ("P9 OI Crescente",  "SHORT"): "→ Crescimento >5% vs média = +1pt | >15% = +2pts",
+}
+
+# Agrupamento dos pilares por camada de análise (para exibição no breakdown rico)
+_ANALISAR_CAMADAS = [
+    ("🏗 Estrutura 4H",    ["P4 Liquidez 4H", "P5 Figuras 4H", "P6 CHOCH/BOS 4H"]),
+    ("🔍 Confirmação 1H",  ["P-1H Suporte 1H", "P-1H Resistência 1H"]),
+    ("⚡ Gatilho 15m",     ["P1 Bollinger 15m", "P2 Candles 15m"]),
+    ("🌐 Contexto",        ["P3 Funding Rate", "P8 Volume 15m", "P9 OI Crescente", "P7 Pump/Dump"]),
+]
+
+
+def _analisar_veredicto(score: int, thr: int) -> str:
+    """Veredicto compacto de uma direção vs threshold adaptativo."""
+    if thr == 99:
+        return "🔴 BOT OFF"
+    diff = score - thr
+    if   diff >= 0:  return f"✅ CALL ({score}/{thr})"
+    elif diff >= -4: return f"⚠️ QUASE ({score}/{thr}, faltam {-diff})"
+    elif diff >= -8: return f"🟡 MONIT ({score}/{thr}, faltam {-diff})"
+    else:            return f"🔵 AGUARDAR ({score}/{thr}, faltam {-diff})"
+
+
+def _analisar_fmt_pilares_rico(bd: list, direction: str) -> str:
+    """
+    [analisar] Formata breakdown pilar a pilar com detalhes completos, sem truncamento.
+
+    Organizado em 4 camadas: Estrutura 4H | Confirmação 1H | Gatilho 15m | Contexto.
+    Para cada pilar:
+      - Ícone + nome + pts/max na primeira linha
+      - Descrição completa (cada item do '|' em linha própria)
+      - Hint de interpretação quando pts=0 (o que observar no gráfico)
+    Gates exibidos como linha compacta antes das camadas.
+    P7 exibido apenas se penalizou ou bloqueou; caso normal fica compacto no Contexto.
+    """
+    # Indexar o breakdown por nome de pilar
+    bd_map = {nome: (pts, max_pts, det) for nome, pts, max_pts, det in bd}
+
+    lines = []
+
+    # ── Gates ────────────────────────────────────────────────────────────
+    g4  = bd_map.get("Gate 4H",  (0, 0, ""))
+    g1  = bd_map.get("Gate 1H",  (0, 0, ""))
+    g4s = g4[2].split("—")[0].strip()   # só o valor (ex: "NEUTRAL")
+    g1s = g1[2].split("—")[0].strip()
+    g4o = "✅" if "✅ OK" in g4[2] else "❌"
+    g1o = "✅" if "✅ OK" in g1[2] else "❌"
+    g4f = "" if "✅ OK" in g4[2] else " (forçado)"
+    g1f = "" if "✅ OK" in g1[2] else " (forçado)"
+    lines.append(f"  Gates: 4H {g4s} {g4o}{g4f}  |  1H {g1s} {g1o}{g1f}")
+
+    # ── Camadas ──────────────────────────────────────────────────────────
+    for titulo_camada, nomes_pilar in _ANALISAR_CAMADAS:
+        # Calcular pts obtidos / pts máximos da camada (excluindo P7)
+        cam_pts = cam_max = 0
+        for n in nomes_pilar:
+            if n in bd_map:
+                pts, mx, _ = bd_map[n]
+                cam_pts += max(pts, 0)
+                cam_max += mx
+
+        # Título da camada (com total se tiver pts pontuáveis)
+        if cam_max > 0:
+            lines.append(f"\n{titulo_camada}   ({cam_pts}/{cam_max})")
+        else:
+            lines.append(f"\n{titulo_camada}")
+
+        p7_det = None   # P7 tratado separadamente no final da camada Contexto
+
+        for nome in nomes_pilar:
+            if nome not in bd_map:
+                continue
+            pts, max_pts, det = bd_map[nome]
+
+            # P7: mostrar compacto no final da seção Contexto, só se relevante
+            if nome == "P7 Pump/Dump":
+                p7_det = (pts, det)
+                continue
+
+            # Ícone do pilar
+            if "AUSENTE" in det:
+                ico = "⚠️"
+            elif pts > 0:
+                ico = "✅"
+            elif pts < 0:
+                ico = "🔻"
+            else:
+                ico = "⬜"
+
+            # Nome curto (sem prefixo de camada)
+            nome_curto = (nome.replace("P4 Liquidez 4H", "P4 Liquidez")
+                              .replace("P5 Figuras 4H",  "P5 Figuras")
+                              .replace("P6 CHOCH/BOS 4H","P6 CHOCH/BOS")
+                              .replace("P-1H Suporte 1H","P-1H Suporte")
+                              .replace("P-1H Resistência 1H","P-1H Resistência")
+                              .replace("P1 Bollinger 15m","P1 Bollinger")
+                              .replace("P2 Candles 15m", "P2 Candles")
+                              .replace("P3 Funding Rate","P3 Funding")
+                              .replace("P8 Volume 15m",  "P8 Volume")
+                              .replace("P9 OI Crescente","P9 OI"))
+
+            if max_pts > 0:
+                lines.append(f"  {ico} {nome_curto:<14}  {pts:>+}/{max_pts}")
+            else:
+                lines.append(f"  {ico} {nome_curto}")
+
+            # Descrição completa — cada item do '|' em linha própria
+            partes = [p.strip() for p in det.split("|") if p.strip()]
+            for parte in partes:
+                lines.append(f"       {parte}")
+
+            # Hint quando pts = 0 e pilar é pontuável
+            if pts == 0 and max_pts > 0 and "AUSENTE" not in det:
+                hint = _ANALISAR_HINTS.get((nome, direction))
+                if hint:
+                    lines.append(f"       {hint}")
+
+        # P7 compacto no final da seção Contexto
+        if p7_det is not None:
+            pts7, det7 = p7_det
+            if pts7 < 0 or "BLOCK" in det7:
+                lines.append(f"  🔻 P7 Pump/Dump  {pts7}/0")
+                lines.append(f"       {det7}")
+            else:
+                # Normal: linha única compacta
+                lines.append(f"  (P7 {det7})")
+
+    return "\n".join(lines)
+
+
+def _analisar_fmt_params(t: dict | None, direction: str) -> str:
+    """Formata parâmetros de trade para a análise individual."""
+    if not t:
+        return "  ⚠️ ATR 15m indisponível — sem parâmetros calculáveis"
+    sl_sinal = "+" if direction == "SHORT" else "−"
+    sl_nota  = "← SL ACIMA" if direction == "SHORT" else "← SL abaixo"
+    tp_sinal = "−" if direction == "SHORT" else "+"
+    aviso    = " ⚠️ margem excedida" if t.get("margem_excedida") else ""
+    return (
+        f"  Entrada: <b>${_fmt_price(t['entry'])}</b>   ATR 15m: ${_fmt_price(t['atr'])}\n"
+        f"  🛑 SL  ${_fmt_price(t['sl'])}  ({sl_sinal}{t['sl_distance_pct']:.2f}%) {sl_nota}\n"
+        f"  🎯 TP1 ${_fmt_price(t['tp1'])}  ({tp_sinal}{t['sl_distance_pct']:.2f}%) → fechar 50%\n"
+        f"  🎯 TP2 ${_fmt_price(t['tp2'])}  ({tp_sinal}{t['sl_distance_pct']*2:.2f}%) → fechar 30%\n"
+        f"  🎯 TP3 ${_fmt_price(t['tp3'])}  ({tp_sinal}{t['sl_distance_pct']*3:.2f}%) → fechar 20%\n"
+        f"  ⚡ {t['alavancagem']}x  |  Margem ${t['margem_usd']:.0f}{aviso}"
+        f"  |  Risco ${t['risco_usd']:.2f}  |  Ganho ${t['ganho_rr2_usd']:.2f}"
+    )
+
+
+def _analisar_fmt_msg(symbol: str, d: dict, ctx: dict,
+                      score_l: int, bd_l: list, dq_l: float,
+                      score_s: int, bd_s: list, dq_s: float,
+                      trade_l: dict | None, trade_s: dict | None,
+                      elapsed: float) -> str:
+    """Monta a mensagem Telegram completa da análise individual."""
+    sep   = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    base  = d.get("base_coin", symbol.replace("USDT", ""))
+    price = d.get("price", 0)
+    fr    = d.get("funding_rate", 0)
+    oi    = d.get("oi_usd", 0)
+    vol   = d.get("turnover_24h", 0)
+    chg   = d.get("price_change_24h", 0)
+    ts    = datetime.now(BRT).strftime("%d/%m/%Y %H:%M BRT")
+
+    thr_l = ctx["threshold"]
+    thr_s = ctx["threshold_short"]
+
+    dq_aviso_l = f" ⚠️ dados {dq_l:.0%}" if dq_l < 1.0 else ""
+    dq_aviso_s = f" ⚠️ dados {dq_s:.0%}" if dq_s < 1.0 else ""
+
+    bd_l_str = _analisar_fmt_pilares_rico(bd_l, "LONG")
+    bd_s_str = _analisar_fmt_pilares_rico(bd_s, "SHORT")
+
+    msg = (
+        f"🔍 <b>ANÁLISE — {base}</b>  |  {ts}\n"
+        f"{sep}\n"
+        f"📊 FGI {ctx['fg']} | BTC 4H: {ctx['btc']}\n"
+        f"📈 LONG: {ctx['verdict']} (thr ≥{thr_l})\n"
+        f"📉 SHORT: {ctx['verdict_short']} (thr ≥{thr_s})\n"
+        f"{sep}\n"
+        f"💹 <b>${_fmt_price(price)}</b>  ({chg:+.2f}% 24h)"
+        f"  |  FR {fr:.4%}  |  OI ${oi/1e6:.1f}M  |  Vol ${vol/1e6:.1f}M\n"
+        f"{sep}\n"
+        f"📈 <b>LONG — {_analisar_veredicto(score_l, thr_l)}</b>{dq_aviso_l}\n"
+        f"{bd_l_str}\n"
+        f"{sep}\n"
+        f"📉 <b>SHORT — {_analisar_veredicto(score_s, thr_s)}</b>{dq_aviso_s}\n"
+        f"{bd_s_str}\n"
+        f"{sep}\n"
+        f"⚙️ <b>PARÂMETROS LONG</b>\n"
+        f"{_analisar_fmt_params(trade_l, 'LONG')}\n"
+        f"{sep}\n"
+        f"⚙️ <b>PARÂMETROS SHORT</b>\n"
+        f"{_analisar_fmt_params(trade_s, 'SHORT')}\n"
+        f"{sep}\n"
+        f"⏱ {elapsed:.1f}s  |  Gates ignorados — análise forçada para {base}"
+    )
+    return msg
+
+
+async def analisar_token_async(symbol: str):
+    """
+    [analisar] Pipeline completo de análise individual de token.
+    Busca dados frescos (OKX + TV + klines), calcula score forçado para LONG e SHORT,
+    e envia mensagem Telegram com breakdown completo por pilar.
+    """
+    global LOG, LOG_FILE, TS_SCAN
+    LOG, LOG_FILE, TS_SCAN = setup_logger()
+
+    t_start = time.time()
+    LOG.info(f"\n🔍 ANÁLISE INDIVIDUAL — {symbol}")
+    LOG.info("=" * 55)
+
+    state = load_daily_state()
+
+    async with aiohttp.ClientSession() as session:
+
+        # ── ETAPA 1: FGI + ticker OKX + TV 4H (inclui BTCUSDT para contexto) ─
+        LOG.info("  1/4 — FGI + OKX ticker + TradingView 4H...")
+        symbols_4h = list({symbol, "BTCUSDT"})
+
+        fg, d, tv_4h = await asyncio.gather(
+            fetch_fear_greed_async(session),
+            _fetch_token_okx_async(session, symbol),
+            fetch_tv_batch_async(session, symbols_4h, COLS_4H),
+        )
+
+        if d is None:
+            msg = (
+                f"❌ Token <b>{symbol}</b> não encontrado na OKX.\n"
+                f"Verifique o símbolo (ex: BTCUSDT, ETHUSDT).\n"
+                f"O par precisa ter contrato perpétuo USDT na OKX."
+            )
+            _tg_send(msg)
+            LOG.error(f"  {symbol} não encontrado na OKX")
+            return
+
+        # 4H do token analisado
+        ind_4h = tv_4h.get(symbol, {})
+        raw_4h = ind_4h.get("Recommend.All|240")
+        rsi_4h = sf(ind_4h.get("RSI|240"), default=50.0)
+        s4h    = recommendation_from_value(raw_4h) if raw_4h is not None else "NEUTRAL"
+        d["summary_4h"] = s4h
+        d["rsi_4h"]     = rsi_4h
+        LOG.info(f"  4H: {s4h} (RSI={rsi_4h:.1f})")
+
+        # BTC 4H para contexto de mercado
+        btc_raw    = tv_4h.get("BTCUSDT", {}).get("Recommend.All|240")
+        btc_4h_str = recommendation_from_value(btc_raw) if btc_raw is not None else "NEUTRAL"
+        ctx        = analyze_market_context(fg, btc_4h_str)
+        fg_val     = fg.get("value", 50)
+        LOG.info(f"  Mercado: FGI={fg_val} | BTC={btc_4h_str} | "
+                 f"thr_L={ctx['threshold']} | thr_S={ctx['threshold_short']}")
+
+        # ── ETAPA 2: TV 1H + 15m ─────────────────────────────────────────
+        LOG.info("  2/4 — TradingView 1H + 15m...")
+        tv_1h, tv_tech, tv_candles = await asyncio.gather(
+            fetch_tv_batch_async(session, [symbol], COLS_1H),
+            fetch_tv_batch_async(session, [symbol], COLS_15M_TECH),
+            fetch_tv_batch_async(session, [symbol], COLS_15M_CANDLES),
+        )
+
+        ind_1h = tv_1h.get(symbol, {})
+        raw_1h = ind_1h.get("Recommend.All|60")
+        s1h    = recommendation_from_value(raw_1h) if raw_1h is not None else "NEUTRAL"
+        d["summary_1h"] = s1h
+        LOG.info(f"  1H: {s1h}")
+
+        ind_15m = {**tv_tech.get(symbol, {}), **tv_candles.get(symbol, {})}
+        d["_ind_15m"]     = ind_15m
+        d["bb_upper_15m"] = sf(ind_15m.get("BB.upper|15"))
+        d["bb_lower_15m"] = sf(ind_15m.get("BB.lower|15"))
+        d["atr_15m"]      = sf(ind_15m.get("ATR|15"))
+        LOG.info(f"  15m: ATR={d['atr_15m']:.6f} | "
+                 f"BB [{d['bb_lower_15m']:.4f} – {d['bb_upper_15m']:.4f}]")
+
+        # ── ETAPA 3: Klines 15m / 1H / 4H ──────────────────────────────
+        LOG.info("  3/4 — Klines 15m / 1H / 4H...")
+        candle_lock = get_candle_lock_status()
+        if candle_lock["use_prev"]:
+            LOG.warning("  ⚠️ Candle lock ativo — usando penúltima vela 15m")
+
+        k15m, k1h, k4h = await asyncio.gather(
+            fetch_klines_async(session, symbol, "15m"),
+            fetch_klines_cached_async(session, symbol, "1H"),
+            fetch_klines_cached_async(session, symbol, "4H"),
+        )
+        k15m = apply_candle_lock(k15m or [], candle_lock)
+        LOG.info(f"  Klines: 15m={len(k15m)} | 1H={len(k1h or [])} | 4H={len(k4h or [])}")
+
+        # ── ETAPA 4: Score forçado LONG + SHORT ─────────────────────────
+        LOG.info("  4/4 — Score forçado (LONG + SHORT)...")
+
+        score_l, bd_l, dq_l, g4l, g1l = _score_forcado(
+            d, k15m, k1h, k4h, fg_val, state, "LONG"
+        )
+        score_s, bd_s, dq_s, g4s, g1s = _score_forcado(
+            d, k15m, k1h, k4h, fg_val, state, "SHORT"
+        )
+
+        thr_l = ctx["threshold"]
+        thr_s = ctx["threshold_short"]
+        LOG.info(f"  LONG:  {score_l}/25 (thr≥{thr_l}) | "
+                 f"gate4H={'✅' if g4l else '❌'} | gate1H={'✅' if g1l else '❌'} | dq={dq_l:.0%}")
+        LOG.info(f"  SHORT: {score_s}/25 (thr≥{thr_s}) | "
+                 f"gate4H={'✅' if g4s else '❌'} | gate1H={'✅' if g1s else '❌'} | dq={dq_s:.0%}")
+
+        # ── Parâmetros de trade ──────────────────────────────────────────
+        price   = d.get("price", 0)
+        atr_val = d.get("atr_15m", 0)
+        trade_l = calc_trade_params(price, atr_val, score=score_l, threshold=thr_l)
+        trade_s = calc_trade_params_short(price, atr_val, score=score_s, threshold=thr_s)
+
+        # ── Formata e envia ──────────────────────────────────────────────
+        elapsed = time.time() - t_start
+        msg     = _analisar_fmt_msg(
+            symbol, d, ctx,
+            score_l, bd_l, dq_l,
+            score_s, bd_s, dq_s,
+            trade_l, trade_s, elapsed,
+        )
+
+        LOG.info(f"\n{'='*55}")
+        LOG.info(f"  LONG {score_l}/25 (thr≥{thr_l}) | SHORT {score_s}/25 (thr≥{thr_s})")
+        LOG.info(f"  Mensagem: {len(msg)} chars | {elapsed:.1f}s")
+        LOG.info(f"{'='*55}")
+
+        if len(msg) > 4096:
+            msg = msg[:4050] + "\n\n⚠️ [msg truncada — 4096 chars]"
+
+        sent = _tg_send(msg)
+        if sent:
+            LOG.info("  ✅ Telegram enviado")
+        else:
+            LOG.warning("  ⚠️  Falha Telegram — exibindo no terminal")
+            print("\n" + msg)
+
+
 def main():
-    # Logger inicializado dentro de run_scan_async (precisa do timestamp de execução)
-    asyncio.run(run_scan_async())
+    """
+    Ponto de entrada único.
+      python setup_atirador.py                   → scan normal
+      python setup_atirador.py --analisar BTCUSDT [ETHUSDT ...]  → análise individual
+    """
+    if len(sys.argv) >= 3 and sys.argv[1] == "--analisar":
+        for raw in sys.argv[2:]:
+            sym = raw.upper().strip().replace("/", "").replace("-", "")
+            if not sym.endswith("USDT"):
+                sym += "USDT"
+            asyncio.run(analisar_token_async(sym))
+    else:
+        # Logger inicializado dentro de run_scan_async (precisa do timestamp de execução)
+        asyncio.run(run_scan_async())
 
 if __name__ == "__main__":
     main()
