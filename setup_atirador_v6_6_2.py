@@ -568,16 +568,16 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
         max_sc = max((r[key] if direction == "LONG" else r.get(key, 0)
                       for r in lista), default=0)
         falta  = thr - max_sc
-        tokens = []
+        lines = []
         for r in lista[:5]:
             sc  = r[key] if direction == "LONG" else r.get(key, 0)
             tr  = get_score_trend(state, r.get("symbol",""), direction)
             sym = r.get("base_coin","?")
-            tokens.append(f"{sym} {sc}{tr}")
-        tok_str = "  ".join(tokens) if tokens else "—"
+            lines.append(f"  · {sym:<6} {sc:>2} {tr}")
+        tok_str = "\n".join(lines) if lines else "  —"
         gap_str = f"faltam {falta} pts" if falta > 0 else "✅ threshold atingido"
-        return (f"{ico} {direction}  máx {max_sc}/25 — {gap_str}\n"
-                f"  {tok_str}")
+        return (f"{ico} {direction}  máx {max_sc}/{thr} — {gap_str}\n"
+                f"{tok_str}")
 
     msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     msg += _radar(results,       "LONG",  thr_l) + "\n\n"
