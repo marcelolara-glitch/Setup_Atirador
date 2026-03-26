@@ -232,11 +232,11 @@ def cmd_radar() -> str:
     lines += ["━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
     lines += ["📈 <b>LONG — top 5:</b>"]
     for t in top_long:
-        lines.append(f"  {t['sym']:<8} {t['long']}/25 {t['tl']}")
+        lines.append(f"  · {t['sym']:<6} {t['long']:>2} {t['tl']}")
     lines += ["━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
     lines += ["📉 <b>SHORT — top 5:</b>"]
     for t in top_short:
-        lines.append(f"  {t['sym']:<8} {t['short']}/25 {t['ts_']}")
+        lines.append(f"  · {t['sym']:<6} {t['short']:>2} {t['ts_']}")
     lines += ["━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
     lines += ["⚠️ Scores do último scan — use /scan para atualizar"]
 
@@ -313,12 +313,14 @@ def main():
         sys.exit(0)
 
     updates = data.get("result", [])
-    if not updates:
-        print("[bot] Sem updates.")
-        sys.exit(0)
-
     last_update_id = offset - 1
     allowed_chat   = int(TELEGRAM_CHAT_ID)
+
+    if not updates:
+        bot_state["last_update_id"] = last_update_id
+        _save_bot_state(bot_state)
+        print(f"[bot] Sem updates. Offset: {last_update_id}")
+        sys.exit(0)
 
     for update in updates:
         uid = update.get("update_id", 0)
