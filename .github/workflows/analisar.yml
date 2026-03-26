@@ -1,0 +1,50 @@
+name: Setup Atirador — Análise Individual de Token
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: 'Símbolo do token (ex: BTCUSDT, ETHUSDT, SOLUSDT)'
+        required: true
+        default: 'BTCUSDT'
+        type: string
+
+concurrency:
+  group: analisar-${{ github.event.inputs.symbol }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analisar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Restaurar estado diário (necessário para P9 OI trend)
+        run: |
+          if [ -f states/atirador_state.json ]; then
+            cp states/atirador_state.json /tmp/atirador_state.json
+            echo "Estado restaurado — histórico de OI disponível para P9."
+          else
+            echo "Sem estado anterior — P9 OI trend marcado como 'sem histórico'."
+          fi
+
+      - name: Analisar token ${{ github.event.inputs.symbol }}
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python analisar_token.py "${{ github.event.inputs.symbol }}"
