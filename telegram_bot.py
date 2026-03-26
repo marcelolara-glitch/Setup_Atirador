@@ -318,6 +318,7 @@ def main():
 
     if not updates:
         bot_state["last_update_id"] = last_update_id
+        bot_state["last_run"] = _ts()
         _save_bot_state(bot_state)
         print(f"[bot] Sem updates. Offset: {last_update_id}")
         sys.exit(0)
@@ -354,6 +355,7 @@ def main():
 
     # Persiste offset atualizado
     bot_state["last_update_id"] = last_update_id
+    bot_state["last_run"] = _ts()
     _save_bot_state(bot_state)
     print(f"[bot] Processados {len(updates)} update(s). Offset salvo: {last_update_id}")
 

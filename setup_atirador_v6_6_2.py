@@ -230,6 +230,7 @@ acumulado durante o desenvolvimento.
 =============================================================================
 """
 import json
+import math
 import requests
 import time
 import os
@@ -358,6 +359,15 @@ def _score_trend_line(r: dict, state: dict, direction: str) -> str:
     return f"  🟡 {sym_s:<6} {score}/25 {trend}  {s4h}{oi_str}"
 
 
+def _fmt_price(p: float) -> str:
+    """Formata preço com precisão dinâmica. Evita 0.0000 para micro-preços (ex: PEPE)."""
+    if p == 0:
+        return "0"
+    mag = -math.floor(math.log10(abs(p)))
+    decimals = max(4, mag + 2)
+    return f"{p:.{decimals}f}"
+
+
 def _tg_breakdown_pilares(bd: list, direction: str) -> str:
     """
     [v6.6.2] Formata o breakdown de pilares para mensagens QUASE e Call.
@@ -399,7 +409,7 @@ def _tg_call_long(r: dict, ctx: dict, state: dict = None) -> str:
         f"🎯 TP3      ${t['tp3']:.4f}  (+{t['sl_distance_pct']*3:.2f}%) → fechar 20%\n"
         f"🛑 SL       ${t['sl']:.4f}  (−{t['sl_distance_pct']:.2f}%)\n"
         f"⚡ <b>{t['alavancagem']}x</b>  |  Margem ${t.get('margem_usd',0):.0f}"
-        f"{'⚠️' if t.get('margem_excedida') else ''}  |  "
+        f"{' ⚠️' if t.get('margem_excedida') else ''}  |  "
         f"Risco ${t['risco_usd']:.2f}  |  Ganho ${t['ganho_rr2_usd']:.2f}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🧱 <b>PILARES ({score}/25)</b>\n"
@@ -436,7 +446,7 @@ def _tg_call_short(r: dict, ctx: dict, state: dict = None) -> str:
         f"🎯 TP3      ${t['tp3']:.4f}  (−{t['sl_distance_pct']*3:.2f}%) → fechar 20%\n"
         f"🛑 SL       ${t['sl']:.4f}  (+{t['sl_distance_pct']:.2f}%) ← ACIMA\n"
         f"⚡ <b>{t['alavancagem']}x</b>  |  Margem ${t.get('margem_usd',0):.0f}"
-        f"{'⚠️' if t.get('margem_excedida') else ''}  |  "
+        f"{' ⚠️' if t.get('margem_excedida') else ''}  |  "
         f"Risco ${t['risco_usd']:.2f}  |  Ganho ${t['ganho_rr2_usd']:.2f}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🧱 <b>PILARES ({score}/25)</b>\n"
@@ -576,7 +586,7 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
             lines.append(f"  · {sym:<6} {sc:>2} {tr}")
         tok_str = "\n".join(lines) if lines else "  —"
         gap_str = f"faltam {falta} pts" if falta > 0 else "✅ threshold atingido"
-        return (f"{ico} {direction}  máx {max_sc}/{thr} — {gap_str}\n"
+        return (f"{ico} {direction}  máx {max_sc}/25 — {gap_str}\n"
                 f"{tok_str}")
 
     msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -2312,7 +2322,7 @@ def analyze_support_1h(candles_1h, current_price):
             dist_pct = (current_price - ob_mid) / current_price * 100
             if -OB_PROXIMITY_PCT <= dist_pct <= OB_PROXIMITY_PCT:
                 score += 2
-                details.append(f"Order Block 1H ({ob['low']:.4f}–{ob['high']:.4f})")
+                details.append(f"Order Block 1H ({ob['low']:.4f}-{ob['high']:.4f})")
                 break
 
     if not details:
@@ -2341,7 +2351,7 @@ def analyze_resistance_1h(candles_1h, current_price):
             dist_pct = (s["price"] - current_price) / current_price * 100
             if 0 < dist_pct <= SR_PROXIMITY_PCT:
                 score += 2
-                details.append(f"Resistência 1H em {s['price']:.4f} ({dist_pct:.2f}% acima)")
+                details.append(f"Resistência 1H em {_fmt_price(s['price'])} ({dist_pct:.2f}% acima)")
                 break
 
     # Order Block bearish 1H
@@ -2352,7 +2362,7 @@ def analyze_resistance_1h(candles_1h, current_price):
             dist_pct = abs(current_price - ob_mid) / current_price * 100
             if dist_pct <= OB_PROXIMITY_PCT:
                 score += 2
-                details.append(f"OB Bearish 1H ({ob['low']:.4f}–{ob['high']:.4f})")
+                details.append(f"OB Bearish 1H ({ob['low']:.4f}-{ob['high']:.4f})")
                 break
 
     if not details:
@@ -2535,7 +2545,7 @@ def analyze_liquidity_zones_4h(candles_4h, current_price, direction="LONG"):
                 if 0 < dist_pct <= SR_PROXIMITY_PCT:
                     score  += 1
                     sr_hit  = True
-                    details.append(f"Resistência 4H {s['price']:.4f} ({dist_pct:.2f}% acima)")
+                    details.append(f"Resistência 4H {_fmt_price(s['price'])} ({dist_pct:.2f}% acima)")
                     break
 
         # OB bearish 4H
@@ -2548,7 +2558,7 @@ def analyze_liquidity_zones_4h(candles_4h, current_price, direction="LONG"):
                 if dist_pct <= OB_PROXIMITY_PCT:
                     score  += 1
                     ob_hit  = True
-                    details.append(f"OB Bearish 4H ({ob['low']:.4f}–{ob['high']:.4f})")
+                    details.append(f"OB Bearish 4H ({ob['low']:.4f}-{ob['high']:.4f})")
                     break
 
         if sr_hit and ob_hit:
@@ -2576,7 +2586,7 @@ def analyze_liquidity_zones_4h(candles_4h, current_price, direction="LONG"):
                 if -OB_PROXIMITY_PCT <= dist_pct <= OB_PROXIMITY_PCT:
                     score  += 1
                     ob_hit  = True
-                    details.append(f"OB 4H ({ob['low']:.4f}–{ob['high']:.4f})")
+                    details.append(f"OB 4H ({ob['low']:.4f}-{ob['high']:.4f})")
                     break
 
         if sr_hit and ob_hit:
