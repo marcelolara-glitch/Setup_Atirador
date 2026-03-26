@@ -6,10 +6,11 @@ Roda a cada 30 min (repo privado) ou 5 min (repo público) via cron do Actions.
 Lê getUpdates, processa comandos e responde no chat configurado.
 
 Comandos suportados:
-  /ajuda  — lista de comandos
-  /status — último scan e sizing de risco
-  /radar  — ranking dos tokens com setas de tendência
-  /scan   — dispara workflow_dispatch do scan imediato
+  /ajuda   — lista de comandos
+  /status  — último scan e sizing de risco
+  /radar   — ranking dos tokens com setas de tendência
+  /pilares — explicação dos pilares do score
+  /scan    — dispara workflow_dispatch do scan imediato
 
 Estado persistido em states/bot_state.json (last_update_id).
 Log de transações em logs/bot_YYYYMMDD.log.
@@ -144,10 +145,41 @@ def cmd_ajuda() -> str:
     return (
         "🤖 <b>ATIRADOR — Comandos</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "/status — último scan e sizing de risco\n"
-        "/radar  — ranking dos tokens do último scan\n"
-        "/scan   — disparar scan imediato\n"
-        "/ajuda  — esta mensagem"
+        "/status   — último scan e sizing de risco\n"
+        "/radar    — ranking dos tokens do último scan\n"
+        "/pilares  — explicação dos pilares do score\n"
+        "/scan     — disparar scan imediato\n"
+        "/ajuda    — esta mensagem"
+    )
+
+
+def cmd_pilares() -> str:
+    return (
+        "🎯 <b>PILARES DO SCORE — /25 pts</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "\n"
+        "🏗 <b>ESTRUTURA 4H</b> — até 8 pts\n"
+        "<b>P4</b> Liquidez   +3 — preço próximo de Res/OB (confluência = máx)\n"
+        "<b>P5</b> Figuras    +2 — padrão gráfico de reversão (Cunha, Wedge)\n"
+        "<b>P6</b> CHOCH/BOS  +3 — mudança de estrutura confirmada no 4H\n"
+        "\n"
+        "🔍 <b>CONFIRMAÇÃO 1H</b> — até 4 pts\n"
+        "<b>P-1H</b> Res/OB 1H +4 — preço na zona de res/sup + OB alinhado\n"
+        "\n"
+        "⚡ <b>GATILHO 15m</b> — até 7 pts\n"
+        "<b>P1</b> Bollinger  +3 — preço esticado na banda sup/inf (≥95% = máx)\n"
+        "<b>P2</b> Candles    +4 — padrão de reversão 15m (Shooting Star...)\n"
+        "\n"
+        "🌐 <b>CONTEXTO</b> — até 6 pts\n"
+        "<b>P3</b> Funding    +2/-1 — funding favorável/desfavorável à direção\n"
+        "<b>P8</b> Volume 15m +2 — volume ≥1.2x média (confirmação)\n"
+        "<b>P9</b> OI         +2 — Open Interest crescendo (dinheiro entrando)\n"
+        "\n"
+        "🚫 <b>FILTRO</b> (não pontua — apenas veta)\n"
+        "<b>P7</b> Pump/Dump — bloqueia entrada após variação excessiva recente\n"
+        "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Thr: LONG ≥20 (cauteloso) | SHORT ≥16 (moderado)"
     )
 
 
@@ -273,11 +305,12 @@ def cmd_scan() -> str:
 # ── Polling principal ─────────────────────────────────────────────────────────
 
 HANDLERS = {
-    "/ajuda":  cmd_ajuda,
-    "/help":   cmd_ajuda,
-    "/status": cmd_status,
-    "/radar":  cmd_radar,
-    "/scan":   cmd_scan,
+    "/ajuda":    cmd_ajuda,
+    "/help":     cmd_ajuda,
+    "/status":   cmd_status,
+    "/radar":    cmd_radar,
+    "/scan":     cmd_scan,
+    "/pilares":  cmd_pilares,
 }
 
 
@@ -340,12 +373,14 @@ def main():
         text    = msg.get("text", "")
         command = _extract_command(text)
         if not command:
+            _tg_send(cmd_ajuda())
+            _log(f"{_ts()} | mensagem sem comando → ajuda enviada")
             continue
 
         handler = HANDLERS.get(command)
         if handler is None:
-            _tg_send(f"Comando desconhecido: {command}\nUse /ajuda para ver os comandos disponíveis.")
-            _log(f"{_ts()} | {command} → desconhecido")
+            _tg_send(cmd_ajuda())
+            _log(f"{_ts()} | {command} → desconhecido → ajuda enviada")
             continue
 
         response = handler()
