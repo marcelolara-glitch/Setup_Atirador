@@ -4224,6 +4224,25 @@ async def analisar_token_async(symbol: str):
     LOG.info(f"\n🔍 ANÁLISE INDIVIDUAL — {symbol}")
     LOG.info("=" * 55)
 
+    try:
+        await _analisar_token_inner(symbol, t_start)
+    except Exception as exc:
+        import traceback
+        tb = traceback.format_exc()
+        LOG.error(f"  ❌ ERRO em analisar_token_async({symbol}):\n{tb}")
+        ts = datetime.now(BRT).strftime("%d/%m/%Y %H:%M BRT")
+        err_msg = (
+            f"❌ <b>Análise de {symbol} falhou</b> | {ts}\n"
+            f"<code>{type(exc).__name__}: {str(exc)[:200]}</code>\n"
+            f"Verifique o log para detalhes."
+        )
+        _tg_send(err_msg)
+        raise
+
+
+async def _analisar_token_inner(symbol: str, t_start: float):
+    """Implementação interna — chamada por analisar_token_async com error handling."""
+
     state = load_daily_state()
 
     async with aiohttp.ClientSession() as session:

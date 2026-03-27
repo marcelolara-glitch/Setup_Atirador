@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   analisar:
@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: Checkout do repositório
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Configurar Python 3.11
         uses: actions/setup-python@v5
@@ -44,7 +46,26 @@ jobs:
           fi
 
       - name: Analisar token ${{ github.event.inputs.symbol }}
+        id: analisar
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python setup_atirador.py --analisar "${{ github.event.inputs.symbol }}"
+
+      - name: Salvar log de análise no repositório (7 dias)
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p logs
+          for f in /tmp/atirador_logs/atirador_LOG_*.log; do
+            [ -f "$f" ] && cp "$f" "logs/$(basename $f)"
+          done
+          find logs/ -type f -name "*.log" -mtime +7 -delete 2>/dev/null || true
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add logs/
+          git diff --cached --quiet || git commit -m "analisar: ${{ github.event.inputs.symbol }} $(date +'%Y%m%d_%H%M') [ci skip]"
+          git fetch "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD
+          git rebase FETCH_HEAD
+          git push "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD
