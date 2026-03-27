@@ -9,7 +9,7 @@ Arquitetura Multi-Timeframe com 3 Camadas Independentes:
   CAMADA 2 — 1H "Estamos num bom ponto de entrada?" (estrutura)
   CAMADA 3 — 15m "O timing de entrada está correto agora?" (gatilho)
 
-Score máximo: 28 pts (LONG e SHORT, incluindo P9 OI +2)
+Score máximo: 25 pts (LONG e SHORT): P4(3)+P5(2)+P6(3)+P-1H(4)+P1(3)+P2(4)+P3(2)+P8(2)+P9(2)
 Thresholds adaptativos: Favorável ≥14 | Moderado ≥16 | Cauteloso ≥20 | Bot OFF = 99
 
 =============================================================================
@@ -565,7 +565,7 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
     msg += f"  Universo: {total_items} tokens  →  {qualificados} qualificados\n"
     msg += f"  Gate 4H:  LONG {n_long_gate1:<3}  |  SHORT {n_short_gate1}\n"
     msg += f"  Gate 1H:  LONG {n_long_gate2:<3}  |  SHORT {n_short_gate2}\n"
-    msg += f"  Análise:  LONG {len(results):<3}  |  SHORT {len(results_short)}\n"
+    msg += f"  Gate 15m: LONG {len(results):<3}  |  SHORT {len(results_short)}\n"
     msg += f"  📡 {fonte}  |  ⏱️ {elapsed:.1f}s\n"
     if cl:
         msg += f"  {cl}\n"
@@ -764,7 +764,7 @@ MIN_OI_USD       = 5_000_000
 #   Reserva de $30 cobre funding, taxas e flutuação de margem.
 #
 # RECALIBRAÇÃO DO SCORE MÁXIMO E TABELA DE ALAVANCAGEM [A2]:
-#   Score real máximo = 28 pts (com P9 OI +2).
+#   Score real máximo = 25 pts (MAX_SCORE).
 #   Thresholds de alerta: 14 / 16 / 20 pts.
 #   Problema anterior: tabela de alav só iniciava em score 20 → calls com
 #   score 14-19 recebiam 1x (inútil para scalp). Corrigido: tabela agora
@@ -939,6 +939,7 @@ TELEGRAM_HEARTBEAT = True
 # [v6.6.2] Margem de pts abaixo do threshold que dispara mensagem QUASE.
 # Ex: threshold=16, QUASE_MARGEM=4 → tokens com score ≥12 recebem msg QUASE.
 QUASE_MARGEM = 4
+MAX_SCORE    = 25   # pontuação máxima teórica: P4(3)+P5(2)+P6(3)+P-1H(4)+P1(3)+P2(4)+P3(2)+P8(2)+P9(2)
 
 # Função auxiliar para salvar credenciais do Telegram no arquivo de configuração
 def save_telegram_config(token, chat_id):
@@ -4188,9 +4189,9 @@ def _analisar_fmt_msg(symbol: str, d: dict, ctx: dict,
     msg = (
         f"🔍 <b>ANÁLISE — {base}</b>  |  {ts}\n"
         f"{sep}\n"
-        f"📊 FGI {ctx['fg']} | BTC 4H: {ctx['btc']}\n"
-        f"📈 LONG: {ctx['verdict']} (thr ≥{thr_l})\n"
-        f"📉 SHORT: {ctx['verdict_short']} (thr ≥{thr_s})\n"
+        f"📊 FGI {ctx['fg']} | BTC 4H: {html.escape(ctx['btc'])}\n"
+        f"📈 LONG: {html.escape(ctx['verdict'])} (thr ≥{thr_l})\n"
+        f"📉 SHORT: {html.escape(ctx['verdict_short'])} (thr ≥{thr_s})\n"
         f"{sep}\n"
         f"💹 <b>${_fmt_price(price)}</b>  ({chg:+.2f}% 24h)"
         f"  |  FR {fr:.4%}  |  OI ${oi/1e6:.1f}M  |  Vol ${vol/1e6:.1f}M\n"
@@ -4333,9 +4334,9 @@ async def _analisar_token_inner(symbol: str, t_start: float):
 
         thr_l = ctx["threshold"]
         thr_s = ctx["threshold_short"]
-        LOG.info(f"  LONG:  {score_l}/25 (thr≥{thr_l}) | "
+        LOG.info(f"  LONG:  {score_l}/{MAX_SCORE} (thr≥{thr_l}) | "
                  f"gate4H={'✅' if g4l else '❌'} | gate1H={'✅' if g1l else '❌'} | dq={dq_l:.0%}")
-        LOG.info(f"  SHORT: {score_s}/25 (thr≥{thr_s}) | "
+        LOG.info(f"  SHORT: {score_s}/{MAX_SCORE} (thr≥{thr_s}) | "
                  f"gate4H={'✅' if g4s else '❌'} | gate1H={'✅' if g1s else '❌'} | dq={dq_s:.0%}")
 
         # ── Parâmetros de trade ──────────────────────────────────────────
@@ -4354,7 +4355,7 @@ async def _analisar_token_inner(symbol: str, t_start: float):
         )
 
         LOG.info(f"\n{'='*55}")
-        LOG.info(f"  LONG {score_l}/25 (thr≥{thr_l}) | SHORT {score_s}/25 (thr≥{thr_s})")
+        LOG.info(f"  LONG {score_l}/{MAX_SCORE} (thr≥{thr_l}) | SHORT {score_s}/{MAX_SCORE} (thr≥{thr_s})")
         LOG.info(f"  Mensagem: {len(msg)} chars | {elapsed:.1f}s")
         LOG.info(f"{'='*55}")
 
