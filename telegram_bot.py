@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-telegram_bot.py — Bot Telegram bidirecional via GitHub Actions polling
-======================================================================
-Roda a cada 30 min (repo privado) ou 5 min (repo público) via cron do Actions.
-Lê getUpdates, processa comandos e responde no chat configurado.
+telegram_bot.py — Bot Telegram bidirecional
+============================================
+Dois modos de operação:
+  - single-shot (padrão): processa updates pendentes e sai. Compatível com
+    GitHub Actions cron (legado) ou chamada manual.
+  - daemon (--daemon): long-polling contínuo via getUpdates timeout=60.
+    Resposta quase instantânea. Recomendado para Oracle Cloud VM via systemd.
 
 Comandos suportados:
   /ajuda   — lista de comandos
@@ -25,6 +28,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone, timedelta
 
 import requests
@@ -40,9 +44,8 @@ BOT_STATE_FILE    = "states/bot_state.json"
 STATE_FILE        = "states/atirador_state.json"
 LOG_DIR           = "logs"
 
-# Cron do scan (UTC): minuto 1, a cada 2 horas — 5,7,9,11,13,15,17,19,21,23,1,3
-SCAN_HOURS_UTC = [5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 1, 3]
-SCAN_MINUTE    = 1
+# Frequência do scan na VM (minutos)
+SCAN_INTERVAL_MIN = 30
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -125,24 +128,14 @@ def _load_atirador_state() -> dict:
 
 
 def _next_scan_brt() -> str:
-    """Calcula horário do próximo scan em BRT."""
-    now_utc = datetime.now(timezone.utc)
-    # Próxima hora de scan UTC
-    for h in sorted(SCAN_HOURS_UTC):
-        candidate = now_utc.replace(hour=h, minute=SCAN_MINUTE, second=0, microsecond=0)
-        if candidate > now_utc:
-            break
-    else:
-        # Wraparound: menor hora do próximo dia
-        min_h = min(SCAN_HOURS_UTC)
-        candidate = (now_utc + timedelta(days=1)).replace(
-            hour=min_h, minute=SCAN_MINUTE, second=0, microsecond=0
-        )
-
-    delta = candidate - now_utc
-    mins  = int(delta.total_seconds() / 60)
-    brt   = candidate.astimezone(BRT)
-    return f"~{brt.strftime('%H:%M')} BRT (em ~{mins} min)"
+    """Calcula horário do próximo scan em BRT (cron a cada SCAN_INTERVAL_MIN)."""
+    now = datetime.now(BRT)
+    mins_to_add = SCAN_INTERVAL_MIN - (now.minute % SCAN_INTERVAL_MIN)
+    if mins_to_add == 0:
+        mins_to_add = SCAN_INTERVAL_MIN
+    nxt = (now + timedelta(minutes=mins_to_add)).replace(second=0, microsecond=0)
+    delta_min = int((nxt - now).total_seconds() / 60)
+    return f"~{nxt.strftime('%H:%M')} BRT (em ~{delta_min} min)"
 
 
 def _score_trend(hist: list, direction: str) -> str:
@@ -472,5 +465,90 @@ def main():
     print(f"[bot] Processados {len(updates)} update(s). Offset salvo: {last_update_id}")
 
 
+def _process_updates(updates: list, bot_state: dict, offset: int) -> int:
+    """Processa lista de updates e retorna o novo offset. Usado pelo modo daemon."""
+    allowed_chat   = int(TELEGRAM_CHAT_ID)
+    last_update_id = offset - 1
+
+    for update in updates:
+        uid = update.get("update_id", 0)
+        if uid > last_update_id:
+            last_update_id = uid
+
+        msg = update.get("message") or update.get("edited_message")
+        if not msg:
+            continue
+
+        chat_id = msg.get("chat", {}).get("id")
+        if chat_id != allowed_chat:
+            _log(f"{_ts()} | update_id={uid} | chat {chat_id} não autorizado — ignorado")
+            continue
+
+        text    = msg.get("text", "")
+        command = _extract_command(text)
+        if not command:
+            _tg_send(cmd_ajuda())
+            _log(f"{_ts()} | mensagem sem comando → ajuda enviada")
+            continue
+
+        if command == "/analisar":
+            parts  = text.strip().split(maxsplit=1)
+            symbol = parts[1] if len(parts) > 1 else None
+            response = cmd_analisar(symbol)
+            ok = _tg_send(response)
+            _log(f"{_ts()} | /analisar {symbol} → {'enviado ✅' if ok else 'falhou ❌'}")
+            continue
+
+        handler = HANDLERS.get(command)
+        if handler is None:
+            _tg_send(cmd_ajuda())
+            _log(f"{_ts()} | {command} → desconhecido → ajuda enviada")
+            continue
+
+        response = handler()
+        ok = _tg_send(response)
+        _log(f"{_ts()} | {command} → {'enviado ✅' if ok else 'falhou ❌'}")
+
+    bot_state["last_update_id"] = last_update_id
+    bot_state["last_run"] = _ts()
+    _save_bot_state(bot_state)
+    return last_update_id + 1
+
+
+def main_daemon():
+    """Modo daemon: long-polling contínuo com getUpdates timeout=60.
+    Resposta quase instantânea. Recomendado para Oracle Cloud VM via systemd."""
+    if not TELEGRAM_TOKEN:
+        print("⚠  TELEGRAM_TOKEN não definido — bot inativo.")
+        sys.exit(1)
+    if not TELEGRAM_CHAT_ID:
+        print("⚠  TELEGRAM_CHAT_ID não definido — bot inativo.")
+        sys.exit(1)
+
+    _tg_register_commands()
+    _log(f"{_ts()} | [daemon] iniciado — long-polling ativo")
+
+    bot_state = _load_bot_state()
+    offset    = bot_state.get("last_update_id", 0) + 1
+
+    while True:
+        try:
+            resp = requests.get(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates",
+                params={"offset": offset, "timeout": 60, "limit": 10},
+                timeout=70,
+            )
+            updates = resp.json().get("result", [])
+            if updates:
+                offset = _process_updates(updates, bot_state, offset)
+                print(f"[daemon] Processados {len(updates)} update(s). Offset: {offset - 1}")
+        except Exception as exc:
+            _log(f"{_ts()} | [daemon] erro: {exc} — aguardando 5s")
+            time.sleep(5)
+
+
 if __name__ == "__main__":
-    main()
+    if "--daemon" in sys.argv:
+        main_daemon()
+    else:
+        main()

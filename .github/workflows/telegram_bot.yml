@@ -1,9 +1,9 @@
-name: Atirador Bot — Polling Telegram
+name: Atirador Bot — Polling Telegram (legado)
+# DESATIVADO: o bot agora roda como serviço systemd na Oracle Cloud VM
+# (telegram_bot.py --daemon via long-polling). Mantido aqui apenas como
+# fallback manual caso a VM fique offline.
 
 on:
-  schedule:
-    # A cada 5 min — repo público (Actions ilimitado)
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 concurrency:
