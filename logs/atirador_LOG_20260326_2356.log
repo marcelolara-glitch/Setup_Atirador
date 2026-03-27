@@ -1,0 +1,50 @@
+2026-03-26 23:56:05 BRT [INFO   ] 📋 Log iniciado: /tmp/atirador_logs/atirador_LOG_20260326_2356.log
+2026-03-26 23:56:05 BRT [INFO   ] 
+🔍 ANÁLISE INDIVIDUAL — NEARUSDT
+2026-03-26 23:56:05 BRT [INFO   ] =======================================================
+2026-03-26 23:56:05 BRT [INFO   ]   1/4 — FGI + OKX ticker + TradingView 4H...
+2026-03-26 23:56:05 BRT [DEBUG  ]   Buscando Fear & Greed Index...
+2026-03-26 23:56:05 BRT [DEBUG  ]   TV batch: 2 tokens (.P perpétuo) | cols: ['Recommend.All|240', 'RSI|240']
+2026-03-26 23:56:05 BRT [DEBUG  ]   ✅  TV batch BYBIT: 2/2 retornados | 0.13s
+2026-03-26 23:56:05 BRT [DEBUG  ]   GET https://api.alternative.me/fng/?limit=1
+2026-03-26 23:56:05 BRT [DEBUG  ]       → HTTP 200 | 0.2KB | enc:gzip | 0.25s
+2026-03-26 23:56:05 BRT [INFO   ]   📊 Fear & Greed: 13 (Extreme Fear)
+2026-03-26 23:56:05 BRT [INFO   ]   4H: STRONG_SELL (RSI=39.9)
+2026-03-26 23:56:05 BRT [DEBUG  ]   Contexto: FGI=13 | BTC=SELL | LONG=CAUTELOSO (Medo Extremo)(thr=20) | SHORT=FAVORÁVEL (Pânico + BTC SELL)(thr=14) | risk_score=-2
+2026-03-26 23:56:05 BRT [INFO   ]   Mercado: FGI=13 | BTC=SELL | thr_L=20 | thr_S=14
+2026-03-26 23:56:05 BRT [INFO   ]   2/4 — TradingView 1H + 15m...
+2026-03-26 23:56:05 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['Recommend.All|60']
+2026-03-26 23:56:05 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['BB.upper|15', 'BB.lower|15', 'ATR|15']
+2026-03-26 23:56:05 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['Candle.Engulfing.Bullish|15', 'Candle.Hammer|15', 'Candle.MorningStar|15', 'Candle.3WhiteSoldiers|15', 'Candle.Harami.Bullish|15', 'Candle.Doji.Dragonfly|15', 'Candle.Engulfing.Bearish|15', 'Candle.ShootingStar|15', 'Candle.EveningStar|15', 'Candle.3BlackCrows|15', 'Candle.Harami.Bearish|15']
+2026-03-26 23:56:05 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.07s
+2026-03-26 23:56:05 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.08s
+2026-03-26 23:56:05 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.08s
+2026-03-26 23:56:05 BRT [INFO   ]   1H: NEUTRAL
+2026-03-26 23:56:05 BRT [INFO   ]   15m: ATR=0.005010 | BB [1.2167 – 1.2409]
+2026-03-26 23:56:05 BRT [INFO   ]   3/4 — Klines 15m / 1H / 4H...
+2026-03-26 23:56:05 BRT [DEBUG  ]   📡  Cache MISS NEARUSDT 1H: arquivo não existe — buscando
+2026-03-26 23:56:05 BRT [DEBUG  ]   📡  Cache MISS NEARUSDT 4H: arquivo não existe — buscando
+2026-03-26 23:56:06 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-26 23:56:06 BRT [DEBUG  ]       → HTTP 200 | 4.5KB | enc:gzip | 0.26s
+2026-03-26 23:56:06 BRT [DEBUG  ]   ✅  Klines NEARUSDT 15m: 60 candles | 03/26 23:45 → 03/26 09:00
+2026-03-26 23:56:06 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-26 23:56:06 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.27s
+2026-03-26 23:56:06 BRT [DEBUG  ]   ✅  Klines NEARUSDT 1H: 60 candles | 03/26 23:00 → 03/24 12:00
+2026-03-26 23:56:06 BRT [DEBUG  ]   💾  Cache GRAVADO NEARUSDT 1H: 60 candles
+2026-03-26 23:56:06 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-26 23:56:06 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.27s
+2026-03-26 23:56:06 BRT [DEBUG  ]   ✅  Klines NEARUSDT 4H: 60 candles | 03/26 21:00 → 03/17 01:00
+2026-03-26 23:56:06 BRT [DEBUG  ]   💾  Cache GRAVADO NEARUSDT 4H: 60 candles
+2026-03-26 23:56:06 BRT [INFO   ]   Klines: 15m=60 | 1H=60 | 4H=60
+2026-03-26 23:56:06 BRT [INFO   ]   4/4 — Score forçado (LONG + SHORT)...
+2026-03-26 23:56:06 BRT [INFO   ]   LONG:  5/25 (thr≥20) | gate4H=❌ | gate1H=❌ | dq=100%
+2026-03-26 23:56:06 BRT [INFO   ]   SHORT: 10/25 (thr≥14) | gate4H=✅ | gate1H=❌ | dq=100%
+2026-03-26 23:56:06 BRT [DEBUG  ]     TradeParams LONG: SL=0.61% | notional=$822 | alav_margem=23.5x → cap=2x → alav=2.0x | margem=$410.98 ⚠️MARGEM $411>35 | risco=$5.00 | ganho=$10.00
+2026-03-26 23:56:06 BRT [DEBUG  ]     TradeParams SHORT: SL=0.61% | notional=$822 | alav_margem=23.5x → cap=2x → alav=2.0x | margem=$410.98 ⚠️MARGEM $411>35 | risco=$5.00 | ganho=$10.00
+2026-03-26 23:56:06 BRT [INFO   ] 
+=======================================================
+2026-03-26 23:56:06 BRT [INFO   ]   LONG 5/25 (thr≥20) | SHORT 10/25 (thr≥14)
+2026-03-26 23:56:06 BRT [INFO   ]   Mensagem: 3027 chars | 0.6s
+2026-03-26 23:56:06 BRT [INFO   ] =======================================================
+2026-03-26 23:56:06 BRT [WARNING]   ⚠️  Telegram: HTTP 400 — {"ok":false,"error_code":400,"description":"Bad Request: can't parse entities: U
+2026-03-26 23:56:06 BRT [WARNING]   ⚠️  Falha Telegram — exibindo no terminal
