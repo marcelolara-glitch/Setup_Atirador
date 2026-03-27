@@ -1,0 +1,52 @@
+2026-03-27 00:28:09 BRT [INFO   ] 📋 Log iniciado: /tmp/atirador_logs/atirador_LOG_20260327_0028.log
+2026-03-27 00:28:09 BRT [INFO   ] 
+🔍 ANÁLISE INDIVIDUAL — UNIUSDT
+2026-03-27 00:28:09 BRT [INFO   ] =======================================================
+2026-03-27 00:28:09 BRT [INFO   ]   1/4 — FGI + OKX ticker + TradingView 4H...
+2026-03-27 00:28:09 BRT [DEBUG  ]   Buscando Fear & Greed Index...
+2026-03-27 00:28:09 BRT [DEBUG  ]   TV batch: 2 tokens (.P perpétuo) | cols: ['Recommend.All|240', 'RSI|240']
+2026-03-27 00:28:09 BRT [DEBUG  ]   GET https://api.alternative.me/fng/?limit=1
+2026-03-27 00:28:09 BRT [DEBUG  ]       → HTTP 200 | 0.2KB | enc:gzip | 0.09s
+2026-03-27 00:28:09 BRT [INFO   ]   📊 Fear & Greed: 13 (Extreme Fear)
+2026-03-27 00:28:09 BRT [DEBUG  ]   ✅  TV batch BYBIT: 2/2 retornados | 0.14s
+2026-03-27 00:28:09 BRT [INFO   ]   4H: SELL (RSI=42.7)
+2026-03-27 00:28:09 BRT [DEBUG  ]   Contexto: FGI=13 | BTC=SELL | LONG=CAUTELOSO (Medo Extremo)(thr=20) | SHORT=FAVORÁVEL (Pânico + BTC SELL)(thr=14) | risk_score=-2
+2026-03-27 00:28:09 BRT [INFO   ]   Mercado: FGI=13 | BTC=SELL | thr_L=20 | thr_S=14
+2026-03-27 00:28:09 BRT [INFO   ]   2/4 — TradingView 1H + 15m...
+2026-03-27 00:28:09 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['Recommend.All|60']
+2026-03-27 00:28:09 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['BB.upper|15', 'BB.lower|15', 'ATR|15']
+2026-03-27 00:28:09 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['Candle.Engulfing.Bullish|15', 'Candle.Hammer|15', 'Candle.MorningStar|15', 'Candle.3WhiteSoldiers|15', 'Candle.Harami.Bullish|15', 'Candle.Doji.Dragonfly|15', 'Candle.Engulfing.Bearish|15', 'Candle.ShootingStar|15', 'Candle.EveningStar|15', 'Candle.3BlackCrows|15', 'Candle.Harami.Bearish|15']
+2026-03-27 00:28:09 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.02s
+2026-03-27 00:28:09 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.03s
+2026-03-27 00:28:09 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.04s
+2026-03-27 00:28:09 BRT [INFO   ]   1H: SELL
+2026-03-27 00:28:09 BRT [INFO   ]   15m: ATR=0.011580 | BB [3.5135 – 3.5506]
+2026-03-27 00:28:09 BRT [INFO   ]   3/4 — Klines 15m / 1H / 4H...
+2026-03-27 00:28:09 BRT [DEBUG  ]   📡  Cache MISS UNIUSDT 1H: arquivo não existe — buscando
+2026-03-27 00:28:09 BRT [DEBUG  ]   📡  Cache MISS UNIUSDT 4H: arquivo não existe — buscando
+2026-03-27 00:28:09 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-27 00:28:09 BRT [DEBUG  ]       → HTTP 200 | 4.1KB | enc:gzip | 0.25s
+2026-03-27 00:28:09 BRT [DEBUG  ]   ✅  Klines UNIUSDT 15m: 60 candles | 03/27 00:15 → 03/26 09:30
+2026-03-27 00:28:09 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-27 00:28:09 BRT [DEBUG  ]       → HTTP 200 | 4.3KB | enc:gzip | 0.26s
+2026-03-27 00:28:09 BRT [DEBUG  ]   ✅  Klines UNIUSDT 4H: 60 candles | 03/26 21:00 → 03/17 01:00
+2026-03-27 00:28:09 BRT [DEBUG  ]   💾  Cache GRAVADO UNIUSDT 4H: 60 candles
+2026-03-27 00:28:09 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-27 00:28:09 BRT [DEBUG  ]       → HTTP 200 | 4.2KB | enc:gzip | 0.26s
+2026-03-27 00:28:09 BRT [DEBUG  ]   ✅  Klines UNIUSDT 1H: 60 candles | 03/27 00:00 → 03/24 13:00
+2026-03-27 00:28:09 BRT [DEBUG  ]   💾  Cache GRAVADO UNIUSDT 1H: 60 candles
+2026-03-27 00:28:09 BRT [INFO   ]   Klines: 15m=60 | 1H=60 | 4H=60
+2026-03-27 00:28:09 BRT [INFO   ]   4/4 — Score forçado (LONG + SHORT)...
+2026-03-27 00:28:09 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/3L → 5H/3L)
+2026-03-27 00:28:09 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/3L → 5H/3L)
+2026-03-27 00:28:09 BRT [INFO   ]   LONG:  8/25 (thr≥20) | gate4H=❌ | gate1H=❌ | dq=100%
+2026-03-27 00:28:09 BRT [INFO   ]   SHORT: 7/25 (thr≥14) | gate4H=✅ | gate1H=✅ | dq=100%
+2026-03-27 00:28:09 BRT [DEBUG  ]     TradeParams LONG: SL=0.49% | notional=$1017 | alav_margem=29.0x → cap=2x → alav=2.0x | margem=$508.34 ⚠️MARGEM $508>35 | risco=$5.00 | ganho=$10.00
+2026-03-27 00:28:09 BRT [DEBUG  ]     TradeParams SHORT: SL=0.49% | notional=$1017 | alav_margem=29.0x → cap=2x → alav=2.0x | margem=$508.34 ⚠️MARGEM $508>35 | risco=$5.00 | ganho=$10.00
+2026-03-27 00:28:09 BRT [INFO   ] 
+=======================================================
+2026-03-27 00:28:09 BRT [INFO   ]   LONG 8/25 (thr≥20) | SHORT 7/25 (thr≥14)
+2026-03-27 00:28:09 BRT [INFO   ]   Mensagem: 3206 chars | 0.7s
+2026-03-27 00:28:09 BRT [INFO   ] =======================================================
+2026-03-27 00:28:10 BRT [WARNING]   ⚠️  Telegram: HTTP 400 — {"ok":false,"error_code":400,"description":"Bad Request: can't parse entities: U
+2026-03-27 00:28:10 BRT [WARNING]   ⚠️  Falha Telegram — exibindo no terminal
