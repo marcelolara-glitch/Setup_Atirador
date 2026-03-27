@@ -229,6 +229,7 @@ acumulado durante o desenvolvimento.
 
 =============================================================================
 """
+import html
 import json
 import math
 import requests
@@ -383,7 +384,7 @@ def _tg_breakdown_pilares(bd: list, direction: str) -> str:
         desc = detalhe.split("|")[0].strip()
         if len(desc) > 40:
             desc = desc[:38] + "…"
-        linhas.append(f"  {ico} {pilar:<16} {pts:>+2}/{max_pts}  {desc}")
+        linhas.append(f"  {ico} {pilar:<16} {pts:>+2}/{max_pts}  {html.escape(desc)}")
     return "\n".join(linhas)
 
 
@@ -4120,7 +4121,7 @@ def _analisar_fmt_pilares_rico(bd: list, direction: str) -> str:
             # Descrição completa — cada item do '|' em linha própria
             partes = [p.strip() for p in det.split("|") if p.strip()]
             for parte in partes:
-                lines.append(f"       {parte}")
+                lines.append(f"       {html.escape(parte)}")
 
             # Hint quando pts = 0 e pilar é pontuável
             if pts == 0 and max_pts > 0 and "AUSENTE" not in det:
