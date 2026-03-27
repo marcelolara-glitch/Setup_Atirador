@@ -4127,17 +4127,17 @@ def _analisar_fmt_pilares_rico(bd: list, direction: str) -> str:
             if pts == 0 and max_pts > 0 and "AUSENTE" not in det:
                 hint = _ANALISAR_HINTS.get((nome, direction))
                 if hint:
-                    lines.append(f"       {hint}")
+                    lines.append(f"       {html.escape(hint)}")
 
         # P7 compacto no final da seção Contexto
         if p7_det is not None:
             pts7, det7 = p7_det
             if pts7 < 0 or "BLOCK" in det7:
                 lines.append(f"  🔻 P7 Pump/Dump  {pts7}/0")
-                lines.append(f"       {det7}")
+                lines.append(f"       {html.escape(det7)}")
             else:
                 # Normal: linha única compacta
-                lines.append(f"  (P7 {det7})")
+                lines.append(f"  (P7 {html.escape(det7)})")
 
     return "\n".join(lines)
 
