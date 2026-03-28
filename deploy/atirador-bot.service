@@ -1,0 +1,19 @@
+[Unit]
+Description=Atirador Telegram Bot (long-polling daemon)
+Documentation=https://github.com/marcelolara-glitch/setup_atirador
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Setup_Atirador
+ExecStart=/home/ubuntu/Setup_Atirador/deploy/run-bot.sh
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=atirador-bot
+
+[Install]
+WantedBy=multi-user.target
