@@ -24,7 +24,7 @@ echo "============================================================"
 # ── 1. Dependências do sistema ────────────────────────────────────────────────
 echo "[1/6] Instalando dependências do sistema..."
 sudo apt-get update -q
-sudo apt-get install -y -q python3.11 python3-pip python3.11-venv git
+sudo apt-get install -y -q python3.11 python3-pip python3.11-venv git cron
 
 # ── 2. Clone do repositório ───────────────────────────────────────────────────
 echo "[2/6] Clonando repositório..."
