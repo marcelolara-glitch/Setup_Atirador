@@ -1,0 +1,51 @@
+2026-03-29 22:42:05 BRT [INFO   ] 📋 Log iniciado: /tmp/atirador_logs/atirador_LOG_20260329_2242.log
+2026-03-29 22:42:05 BRT [INFO   ] 
+🔍 ANÁLISE INDIVIDUAL — CHZUSDT
+2026-03-29 22:42:05 BRT [INFO   ] =======================================================
+2026-03-29 22:42:05 BRT [INFO   ]   1/4 — FGI + OKX ticker + TradingView 4H...
+2026-03-29 22:42:05 BRT [DEBUG  ]   Buscando Fear & Greed Index...
+2026-03-29 22:42:05 BRT [DEBUG  ]   TV batch: 2 tokens (.P perpétuo) | cols: ['Recommend.All|240', 'RSI|240']
+2026-03-29 22:42:05 BRT [DEBUG  ]   GET https://api.alternative.me/fng/?limit=1
+2026-03-29 22:42:05 BRT [DEBUG  ]       → HTTP 200 | 0.2KB | enc:gzip | 0.09s
+2026-03-29 22:42:05 BRT [INFO   ]   📊 Fear & Greed: 8 (Extreme Fear)
+2026-03-29 22:42:05 BRT [DEBUG  ]   ✅  TV batch BYBIT: 2/2 retornados | 0.11s
+2026-03-29 22:42:05 BRT [INFO   ]   4H: STRONG_BUY (RSI=69.6)
+2026-03-29 22:42:05 BRT [DEBUG  ]   Contexto: FGI=8 | BTC=SELL | LONG=CAUTELOSO (Medo Extremo)(thr=20) | SHORT=FAVORÁVEL (Pânico + BTC SELL)(thr=14) | risk_score=-2
+2026-03-29 22:42:05 BRT [INFO   ]   Mercado: FGI=8 | BTC=SELL | thr_L=20 | thr_S=14
+2026-03-29 22:42:05 BRT [INFO   ]   2/4 — TradingView 1H + 15m...
+2026-03-29 22:42:05 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['Recommend.All|60']
+2026-03-29 22:42:05 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['BB.upper|15', 'BB.lower|15', 'ATR|15']
+2026-03-29 22:42:05 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['Candle.Engulfing.Bullish|15', 'Candle.Hammer|15', 'Candle.MorningStar|15', 'Candle.3WhiteSoldiers|15', 'Candle.Harami.Bullish|15', 'Candle.Doji.Dragonfly|15', 'Candle.Engulfing.Bearish|15', 'Candle.ShootingStar|15', 'Candle.EveningStar|15', 'Candle.3BlackCrows|15', 'Candle.Harami.Bearish|15']
+2026-03-29 22:42:05 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.02s
+2026-03-29 22:42:05 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.03s
+2026-03-29 22:42:05 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.06s
+2026-03-29 22:42:05 BRT [INFO   ]   1H: STRONG_BUY
+2026-03-29 22:42:05 BRT [INFO   ]   15m: ATR=0.000468 | BB [0.0390 – 0.0412]
+2026-03-29 22:42:05 BRT [INFO   ]   3/4 — Klines 15m / 1H / 4H...
+2026-03-29 22:42:05 BRT [DEBUG  ]   📡  Cache MISS CHZUSDT 1H: arquivo não existe — buscando
+2026-03-29 22:42:05 BRT [DEBUG  ]   📡  Cache MISS CHZUSDT 4H: arquivo não existe — buscando
+2026-03-29 22:42:05 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-29 22:42:05 BRT [DEBUG  ]       → HTTP 200 | 4.9KB | enc:gzip | 0.34s
+2026-03-29 22:42:05 BRT [DEBUG  ]   ✅  Klines CHZUSDT 4H: 60 candles | 03/29 21:00 → 03/20 01:00
+2026-03-29 22:42:05 BRT [DEBUG  ]   💾  Cache GRAVADO CHZUSDT 4H: 60 candles
+2026-03-29 22:42:05 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-29 22:42:05 BRT [DEBUG  ]       → HTTP 200 | 4.9KB | enc:gzip | 0.36s
+2026-03-29 22:42:05 BRT [DEBUG  ]   ✅  Klines CHZUSDT 1H: 60 candles | 03/29 22:00 → 03/27 11:00
+2026-03-29 22:42:05 BRT [DEBUG  ]   💾  Cache GRAVADO CHZUSDT 1H: 60 candles
+2026-03-29 22:42:05 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-29 22:42:05 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.38s
+2026-03-29 22:42:05 BRT [DEBUG  ]   ✅  Klines CHZUSDT 15m: 60 candles | 03/29 22:30 → 03/29 07:45
+2026-03-29 22:42:05 BRT [INFO   ]   Klines: 15m=60 | 1H=60 | 4H=60
+2026-03-29 22:42:05 BRT [INFO   ]   4/4 — Score forçado (LONG + SHORT)...
+2026-03-29 22:42:05 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/4L → 5H/4L)
+2026-03-29 22:42:05 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/4L → 5H/4L)
+2026-03-29 22:42:05 BRT [INFO   ]   LONG:  5/25 (thr≥20) | gate4H=✅ | gate1H=✅ | dq=100%
+2026-03-29 22:42:05 BRT [INFO   ]   SHORT: 6/25 (thr≥14) | gate4H=❌ | gate1H=❌ | dq=100%
+2026-03-29 22:42:05 BRT [DEBUG  ]     TradeParams LONG: SL=1.72% | notional=$291 | alav_margem=8.3x → cap=2x → alav=2.0x | margem=$145.66 ⚠️MARGEM $146>35 | risco=$5.00 | ganho=$10.00
+2026-03-29 22:42:05 BRT [DEBUG  ]     TradeParams SHORT: SL=1.72% | notional=$291 | alav_margem=8.3x → cap=2x → alav=2.0x | margem=$145.66 ⚠️MARGEM $146>35 | risco=$5.00 | ganho=$10.00
+2026-03-29 22:42:05 BRT [INFO   ] 
+=======================================================
+2026-03-29 22:42:05 BRT [INFO   ]   LONG 5/25 (thr≥20) | SHORT 6/25 (thr≥14)
+2026-03-29 22:42:05 BRT [INFO   ]   Mensagem: 3140 chars | 0.8s
+2026-03-29 22:42:05 BRT [INFO   ] =======================================================
+2026-03-29 22:42:06 BRT [INFO   ]   ✅ Telegram enviado
