@@ -5,7 +5,7 @@ Setup Atirador — Entry Point
 Este é o único arquivo que você precisa executar.
 Para atualizar a versão ativa, altere a variável VERSION abaixo.
 
-Versão ativa atual: v6.6.2
+Versão ativa atual: v6.6.3
 """
 import subprocess
 import sys
@@ -13,7 +13,7 @@ import os
 
 # ─── Versão ativa ────────────────────────────────────────────────────────────
 # Altere aqui ao fazer upgrade para uma nova versão (ex: "v6_7_0")
-VERSION = "v6_6_2"
+VERSION = "v6_6_3"
 # ─────────────────────────────────────────────────────────────────────────────
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
