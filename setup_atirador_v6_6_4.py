@@ -616,7 +616,7 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
     thr_s   = ctx["threshold_short"]
 
     # ── 1. CABEÇALHO ────────────────────────────────────────────────────────
-    msg  = f"🤖 <b>ATIRADOR v6.6.3</b> | {ts}\n"
+    msg  = f"🤖 <b>ATIRADOR v6.6.5</b> | {ts}\n"
     msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     msg += f"🌡️ MERCADO\n"
     msg += f"  {fgi_ico} FGI {fgi_val} — {fgi_txt}  |  {btc_ico} BTC 4H: {ctx['btc']}\n"
@@ -3590,7 +3590,7 @@ async def run_scan_async():
     global LOG, LOG_FILE, TS_SCAN
     LOG, LOG_FILE, TS_SCAN = setup_logger()
 
-    LOG.info("🚀 Setup Atirador v6.6.3 | Arquitetura 3 Camadas (LONG+SHORT) | Iniciando scan...")
+    LOG.info("🚀 Setup Atirador v6.6.5 | Arquitetura 3 Camadas (LONG+SHORT) | Iniciando scan...")
     t_start = time.time()
 
     state = load_daily_state()
@@ -4211,13 +4211,13 @@ async def run_scan_async():
         )
 
         LOG.info(report)
-        LOG.info(f"✅ Scan v6.6.3 concluído em {elapsed:.1f}s | Fonte: {DATA_SOURCE} | Log: {LOG_FILE}")
+        LOG.info(f"✅ Scan v6.6.5 concluído em {elapsed:.1f}s | Fonte: {DATA_SOURCE} | Log: {LOG_FILE}")
 
         # [M14] Watchdog — grava timestamp de execução bem-sucedida
         try:
             import json as _json
             with open("/tmp/atirador_last_run.json", "w") as _f:
-                _json.dump({"last_run": datetime.now(BRT).isoformat(), "version": "v6.6.3"}, _f)
+                _json.dump({"last_run": datetime.now(BRT).isoformat(), "version": "v6.6.5"}, _f)
             LOG.debug("  [M14] Timestamp watchdog gravado em /tmp/atirador_last_run.json")
         except Exception as _e:
             LOG.warning(f"  [M14] Falha ao gravar timestamp watchdog: {_e}")
