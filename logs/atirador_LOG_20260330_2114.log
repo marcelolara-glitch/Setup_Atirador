@@ -1,0 +1,53 @@
+2026-03-30 21:14:34 BRT [INFO   ] 📋 Log iniciado: /tmp/atirador_logs/atirador_LOG_20260330_2114.log
+2026-03-30 21:14:34 BRT [INFO   ] 
+🔍 ANÁLISE INDIVIDUAL — AVAXUSDT
+2026-03-30 21:14:34 BRT [INFO   ] =======================================================
+2026-03-30 21:14:34 BRT [INFO   ]   1/4 — FGI + OKX ticker + TradingView 4H...
+2026-03-30 21:14:34 BRT [DEBUG  ]   Buscando Fear & Greed Index...
+2026-03-30 21:14:34 BRT [DEBUG  ]   TV batch: 2 tokens (.P perpétuo) | cols: ['Recommend.All|240', 'RSI|240']
+2026-03-30 21:14:34 BRT [DEBUG  ]   ✅  TV batch BYBIT: 2/2 retornados | 0.09s
+2026-03-30 21:14:34 BRT [DEBUG  ]   GET https://api.alternative.me/fng/?limit=1
+2026-03-30 21:14:34 BRT [DEBUG  ]       → HTTP 200 | 0.2KB | enc:gzip | 0.10s
+2026-03-30 21:14:34 BRT [INFO   ]   📊 Fear & Greed: 11 (Extreme Fear)
+2026-03-30 21:14:34 BRT [INFO   ]   4H: SELL (RSI=44.5)
+2026-03-30 21:14:34 BRT [DEBUG  ]   Contexto: FGI=11 | BTC=STRONG_SELL | LONG=CAUTELOSO (Medo Extremo)(thr=20) | SHORT=FAVORÁVEL (Pânico + BTC SELL)(thr=14) | risk_score=-2
+2026-03-30 21:14:34 BRT [INFO   ]   Mercado: FGI=11 | BTC=STRONG_SELL | thr_L=20 | thr_S=14
+2026-03-30 21:14:34 BRT [INFO   ]   2/4 — TradingView 1H + 15m...
+2026-03-30 21:14:34 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['Recommend.All|60']
+2026-03-30 21:14:34 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['BB.upper|15', 'BB.lower|15', 'ATR|15']
+2026-03-30 21:14:34 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['Candle.Engulfing.Bullish|15', 'Candle.Hammer|15', 'Candle.MorningStar|15', 'Candle.3WhiteSoldiers|15', 'Candle.Harami.Bullish|15', 'Candle.Doji.Dragonfly|15', 'Candle.Engulfing.Bearish|15', 'Candle.ShootingStar|15', 'Candle.EveningStar|15', 'Candle.3BlackCrows|15', 'Candle.Harami.Bearish|15']
+2026-03-30 21:14:35 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.03s
+2026-03-30 21:14:35 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.04s
+2026-03-30 21:14:35 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.05s
+2026-03-30 21:14:35 BRT [INFO   ]   1H: SELL
+2026-03-30 21:14:35 BRT [INFO   ]   15m: ATR=0.033793 | BB [8.7539 – 8.8562]
+2026-03-30 21:14:35 BRT [INFO   ]   3/4 — Klines 15m / 1H / 4H...
+2026-03-30 21:14:35 BRT [DEBUG  ]   📡  Cache MISS AVAXUSDT 1H: arquivo não existe — buscando
+2026-03-30 21:14:35 BRT [DEBUG  ]   📡  Cache MISS AVAXUSDT 4H: arquivo não existe — buscando
+2026-03-30 21:14:35 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 21:14:35 BRT [DEBUG  ]       → HTTP 200 | 4.4KB | enc:gzip | 0.30s
+2026-03-30 21:14:35 BRT [DEBUG  ]   ✅  Klines AVAXUSDT 1H: 60 candles | 03/30 21:00 → 03/28 10:00
+2026-03-30 21:14:35 BRT [DEBUG  ]   💾  Cache GRAVADO AVAXUSDT 1H: 60 candles
+2026-03-30 21:14:35 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 21:14:35 BRT [DEBUG  ]       → HTTP 200 | 4.3KB | enc:gzip | 0.32s
+2026-03-30 21:14:35 BRT [DEBUG  ]   ✅  Klines AVAXUSDT 15m: 60 candles | 03/30 21:00 → 03/30 06:15
+2026-03-30 21:14:35 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 21:14:35 BRT [DEBUG  ]       → HTTP 200 | 4.4KB | enc:gzip | 0.33s
+2026-03-30 21:14:35 BRT [DEBUG  ]   ✅  Klines AVAXUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 21:14:35 BRT [DEBUG  ]   💾  Cache GRAVADO AVAXUSDT 4H: 60 candles
+2026-03-30 21:14:35 BRT [INFO   ]   Klines: 15m=60 | 1H=60 | 4H=60
+2026-03-30 21:14:35 BRT [INFO   ]   4/4 — Score forçado (LONG + SHORT)...
+2026-03-30 21:14:35 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-03-30 21:14:35 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-03-30 21:14:35 BRT [INFO   ]   LONG:  5/25 (thr≥20) | gate4H=❌ | gate1H=❌ | dq=100%
+2026-03-30 21:14:35 BRT [INFO   ]   SHORT: 11/25 (thr≥14) | gate4H=✅ | gate1H=✅ | dq=100%
+2026-03-30 21:14:35 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-03-30 21:14:35 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-03-30 21:14:35 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 21:14:35 BRT [DEBUG  ]     TradeParams SHORT: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 21:14:35 BRT [INFO   ] 
+=======================================================
+2026-03-30 21:14:35 BRT [INFO   ]   LONG 5/25 (thr≥20) | SHORT 11/25 (thr≥14)
+2026-03-30 21:14:35 BRT [INFO   ]   Mensagem: 3317 chars | 0.7s
+2026-03-30 21:14:35 BRT [INFO   ] =======================================================
+2026-03-30 21:14:35 BRT [INFO   ]   ✅ Telegram enviado
