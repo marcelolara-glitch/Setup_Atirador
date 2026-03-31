@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 =============================================================================
-SETUP ATIRADOR v6.6.4 - Scanner Profissional de Criptomoedas
+SETUP ATIRADOR v6.6.5 - Scanner Profissional de Criptomoedas
 =============================================================================
 Arquitetura Multi-Timeframe com 3 Camadas Independentes:
 
@@ -15,6 +15,11 @@ Thresholds adaptativos: Favorável ≥14 | Moderado ≥16 | Cauteloso ≥20 | Bo
 =============================================================================
 HISTÓRICO DE VERSÕES
 =============================================================================
+
+v6.6.5 (31/03/2026):
+  - _tg_quase: blockquote expandable, pilares agrupados por timeframe (4H/1H/15m),
+    links TradingView diretos (4H e 15m), resumo compacto visível no cabeçalho.
+  - _tg_breakdown_pilares: agrupamento por TF, sem truncamento de descrição.
 
 v6.6.4 (30/03/2026):
   - M01: P1 Bollinger — lógica de exaustão simétrica para LONG e SHORT.
@@ -399,21 +404,38 @@ def _fmt_price(p: float) -> str:
 
 def _tg_breakdown_pilares(bd: list, direction: str) -> str:
     """
-    [v6.6.2] Formata o breakdown de pilares para mensagens QUASE e Call.
-    Exibe todos os pilares relevantes (max_pts > 0) com:
-      ✅/⬜  NOME  +pts/max  descrição curta
-    Retorna string pronta para concatenar na mensagem.
+    [v6.6.5] Formata breakdown de pilares agrupado por timeframe para
+    mensagens QUASE com <blockquote expandable>.
+    Pilares agrupados: 4H (P4/P5/P6), 1H (P-1H), 15m (P1/P2/P3/P8/P9).
+    Sem truncamento de descrição — valores completos exibidos.
+    Mantém html.escape para compatibilidade com parse_mode=HTML.
     """
-    linhas = []
+    TF_4H  = ("P4", "P5", "P6")
+    TF_1H  = ("P-1H",)
+    TF_15M = ("P1", "P2", "P3", "P8", "P9")
+
+    grupos = {"4H": [], "1H": [], "15m": []}
+
     for pilar, pts, max_pts, detalhe in bd:
         if max_pts == 0:
-            continue   # P7 Pump/Dump — skip se neutro
+            continue  # P7 Pump/Dump e Contexto 4H — skip
         ico  = "✅" if pts > 0 else ("🔻" if pts < 0 else "⬜")
-        desc = detalhe.split("|")[0].strip()
-        if len(desc) > 40:
-            desc = desc[:38] + "…"
-        linhas.append(f"  {ico} {pilar:<16} {pts:>+2}/{max_pts}  {html.escape(desc)}")
-    return "\n".join(linhas)
+        desc = detalhe.split("|")[0].strip()  # sem truncamento
+        linha = f"  {ico} {pilar}  <b>{pts:+}/{max_pts}</b>  {html.escape(desc)}"
+        if any(pilar.startswith(p) for p in TF_4H):
+            grupos["4H"].append(linha)
+        elif any(pilar.startswith(p) for p in TF_1H):
+            grupos["1H"].append(linha)
+        else:
+            grupos["15m"].append(linha)
+
+    partes = []
+    for tf, linhas in grupos.items():
+        if linhas:
+            partes.append(f"<b>── {tf} ──</b>")
+            partes.extend(linhas)
+
+    return "\n".join(partes)
 
 
 def _tg_call_long(r: dict, ctx: dict, state: dict = None) -> str:
@@ -491,40 +513,52 @@ def _tg_call_short(r: dict, ctx: dict, state: dict = None) -> str:
 
 def _tg_quase(r: dict, direction: str, ctx: dict, state: dict) -> str:
     """
-    [v6.6.2] Mensagem de alerta QUASE — token a menos de QUASE_MARGEM pts do threshold.
-    Mostra todos os pilares (ativos e inativos) e lista as fontes de pts disponíveis.
-    Disparada uma mensagem por token elegível, separada do heartbeat.
+    [v6.6.5] Mensagem de alerta QUASE com <blockquote expandable>.
+    Cabeçalho compacto visível + pilares agrupados por timeframe (4H/1H/15m)
+    colapsados por padrão. Links diretos para gráfico no TradingView (4H e 15m).
+    Exchange fixada em OKX — todos os tokens do universo são OKX perpetuals.
+    Compatível com parse_mode=HTML.
     """
     if direction == "LONG":
-        score  = r["score"]
-        thr    = ctx["threshold"]
-        bd     = r.get("breakdown", [])
-        s4h    = r.get("summary_4h", "?")
-        s1h    = r.get("summary_1h", "?")
-        ico    = "⚠️"
-        diric  = "LONG"
-        sym    = r["base_coin"]
+        score = r["score"]
+        thr   = ctx["threshold"]
+        bd    = r.get("breakdown", [])
+        s4h   = r.get("summary_4h", "?")
+        s1h   = r.get("summary_1h", "?")
+        diric = "LONG"
     else:
-        score  = r.get("score_short", 0)
-        thr    = ctx["threshold_short"]
-        bd     = r.get("breakdown_short", [])
-        s4h    = r.get("summary_4h", "?")
-        s1h    = r.get("summary_1h", "?")
-        ico    = "⚠️"
-        diric  = "SHORT"
-        sym    = r["base_coin"]
+        score = r.get("score_short", 0)
+        thr   = ctx["threshold_short"]
+        bd    = r.get("breakdown_short", [])
+        s4h   = r.get("summary_4h", "?")
+        s1h   = r.get("summary_1h", "?")
+        diric = "SHORT"
 
+    sym   = r["base_coin"]
     falta = thr - score
-    trend = get_score_trend(state, r.get("symbol",""), direction)
+    trend = get_score_trend(state, r.get("symbol", ""), direction)
 
-    # Pilares formatados
+    # Links TradingView — OKX perpetuals
+    tv_sym   = f"OKX:{r['symbol']}.P"
+    tv_4h    = f"https://www.tradingview.com/chart/?symbol={tv_sym}&interval=240"
+    tv_15m   = f"https://www.tradingview.com/chart/?symbol={tv_sym}&interval=15"
+    tv_links = f'📈 <a href="{tv_4h}">4H</a>  |  <a href="{tv_15m}">15m</a>'
+
+    # Resumo colapsado: quais pilares passaram/falharam
+    bd_filtrado = [(n, p, m, d) for n, p, m, d in bd if m > 0]
+    aprovados   = " ".join(n.split()[0] for n, p, m, d in bd_filtrado if p > 0)
+    reprovados  = " ".join(n.split()[0] for n, p, m, d in bd_filtrado if p == 0)
+    resumo_bd   = f"✅ {aprovados}  ⬜ {reprovados}" if aprovados or reprovados else ""
+
+    # Pilares detalhados agrupados por timeframe
     bd_str = _tg_breakdown_pilares(bd, direction)
 
-    # Fontes de pts ainda disponíveis (pilares zerados com max > 0)
-    fontes = []
-    for pilar, pts, max_pts, detalhe in bd:
-        if pts == 0 and max_pts > 0 and "AUSENTE" not in detalhe:
-            fontes.append(f"{pilar.strip()} (+{max_pts})")
+    # Fontes de pts ainda disponíveis
+    fontes = [
+        f"{pilar.strip()} (+{max_pts})"
+        for pilar, pts, max_pts, detalhe in bd
+        if pts == 0 and max_pts > 0 and "AUSENTE" not in detalhe
+    ]
     fontes_str = ", ".join(fontes[:5]) if fontes else "—"
 
     # [M04] Aviso quando token foi rebaixado de CALL por ausência de confirmação 15m
@@ -536,11 +570,14 @@ def _tg_quase(r: dict, direction: str, ctx: dict, state: dict) -> str:
         f"⚠️ <b>QUASE — {diric} {sym}</b>  {trend}  {score}/25\n"
         f"  {s4h} 4H  |  {s1h} 1H  |  thr ≥{thr}  |  faltam <b>{falta} pts</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{tv_links}\n"
+        f"<blockquote expandable>"
         f"🧱 PILARES\n"
-        f"{bd_str}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{resumo_bd}\n\n"
+        f"{bd_str}\n\n"
         f"→ Fontes disponíveis: {fontes_str}"
         f"{m04_aviso}"
+        f"</blockquote>"
     )
     return msg
 
@@ -579,7 +616,7 @@ def _tg_relatorio_rodada(ctx: dict, total_items: int, qualificados: int,
     thr_s   = ctx["threshold_short"]
 
     # ── 1. CABEÇALHO ────────────────────────────────────────────────────────
-    msg  = f"🤖 <b>ATIRADOR v6.6.3</b> | {ts}\n"
+    msg  = f"🤖 <b>ATIRADOR v6.6.5</b> | {ts}\n"
     msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     msg += f"🌡️ MERCADO\n"
     msg += f"  {fgi_ico} FGI {fgi_val} — {fgi_txt}  |  {btc_ico} BTC 4H: {ctx['btc']}\n"
@@ -3553,7 +3590,7 @@ async def run_scan_async():
     global LOG, LOG_FILE, TS_SCAN
     LOG, LOG_FILE, TS_SCAN = setup_logger()
 
-    LOG.info("🚀 Setup Atirador v6.6.3 | Arquitetura 3 Camadas (LONG+SHORT) | Iniciando scan...")
+    LOG.info("🚀 Setup Atirador v6.6.5 | Arquitetura 3 Camadas (LONG+SHORT) | Iniciando scan...")
     t_start = time.time()
 
     state = load_daily_state()
@@ -4174,13 +4211,13 @@ async def run_scan_async():
         )
 
         LOG.info(report)
-        LOG.info(f"✅ Scan v6.6.3 concluído em {elapsed:.1f}s | Fonte: {DATA_SOURCE} | Log: {LOG_FILE}")
+        LOG.info(f"✅ Scan v6.6.5 concluído em {elapsed:.1f}s | Fonte: {DATA_SOURCE} | Log: {LOG_FILE}")
 
         # [M14] Watchdog — grava timestamp de execução bem-sucedida
         try:
             import json as _json
             with open("/tmp/atirador_last_run.json", "w") as _f:
-                _json.dump({"last_run": datetime.now(BRT).isoformat(), "version": "v6.6.3"}, _f)
+                _json.dump({"last_run": datetime.now(BRT).isoformat(), "version": "v6.6.5"}, _f)
             LOG.debug("  [M14] Timestamp watchdog gravado em /tmp/atirador_last_run.json")
         except Exception as _e:
             LOG.warning(f"  [M14] Falha ao gravar timestamp watchdog: {_e}")
