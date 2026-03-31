@@ -1,0 +1,984 @@
+2026-03-30 23:21:06 BRT [INFO   ] 📋 Log iniciado: /tmp/atirador_logs/atirador_LOG_20260330_2321.log
+2026-03-30 23:21:06 BRT [INFO   ] 🚀 Setup Atirador v6.6.5 | Arquitetura 3 Camadas (LONG+SHORT) | Iniciando scan...
+2026-03-30 23:21:06 BRT [INFO   ] 
+───────────────────────────────────────────────────────
+2026-03-30 23:21:06 BRT [INFO   ]   ETAPA 1 — Tickers (Bybit/Bitget) + Fear & Greed
+2026-03-30 23:21:06 BRT [INFO   ] ───────────────────────────────────────────────────────
+2026-03-30 23:21:06 BRT [INFO   ] 📡 [v6.6.3] Iniciando busca de tickers — hierarquia OKX → Gate.io → Bitget
+2026-03-30 23:21:06 BRT [INFO   ]    Filtros: vol≥$2.0M | OI≥$5M | timeout=8s/fonte
+2026-03-30 23:21:06 BRT [INFO   ]    [Nota] Fonte ideal seria CoinGlass API (pago ~$35/mês) — ver docstring
+2026-03-30 23:21:06 BRT [INFO   ]   📡  [OKX] Tentando com tickers + OI real...
+2026-03-30 23:21:06 BRT [DEBUG  ]   📡  [OKX] Buscando tickers...
+2026-03-30 23:21:06 BRT [DEBUG  ]      ✅ Tickers: 302 itens em 0.21s
+2026-03-30 23:21:06 BRT [DEBUG  ]   📡  [OKX] Buscando Open Interest...
+2026-03-30 23:21:07 BRT [DEBUG  ]      ✅ OI: 302 itens em 0.41s
+2026-03-30 23:21:07 BRT [DEBUG  ]   📡  [OKX] Buscando Funding Rates reais...
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  [OKX FR] Funding rates obtidos: 283/283 | erros: 0
+2026-03-30 23:22:03 BRT [DEBUG  ]      ✅ FR: 283 tokens com funding rate em 56.53s
+2026-03-30 23:22:03 BRT [DEBUG  ]      ✅ Mesclados: 302/302 com OI real em 56.53s
+2026-03-30 23:22:03 BRT [INFO   ]   ✅  [OKX] Fonte ativa (com OI real) | 302 brutos → 37 qualificados
+2026-03-30 23:22:03 BRT [INFO   ]   Fonte de dados: OKX | Universo: 302 brutos → 37 qualificados
+2026-03-30 23:22:03 BRT [INFO   ]   Analisando todos os 37 tokens qualificados: ['PEPE', 'SHIB', 'PUMP', 'DOGE', 'ONT', 'CHZ', 'PIPPIN', 'ADA', 'BEAT', 'XPL']...
+2026-03-30 23:22:03 BRT [DEBUG  ]   TV batch: 37 tokens (.P perpétuo) | cols: ['Recommend.All|240', 'RSI|240']
+2026-03-30 23:22:03 BRT [DEBUG  ]   Buscando Fear & Greed Index...
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  TV batch BYBIT: 34/37 retornados | 0.08s
+2026-03-30 23:22:03 BRT [WARNING]   ⚠️  TV BYBIT: 3 sem retorno: ['PEPEUSDT', 'SHIBUSDT', 'PUMPUSDT']
+2026-03-30 23:22:03 BRT [INFO   ]   🔄  [v5.1] Tentando prefixo BITGET: para 3 tokens sem dados...
+2026-03-30 23:22:03 BRT [INFO   ]   ✅  TV BITGET: recuperados 3: ['PEPEUSDT', 'SHIBUSDT', 'PUMPUSDT'] | 0.07s
+2026-03-30 23:22:03 BRT [DEBUG  ]   GET https://api.alternative.me/fng/?limit=1
+2026-03-30 23:22:03 BRT [DEBUG  ]       → HTTP 200 | 0.2KB | enc:gzip | 0.21s
+2026-03-30 23:22:03 BRT [INFO   ]   📊 Fear & Greed: 11 (Extreme Fear)
+2026-03-30 23:22:03 BRT [INFO   ] 
+───────────────────────────────────────────────────────
+2026-03-30 23:22:03 BRT [INFO   ]   GATE 1 — Direção 4H (LONG: não SELL | SHORT: não BUY)
+2026-03-30 23:22:03 BRT [INFO   ] ───────────────────────────────────────────────────────
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  PEPE     4H=BUY (val=0.2697) RSI=53.1 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  SHIB     4H=BUY (val=0.4242) RSI=53.0 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ❌  PUMP     4H=SELL (val=-0.2212) RSI=45.0 — LONG REJEITADO
+2026-03-30 23:22:03 BRT [DEBUG  ]   📉  PUMP     4H=SELL (val=-0.2212) RSI=45.0 — SHORT CANDIDATO
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  DOGE     4H=BUY (val=0.1576) RSI=51.3 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  ONT      4H=BUY (val=0.3545) RSI=66.6 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  CHZ      4H=STRONG_BUY (val=0.6030) RSI=72.0 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  PIPPIN   4H=NEUTRAL (val=0.0909) RSI=47.7 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  ADA      4H=NEUTRAL (val=0.0242) RSI=49.5 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  BEAT     4H=BUY (val=0.3121) RSI=54.6 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  XPL      4H=NEUTRAL (val=-0.0212) RSI=49.1 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  WLD      4H=NEUTRAL (val=0.0455) RSI=47.4 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  XRP      4H=NEUTRAL (val=-0.0879) RSI=46.8 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  OP       4H=BUY (val=0.1576) RSI=55.4 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  WLFI     4H=STRONG_BUY (val=0.5152) RSI=55.6 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  CRV      4H=BUY (val=0.1788) RSI=53.9 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  TRX      4H=BUY (val=0.2424) RSI=56.0 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ❌  HBAR     4H=SELL (val=-0.4000) RSI=40.5 — LONG REJEITADO
+2026-03-30 23:22:03 BRT [DEBUG  ]   📉  HBAR     4H=SELL (val=-0.4000) RSI=40.5 — SHORT CANDIDATO
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  FIL      4H=NEUTRAL (val=-0.0879) RSI=47.6 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  SUI      4H=NEUTRAL (val=0.0242) RSI=49.1 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  POL      4H=NEUTRAL (val=0.0909) RSI=49.9 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  XLM      4H=STRONG_BUY (val=0.5576) RSI=53.2 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  ONDO     4H=BUY (val=0.2212) RSI=50.4 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  ASTER    4H=BUY (val=0.2455) RSI=60.9 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  RIVER    4H=NEUTRAL (val=0.0667) RSI=57.3 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ❌  DOT      4H=SELL (val=-0.2424) RSI=40.8 — LONG REJEITADO
+2026-03-30 23:22:03 BRT [DEBUG  ]   📉  DOT      4H=SELL (val=-0.2424) RSI=40.8 — SHORT CANDIDATO
+2026-03-30 23:22:03 BRT [DEBUG  ]   ❌  APT      4H=SELL (val=-0.4000) RSI=35.7 — LONG REJEITADO
+2026-03-30 23:22:03 BRT [DEBUG  ]   📉  APT      4H=SELL (val=-0.4000) RSI=35.7 — SHORT CANDIDATO
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  NEAR     4H=NEUTRAL (val=0.0909) RSI=49.5 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  TRUMP    4H=NEUTRAL (val=0.0242) RSI=48.7 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  SOL      4H=NEUTRAL (val=0.0242) RSI=48.9 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ❌  LIT      4H=SELL (val=-0.3091) RSI=39.3 — LONG REJEITADO
+2026-03-30 23:22:03 BRT [DEBUG  ]   📉  LIT      4H=SELL (val=-0.3091) RSI=39.3 — SHORT CANDIDATO
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  UNI      4H=BUY (val=0.2909) RSI=60.6 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  LINK     4H=BUY (val=0.2242) RSI=54.4 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  ETH      4H=BUY (val=0.3576) RSI=57.2 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  AVAX     4H=BUY (val=0.1576) RSI=55.3 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ❌  HYPE     4H=SELL (val=-0.2212) RSI=41.6 — LONG REJEITADO
+2026-03-30 23:22:03 BRT [DEBUG  ]   📉  HYPE     4H=SELL (val=-0.2212) RSI=41.6 — SHORT CANDIDATO
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  TON      4H=NEUTRAL (val=0.0242) RSI=48.9 — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  ICP      4H=NEUTRAL (val=0.0909) RSI=50.8 — LONG PASSOU
+2026-03-30 23:22:03 BRT [INFO   ]   Gate 4H: LONG=31 | SHORT=6 | sem dados TV=0 | universo=37
+2026-03-30 23:22:03 BRT [INFO   ] 
+───────────────────────────────────────────────────────
+2026-03-30 23:22:03 BRT [INFO   ]   GATE 2 — Estrutura 1H (LONG: BUY+ | SHORT: SELL+)
+2026-03-30 23:22:03 BRT [INFO   ] ───────────────────────────────────────────────────────
+2026-03-30 23:22:03 BRT [DEBUG  ]   TV batch: 37 tokens (.P perpétuo) | cols: ['Recommend.All|60']
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  TV batch BYBIT: 34/37 retornados | 0.07s
+2026-03-30 23:22:03 BRT [WARNING]   ⚠️  TV BYBIT: 3 sem retorno: ['PEPEUSDT', 'SHIBUSDT', 'PUMPUSDT']
+2026-03-30 23:22:03 BRT [INFO   ]   🔄  [v5.1] Tentando prefixo BITGET: para 3 tokens sem dados...
+2026-03-30 23:22:03 BRT [INFO   ]   ✅  TV BITGET: recuperados 3: ['PEPEUSDT', 'SHIBUSDT', 'PUMPUSDT'] | 0.07s
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  PEPE     1H=BUY (val=0.3667) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ❌  SHIB     1H=NEUTRAL (val=0.0212) — LONG REJEITADO
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  DOGE     1H=BUY (val=0.2667) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  ONT      1H=BUY (val=0.1545) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  CHZ      1H=BUY (val=0.4212) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  PIPPIN   1H=BUY (val=0.3121) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  ADA      1H=BUY (val=0.3121) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  BEAT     1H=BUY (val=0.3121) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  XPL      1H=BUY (val=0.1758) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  WLD      1H=BUY (val=0.1121) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ❌  XRP      1H=NEUTRAL (val=0.0667) — LONG REJEITADO
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  OP       1H=BUY (val=0.2879) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  WLFI     1H=STRONG_BUY (val=0.5121) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  CRV      1H=BUY (val=0.4242) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ❌  TRX      1H=NEUTRAL (val=0.0212) — LONG REJEITADO
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  FIL      1H=BUY (val=0.1333) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  SUI      1H=BUY (val=0.3576) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  POL      1H=BUY (val=0.4242) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  XLM      1H=BUY (val=0.4000) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  ONDO     1H=BUY (val=0.2667) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  ASTER    1H=STRONG_BUY (val=0.5121) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  RIVER    1H=BUY (val=0.1758) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  NEAR     1H=BUY (val=0.3576) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  TRUMP    1H=BUY (val=0.2667) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  SOL      1H=BUY (val=0.3121) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  UNI      1H=STRONG_BUY (val=0.5576) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  LINK     1H=BUY (val=0.3333) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  ETH      1H=STRONG_BUY (val=0.5576) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  AVAX     1H=BUY (val=0.4242) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  TON      1H=BUY (val=0.2909) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  ICP      1H=BUY (val=0.3333) — LONG PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ❌  PUMP     1H=BUY (val=0.1121) — SHORT REJEITADO (não SELL no 1H)
+2026-03-30 23:22:03 BRT [DEBUG  ]   📉  HBAR     1H=SELL (val=-0.2667) — SHORT PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ❌  DOT      1H=NEUTRAL (val=0.0455) — SHORT REJEITADO (não SELL no 1H)
+2026-03-30 23:22:03 BRT [DEBUG  ]   📉  APT      1H=SELL (val=-0.3121) — SHORT PASSOU
+2026-03-30 23:22:03 BRT [DEBUG  ]   ❌  LIT      1H=NEUTRAL (val=0.0242) — SHORT REJEITADO (não SELL no 1H)
+2026-03-30 23:22:03 BRT [DEBUG  ]   📉  HYPE     1H=SELL (val=-0.2212) — SHORT PASSOU
+2026-03-30 23:22:03 BRT [INFO   ]   Gate 1H: LONG=28 | SHORT=3 | rejeitados=3
+2026-03-30 23:22:03 BRT [INFO   ] 
+───────────────────────────────────────────────────────
+2026-03-30 23:22:03 BRT [INFO   ]   ETAPA 3 — Indicadores 15m (TradingView) — LONG + SHORT [v6.4.1]
+2026-03-30 23:22:03 BRT [INFO   ] ───────────────────────────────────────────────────────
+2026-03-30 23:22:03 BRT [DEBUG  ]   TV batch: 31 tokens (.P perpétuo) | cols: ['BB.upper|15', 'BB.lower|15', 'ATR|15']
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  TV batch BYBIT: 30/31 retornados | 0.07s
+2026-03-30 23:22:03 BRT [WARNING]   ⚠️  TV BYBIT: 1 sem retorno: ['PEPEUSDT']
+2026-03-30 23:22:03 BRT [INFO   ]   🔄  [v5.1] Tentando prefixo BITGET: para 1 tokens sem dados...
+2026-03-30 23:22:03 BRT [INFO   ]   ✅  TV BITGET: recuperados 1: ['PEPEUSDT'] | 0.07s
+2026-03-30 23:22:03 BRT [DEBUG  ]   TV batch: 31 tokens (.P perpétuo) | cols: ['Candle.Engulfing.Bullish|15', 'Candle.Hammer|15', 'Candle.MorningStar|15', 'Candle.3WhiteSoldiers|15', 'Candle.Harami.Bullish|15', 'Candle.Doji.Dragonfly|15', 'Candle.Engulfing.Bearish|15', 'Candle.ShootingStar|15', 'Candle.EveningStar|15', 'Candle.3BlackCrows|15', 'Candle.Harami.Bearish|15']
+2026-03-30 23:22:03 BRT [DEBUG  ]   ✅  TV batch BYBIT: 30/31 retornados | 0.07s
+2026-03-30 23:22:03 BRT [WARNING]   ⚠️  TV BYBIT: 1 sem retorno: ['PEPEUSDT']
+2026-03-30 23:22:03 BRT [INFO   ]   🔄  [v5.1] Tentando prefixo BITGET: para 1 tokens sem dados...
+2026-03-30 23:22:03 BRT [INFO   ]   ✅  TV BITGET: recuperados 1: ['PEPEUSDT'] | 0.07s
+2026-03-30 23:22:03 BRT [INFO   ]   TV 15m: tech=31/31 | candles=31/31
+2026-03-30 23:22:03 BRT [DEBUG  ]   PEPE     ATR=0.0000 | BB_lower=0.0000 | BB_upper=0.0000 | FR=0.00003
+2026-03-30 23:22:03 BRT [DEBUG  ]   DOGE     ATR=0.0004 | BB_lower=0.0903 | BB_upper=0.0923 | FR=-0.00005
+2026-03-30 23:22:03 BRT [DEBUG  ]   ONT      ATR=0.0024 | BB_lower=0.0774 | BB_upper=0.0882 | FR=-0.00518
+2026-03-30 23:22:03 BRT [DEBUG  ]   CHZ      ATR=0.0004 | BB_lower=0.0421 | BB_upper=0.0435 | FR=0.00002
+2026-03-30 23:22:03 BRT [DEBUG  ]   PIPPIN   ATR=0.0007 | BB_lower=0.0535 | BB_upper=0.0562 | FR=0.00005
+2026-03-30 23:22:03 BRT [DEBUG  ]   ADA      ATR=0.0012 | BB_lower=0.2419 | BB_upper=0.2483 | FR=0.00010
+2026-03-30 23:22:03 BRT [DEBUG  ]   BEAT     ATR=0.0103 | BB_lower=0.5473 | BB_upper=0.5729 | FR=0.00041
+2026-03-30 23:22:03 BRT [DEBUG  ]   XPL      ATR=0.0006 | BB_lower=0.0875 | BB_upper=0.0904 | FR=0.00005
+2026-03-30 23:22:03 BRT [DEBUG  ]   WLD      ATR=0.0018 | BB_lower=0.2709 | BB_upper=0.2778 | FR=0.00010
+2026-03-30 23:22:03 BRT [DEBUG  ]   OP       ATR=0.0005 | BB_lower=0.1052 | BB_upper=0.1082 | FR=-0.00017
+2026-03-30 23:22:03 BRT [DEBUG  ]   WLFI     ATR=0.0004 | BB_lower=0.0979 | BB_upper=0.0998 | FR=0.00005
+2026-03-30 23:22:03 BRT [DEBUG  ]   CRV      ATR=0.0011 | BB_lower=0.2133 | BB_upper=0.2192 | FR=0.00010
+2026-03-30 23:22:03 BRT [DEBUG  ]   FIL      ATR=0.0039 | BB_lower=0.8099 | BB_upper=0.8300 | FR=-0.00010
+2026-03-30 23:22:03 BRT [DEBUG  ]   SUI      ATR=0.0045 | BB_lower=0.8561 | BB_upper=0.8815 | FR=0.00003
+2026-03-30 23:22:03 BRT [DEBUG  ]   POL      ATR=0.0004 | BB_lower=0.0908 | BB_upper=0.0926 | FR=-0.00014
+2026-03-30 23:22:03 BRT [DEBUG  ]   XLM      ATR=0.0008 | BB_lower=0.1666 | BB_upper=0.1705 | FR=-0.00002
+2026-03-30 23:22:03 BRT [DEBUG  ]   ONDO     ATR=0.0015 | BB_lower=0.2604 | BB_upper=0.2668 | FR=-0.00020
+2026-03-30 23:22:03 BRT [DEBUG  ]   ASTER    ATR=0.0026 | BB_lower=0.6696 | BB_upper=0.6807 | FR=0.00004
+2026-03-30 23:22:03 BRT [DEBUG  ]   RIVER    ATR=0.3616 | BB_lower=15.8204 | BB_upper=17.4485 | FR=0.00005
+2026-03-30 23:22:03 BRT [DEBUG  ]   NEAR     ATR=0.0061 | BB_lower=1.1475 | BB_upper=1.1946 | FR=-0.00027
+2026-03-30 23:22:03 BRT [DEBUG  ]   TRUMP    ATR=0.0138 | BB_lower=2.9080 | BB_upper=2.9878 | FR=-0.00020
+2026-03-30 23:22:03 BRT [DEBUG  ]   SOL      ATR=0.4371 | BB_lower=81.8968 | BB_upper=84.0262 | FR=0.00002
+2026-03-30 23:22:03 BRT [DEBUG  ]   UNI      ATR=0.0180 | BB_lower=3.4410 | BB_upper=3.5577 | FR=0.00010
+2026-03-30 23:22:03 BRT [DEBUG  ]   LINK     ATR=0.0426 | BB_lower=8.5465 | BB_upper=8.8042 | FR=0.00009
+2026-03-30 23:22:03 BRT [DEBUG  ]   ETH      ATR=11.5413 | BB_lower=2002.9826 | BB_upper=2078.7154 | FR=0.00007
+2026-03-30 23:22:03 BRT [DEBUG  ]   AVAX     ATR=0.0445 | BB_lower=8.7044 | BB_upper=9.0273 | FR=0.00009
+2026-03-30 23:22:03 BRT [DEBUG  ]   TON      ATR=0.0042 | BB_lower=1.2177 | BB_upper=1.2405 | FR=0.00005
+2026-03-30 23:22:03 BRT [DEBUG  ]   ICP      ATR=0.0094 | BB_lower=2.2272 | BB_upper=2.2753 | FR=-0.00008
+2026-03-30 23:22:03 BRT [DEBUG  ]   HBAR     ATR=0.0004 | BB_lower=0.0867 | BB_upper=0.0883 | FR=-0.00003
+2026-03-30 23:22:03 BRT [DEBUG  ]   APT      ATR=0.0049 | BB_lower=0.8827 | BB_upper=0.9044 | FR=-0.00053
+2026-03-30 23:22:03 BRT [DEBUG  ]   HYPE     ATR=0.2342 | BB_lower=36.5909 | BB_upper=37.6474 | FR=0.00001
+2026-03-30 23:22:03 BRT [INFO   ] 
+───────────────────────────────────────────────────────
+2026-03-30 23:22:03 BRT [INFO   ]   ETAPA 3b — Score parcial (sem klines, para ordenação)
+2026-03-30 23:22:03 BRT [INFO   ] ───────────────────────────────────────────────────────
+2026-03-30 23:22:03 BRT [DEBUG  ]   PEPE     score parcial LONG: 0/25 [FR=0.0030% BB=0.0000–0.0000]
+2026-03-30 23:22:03 BRT [DEBUG  ]   DOGE     score parcial LONG: 1/25 [FR=-0.0052% BB=0.0903–0.0923]
+2026-03-30 23:22:03 BRT [DEBUG  ]   ONT      score parcial LONG: 5/25 [FR=-0.5183% BB=0.0774–0.0882]
+2026-03-30 23:22:03 BRT [DEBUG  ]   CHZ      score parcial LONG: 1/25 [FR=0.0025% BB=0.0421–0.0435]
+2026-03-30 23:22:03 BRT [DEBUG  ]   PIPPIN   score parcial LONG: 0/25 [FR=0.0050% BB=0.0535–0.0562]
+2026-03-30 23:22:03 BRT [DEBUG  ]   ADA      score parcial LONG: 0/25 [FR=0.0100% BB=0.2419–0.2483]
+2026-03-30 23:22:03 BRT [DEBUG  ]   BEAT     score parcial LONG: 2/25 [FR=0.0414% BB=0.5473–0.5729]
+2026-03-30 23:22:03 BRT [DEBUG  ]   XPL      score parcial LONG: 0/25 [FR=0.0050% BB=0.0875–0.0904]
+2026-03-30 23:22:03 BRT [DEBUG  ]   WLD      score parcial LONG: 0/25 [FR=0.0100% BB=0.2709–0.2778]
+2026-03-30 23:22:03 BRT [DEBUG  ]   OP       score parcial LONG: 1/25 [FR=-0.0166% BB=0.1052–0.1082]
+2026-03-30 23:22:03 BRT [DEBUG  ]   WLFI     score parcial LONG: 0/25 [FR=0.0050% BB=0.0979–0.0998]
+2026-03-30 23:22:03 BRT [DEBUG  ]   CRV      score parcial LONG: 0/25 [FR=0.0100% BB=0.2133–0.2192]
+2026-03-30 23:22:03 BRT [DEBUG  ]   FIL      score parcial LONG: 1/25 [FR=-0.0099% BB=0.8099–0.8300]
+2026-03-30 23:22:03 BRT [DEBUG  ]   SUI      score parcial LONG: 0/25 [FR=0.0026% BB=0.8561–0.8815]
+2026-03-30 23:22:03 BRT [DEBUG  ]   POL      score parcial LONG: 1/25 [FR=-0.0138% BB=0.0908–0.0926]
+2026-03-30 23:22:03 BRT [DEBUG  ]   XLM      score parcial LONG: 1/25 [FR=-0.0025% BB=0.1666–0.1705]
+2026-03-30 23:22:03 BRT [DEBUG  ]   ONDO     score parcial LONG: 1/25 [FR=-0.0202% BB=0.2604–0.2668]
+2026-03-30 23:22:03 BRT [DEBUG  ]   ASTER    score parcial LONG: 1/25 [FR=0.0037% BB=0.6696–0.6807]
+2026-03-30 23:22:03 BRT [DEBUG  ]   RIVER    score parcial LONG: 0/25 [FR=0.0050% BB=15.8204–17.4485]
+2026-03-30 23:22:03 BRT [DEBUG  ]   NEAR     score parcial LONG: 1/25 [FR=-0.0274% BB=1.1475–1.1946]
+2026-03-30 23:22:03 BRT [DEBUG  ]   TRUMP    score parcial LONG: 1/25 [FR=-0.0203% BB=2.9080–2.9878]
+2026-03-30 23:22:03 BRT [DEBUG  ]   SOL      score parcial LONG: 0/25 [FR=0.0023% BB=81.8968–84.0262]
+2026-03-30 23:22:03 BRT [DEBUG  ]   UNI      score parcial LONG: 0/25 [FR=0.0100% BB=3.4410–3.5577]
+2026-03-30 23:22:03 BRT [DEBUG  ]   LINK     score parcial LONG: 0/25 [FR=0.0089% BB=8.5465–8.8042]
+2026-03-30 23:22:03 BRT [DEBUG  ]   ETH      score parcial LONG: 0/25 [FR=0.0067% BB=2002.9826–2078.7154]
+2026-03-30 23:22:03 BRT [DEBUG  ]   AVAX     score parcial LONG: 0/25 [FR=0.0093% BB=8.7044–9.0273]
+2026-03-30 23:22:03 BRT [DEBUG  ]   TON      score parcial LONG: 0/25 [FR=0.0050% BB=1.2177–1.2405]
+2026-03-30 23:22:03 BRT [DEBUG  ]   ICP      score parcial LONG: 1/25 [FR=-0.0078% BB=2.2272–2.2753]
+2026-03-30 23:22:03 BRT [DEBUG  ]   HBAR     score parcial SHORT: 2/25 [FR=-0.0033% BB=0.0867–0.0883]
+2026-03-30 23:22:03 BRT [DEBUG  ]   APT      score parcial SHORT: 2/25 [FR=-0.0531% BB=0.8827–0.9044]
+2026-03-30 23:22:03 BRT [DEBUG  ]   HYPE     score parcial SHORT: 4/25 [FR=0.0014% BB=36.5909–37.6474]
+2026-03-30 23:22:03 BRT [INFO   ]   Ordem LONG: ['ONT', 'BEAT', 'DOGE', 'CHZ', 'OP', 'FIL', 'POL', 'XLM', 'ONDO', 'ASTER', 'NEAR', 'TRUMP', 'ICP', 'PEPE', 'PIPPIN', 'ADA', 'XPL', 'WLD', 'WLFI', 'CRV', 'SUI', 'RIVER', 'SOL', 'UNI', 'LINK', 'ETH', 'AVAX', 'TON']
+2026-03-30 23:22:03 BRT [INFO   ]   Ordem SHORT: ['HYPE', 'HBAR', 'APT']
+2026-03-30 23:22:03 BRT [INFO   ] 
+───────────────────────────────────────────────────────
+2026-03-30 23:22:03 BRT [INFO   ]   ETAPA 4 — Klines + Score completo (TOP 20 LONG + SHORT) [v6.2.0]
+2026-03-30 23:22:03 BRT [INFO   ] ───────────────────────────────────────────────────────
+2026-03-30 23:22:03 BRT [DEBUG  ]   Contexto: FGI=11 | BTC=NEUTRAL | LONG=CAUTELOSO (Medo Extremo)(thr=20) | SHORT=MODERADO (Medo Extremo — mercado bearish)(thr=16) | risk_score=0
+2026-03-30 23:22:03 BRT [INFO   ]   ✅  [A4 CANDLE LOCK] Vela 15m fechada (424s após fechamento). Último fechamento: 23:15:00 BRT.
+2026-03-30 23:22:03 BRT [INFO   ]   Buscando klines para: ['ONT', 'BEAT', 'DOGE', 'CHZ', 'OP', 'FIL', 'POL', 'XLM', 'ONDO', 'ASTER', 'NEAR', 'TRUMP', 'ICP', 'PEPE', 'PIPPIN', 'ADA', 'XPL', 'WLD', 'WLFI', 'CRV', 'HYPE', 'HBAR', 'APT']
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS ONTUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS BEATUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS DOGEUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS CHZUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS OPUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS FILUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS POLUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS XLMUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS ONDOUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS ASTERUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS NEARUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS TRUMPUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS ICPUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS PEPEUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS PIPPINUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS ADAUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS XPLUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS WLDUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS WLFIUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS CRVUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS HYPEUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS HBARUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS APTUSDT 1H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS ONTUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS BEATUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS DOGEUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS CHZUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS OPUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS FILUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS POLUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS XLMUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS ONDOUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS ASTERUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS NEARUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS TRUMPUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS ICPUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS PEPEUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS PIPPINUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS ADAUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS XPLUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS WLDUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS WLFIUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS CRVUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS HYPEUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS HBARUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:03 BRT [DEBUG  ]   📡  Cache MISS APTUSDT 4H: arquivo não existe — buscando
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.4KB | enc:gzip | 0.46s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ICPUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO ICPUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 5.0KB | enc:gzip | 0.46s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines DOGEUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO DOGEUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.48s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines XPLUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO XPLUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.49s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines BEATUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.48s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines WLFIUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO WLFIUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.49s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines PIPPINUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.9KB | enc:gzip | 0.49s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines DOGEUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.49s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines HBARUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.9KB | enc:gzip | 0.48s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines CHZUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO CHZUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.5KB | enc:gzip | 0.48s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines TRUMPUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO TRUMPUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.9KB | enc:gzip | 0.49s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines APTUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.49s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ONDOUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.7KB | enc:gzip | 0.49s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines FILUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO FILUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.7KB | enc:gzip | 0.49s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines HYPEUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO HYPEUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.5KB | enc:gzip | 0.49s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines WLFIUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO WLFIUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.7KB | enc:gzip | 0.49s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines HYPEUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.5KB | enc:gzip | 0.49s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines CRVUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO CRVUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.9KB | enc:gzip | 0.53s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines APTUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO APTUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.7KB | enc:gzip | 0.53s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines OPUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO OPUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.7KB | enc:gzip | 0.54s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ONDOUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO ONDOUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.9KB | enc:gzip | 0.53s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines XLMUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO XLMUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.7KB | enc:gzip | 0.53s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ADAUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO ADAUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 6.5KB | enc:gzip | 0.54s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines PEPEUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO PEPEUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.54s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ASTERUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO ASTERUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.54s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ONDOUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO ONDOUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.5KB | enc:gzip | 0.54s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines XPLUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.54s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines OPUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO OPUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.54s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines CRVUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO CRVUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.54s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines HBARUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO HBARUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.54s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ADAUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO ADAUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.5KB | enc:gzip | 0.55s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines CRVUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.3KB | enc:gzip | 0.55s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines TRUMPUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.9KB | enc:gzip | 0.55s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines BEATUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO BEATUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.54s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines HYPEUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO HYPEUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.5KB | enc:gzip | 0.55s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ASTERUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.5KB | enc:gzip | 0.55s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines NEARUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.5KB | enc:gzip | 0.55s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines XPLUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO XPLUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.5KB | enc:gzip | 0.55s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ICPUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO ICPUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.9KB | enc:gzip | 0.55s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines HBARUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO HBARUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.55s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines WLDUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO WLDUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 5.1KB | enc:gzip | 0.70s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ONTUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO ONTUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.70s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ADAUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.70s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines NEARUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO NEARUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.71s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines XLMUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.71s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines POLUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO POLUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.9KB | enc:gzip | 0.75s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines PIPPINUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO PIPPINUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.75s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines CHZUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.75s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines WLDUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO WLDUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.7KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines POLUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 5.1KB | enc:gzip | 0.75s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ONTUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO ONTUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines BEATUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO BEATUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.5KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines WLDUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.4KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines WLFIUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines FILUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO FILUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.4KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ICPUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines FILUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 5.0KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines PIPPINUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO PIPPINUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 5.1KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ONTUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 5.0KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines APTUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO APTUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.5KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines ASTERUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO ASTERUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.4KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines TRUMPUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO TRUMPUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.9KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines POLUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO POLUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 6.6KB | enc:gzip | 0.76s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines PEPEUSDT 4H: 60 candles | 03/30 21:00 → 03/21 01:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO PEPEUSDT 4H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.77s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines XLMUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO XLMUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.5KB | enc:gzip | 0.77s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines NEARUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO NEARUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 6.4KB | enc:gzip | 0.77s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines PEPEUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.9KB | enc:gzip | 0.77s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines CHZUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO CHZUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 5.0KB | enc:gzip | 0.77s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines DOGEUSDT 1H: 60 candles | 03/30 23:00 → 03/28 12:00
+2026-03-30 23:22:04 BRT [DEBUG  ]   💾  Cache GRAVADO DOGEUSDT 1H: 60 candles
+2026-03-30 23:22:04 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-03-30 23:22:04 BRT [DEBUG  ]       → HTTP 200 | 4.6KB | enc:gzip | 0.77s
+2026-03-30 23:22:04 BRT [DEBUG  ]   ✅  Klines OPUSDT 15m: 60 candles | 03/30 23:15 → 03/30 08:30
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG ONT: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE ONT [LONG]: 8/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · BUY (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +0/3 · Longe de zonas de liquidez 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +3/3 ███ CHOCH Bullish 4H (reversão confirmada)
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +0/4 · Preço longe de suportes no 1H
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +3/3 ███ BB inferior (13%) — exaustão em suporte
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +2/2 ██ -0.5183% (squeeze potencial)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (7.2%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (0.4x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (+1.4% vs média, 6.2M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 LONG: SL ancorado em suporte 0.0599 (ATR=0.0727 → zona=0.0598)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=24.08% | notional=$21 | alav_margem=0.6x → cap=2x → alav=2.0x | margem=$10.38 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG ONT: score=8/25 | entry=0.0787 | SL=24.08% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG BEAT: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/6L → 5H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/6L → 5H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/6L → 5H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]   SCORE BEAT [LONG]: 4/25 | DQ=100% (abaixo do radar)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/6L → 5H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=4.64% | notional=$108 | alav_margem=3.1x → cap=2x → alav=2.0x | margem=$53.82 ⚠️MARGEM $54>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG BEAT: score=4/25 | entry=0.5564 | SL=4.64% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG DOGE: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE DOGE [LONG]: 6/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · BUY (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +1/3 █ OB 4H (0.0913-0.0940)
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +0/3 · Sem estrutura bullish no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 0.0903 (2.02% abaixo) | Order Block 1H (0.0899-0.0913)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (96%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +1/2 █ -0.0052% (leve negativo)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (0.5%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (0.7x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI sem histórico ainda (92.3M USD)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG DOGE: score=6/25 | entry=0.0922 | SL=1.50% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG CHZ: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 8H/6L → 8H/6L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE CHZ [LONG]: 7/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · STRONG_BUY (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +0/3 · Longe de zonas de liquidez 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +0/3 · Sem estrutura bullish no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 0.0425 (2.26% abaixo) | Order Block 1H (0.0431-0.0435)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (99%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +0/2 · 0.0025% (neutro)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (6.9%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +2/2 ██ Volume forte (2.5x média)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +1/2 █ OI +5.9% vs média (7.0M) — fluxo moderado
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 8H/6L → 8H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 LONG: SL ancorado em suporte 0.0406 (ATR=0.0425 → zona=0.0405)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=6.66% | notional=$75 | alav_margem=2.1x → cap=2x → alav=2.0x | margem=$37.56 ⚠️MARGEM $38>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG CHZ: score=7/25 | entry=0.0434 | SL=6.66% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG OP: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE OP [LONG]: 6/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · BUY (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +0/3 · Longe de zonas de liquidez 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +1/3 █ Estrutura 4H saudável (Higher Lows)
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 0.1064 (1.48% abaixo) | Order Block 1H (0.1066-0.1083)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (93%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +1/2 █ -0.0166% (leve negativo)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (3.3%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (0.9x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (+1.7% vs média, 5.3M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 LONG: SL ancorado em suporte 0.1023 (ATR=0.1064 → zona=0.1021)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=5.47% | notional=$91 | alav_margem=2.6x → cap=2x → alav=2.0x | margem=$45.73 ⚠️MARGEM $46>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG OP: score=6/25 | entry=0.1080 | SL=5.47% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG FIL: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE FIL [LONG]: 6/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · NEUTRAL (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +1/3 █ Suporte 4H 0.8155 (1.74%)
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +0/3 · Sem estrutura bullish no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 0.8097 (2.43% abaixo) | Order Block 1H (0.8029-0.8255)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (100%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +1/2 █ -0.0099% (leve negativo)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (1.9%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (0.5x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI sem histórico ainda (12.6M USD)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 LONG: SL ancorado em suporte 0.8155 (ATR=0.8175 → zona=0.8139)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.93% | notional=$259 | alav_margem=7.4x → cap=2x → alav=2.0x | margem=$129.42 ⚠️MARGEM $129>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG FIL: score=6/25 | entry=0.8299 | SL=1.93% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG POL: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/5L → 5H/5L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE POL [LONG]: 8/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · NEUTRAL (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +3/3 ███ Suporte 4H 0.0908 (2.10%) | OB 4H (0.0939-0.0946) | Confluência S/R+OB
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +0/3 · Sem estrutura bullish no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 0.0911 (1.80% abaixo) | Order Block 1H (0.0905-0.0920)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (108%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +1/2 █ -0.0138% (leve negativo)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (0.2%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (0.4x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (-3.8% vs média, 5.0M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/5L → 5H/5L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG POL: score=8/25 | entry=0.0927 | SL=1.50% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG XLM: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 3H/5L → 3H/5L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 3H/5L → 3H/5L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 3H/5L → 3H/5L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/3L → 4H/3L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE XLM [LONG]: 7/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · STRONG_BUY (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +1/3 █ OB 4H (0.1738-0.1753)
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +0/3 · Sem estrutura bullish no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 0.1672 (1.81% abaixo) | Order Block 1H (0.1678-0.1697)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (96%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +1/2 █ -0.0025% (leve negativo)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (1.6%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +1/2 █ Volume adequado (1.3x média)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (-0.1% vs média, 7.8M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 3H/5L → 3H/5L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/3L → 4H/3L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 LONG: SL ancorado em suporte 0.1678 (ATR=0.1678 → zona=0.1675)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.68% | notional=$298 | alav_margem=8.5x → cap=2x → alav=2.0x | margem=$149.10 ⚠️MARGEM $149>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG XLM: score=7/25 | entry=0.1703 | SL=1.68% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG ONDO: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/4L → 6H/4L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE ONDO [LONG]: 8/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · BUY (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +1/3 █ OB 4H (0.2636-0.2690)
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +2/2 ██ Falling Wedge (reversão bullish)
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +0/3 · Sem estrutura bullish no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 0.2638 (0.79% abaixo) | Order Block 1H (0.2684-0.2733)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (86%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +1/2 █ -0.0202% (leve negativo)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (0.6%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (0.9x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI sem histórico ainda (7.0M USD)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/4L → 6H/4L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG ONDO: score=8/25 | entry=0.2659 | SL=1.50% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG ASTER: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]   SCORE ASTER [LONG]: 4/25 | DQ=100% (abaixo do radar)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG ASTER: score=4/25 | entry=0.6795 | SL=1.50% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG NEAR: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/5L → 5H/5L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE NEAR [LONG]: 7/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · NEUTRAL (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +1/3 █ Suporte 4H 1.1608 (2.43%)
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +1/3 █ Estrutura 4H saudável (Higher Lows)
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 1.1609 (2.42% abaixo) | Order Block 1H (1.2012-1.2194)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (90%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +1/2 █ -0.0274% (leve negativo)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (0.8%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (0.5x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (-0.2% vs média, 13.5M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/5L → 5H/5L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG NEAR: score=7/25 | entry=1.1897 | SL=1.50% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG TRUMP: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/6L → 5H/6L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE TRUMP [LONG]: 5/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · NEUTRAL (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +0/3 · Longe de zonas de liquidez 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +0/3 · Sem estrutura bullish no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 2.9140 (2.48% abaixo) | Order Block 1H (2.9380-2.9600)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (100%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +1/2 █ -0.0203% (leve negativo)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (2.0%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (1.1x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI sem histórico ainda (15.0M USD)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/6L → 5H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 LONG: SL ancorado em suporte 2.9380 (ATR=2.9432 → zona=2.9321)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.87% | notional=$267 | alav_margem=7.6x → cap=2x → alav=2.0x | margem=$133.69 ⚠️MARGEM $134>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG TRUMP: score=5/25 | entry=2.9880 | SL=1.87% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG ICP: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE ICP [LONG]: 7/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · NEUTRAL (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +1/3 █ OB 4H (2.2970-2.3490)
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +0/3 · Sem estrutura bullish no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 2.2160 (2.25% abaixo) | Order Block 1H (2.2170-2.2340)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (83%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +1/2 █ -0.0078% (leve negativo)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (1.8%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +1/2 █ Volume adequado (1.5x média)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (-0.7% vs média, 6.2M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 LONG: SL ancorado em suporte 2.2350 (ATR=2.2330 → zona=2.2305)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.61% | notional=$311 | alav_margem=8.9x → cap=2x → alav=2.0x | margem=$155.40 ⚠️MARGEM $155>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG ICP: score=7/25 | entry=2.2670 | SL=1.61% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG PEPE: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 3H/7L → 3H/7L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE PEPE [LONG]: 5/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · BUY (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +1/3 █ OB 4H (0.0000-0.0000)
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +0/3 · Sem estrutura bullish no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 0.0000 (0.92% abaixo) | Order Block 1H (0.0000-0.0000)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (91%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +0/2 · 0.0030% (neutro)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (1.1%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (0.6x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (-5.2% vs média, 26.7M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 3H/7L → 3H/7L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 LONG: SL ancorado em suporte 0.0000 (ATR=0.0000 → zona=0.0000)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.90% | notional=$263 | alav_margem=7.5x → cap=2x → alav=2.0x | margem=$131.52 ⚠️MARGEM $132>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG PEPE: score=5/25 | entry=0.0000 | SL=1.90% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG PIPPIN: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/5L → 6H/5L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/5L → 6H/5L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/5L → 6H/5L)
+2026-03-30 23:22:04 BRT [DEBUG  ]   SCORE PIPPIN [LONG]: 3/25 | DQ=100% (abaixo do radar)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/5L → 6H/5L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 LONG: SL ancorado em suporte 0.0539 (ATR=0.0548 → zona=0.0537)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=4.73% | notional=$106 | alav_margem=3.0x → cap=2x → alav=2.0x | margem=$52.86 ⚠️MARGEM $53>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG PIPPIN: score=3/25 | entry=0.0564 | SL=4.73% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG ADA: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 3H/6L → 3H/6L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE ADA [LONG]: 10/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · NEUTRAL (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +3/3 ███ Suporte 4H 0.2474 (0.32%) | OB 4H (0.2515-0.2554) | Confluência S/R+OB
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +1/2 █ Cunha Descendente (pullback)
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +0/3 · Sem estrutura bullish no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 0.2447 (1.41% abaixo) | Order Block 1H (0.2458-0.2484)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (98%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +0/2 · 0.0100% (neutro)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (1.6%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +2/2 ██ Volume forte (1.8x média)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (+1.9% vs média, 31.4M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 6H/6L → 6H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 3H/6L → 3H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG ADA: score=10/25 | entry=0.2482 | SL=1.50% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG XPL: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE XPL [LONG]: 7/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · NEUTRAL (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +3/3 ███ Suporte 4H 0.0893 (0.96%) | OB 4H (0.0917-0.0925) | Confluência S/R+OB
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +0/3 · Sem estrutura bullish no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 0.0880 (2.41% abaixo) | Order Block 1H (0.0897-0.0907)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (91%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +0/2 · 0.0050% (neutro)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (1.1%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (0.8x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (+0.9% vs média, 6.2M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.68% | notional=$298 | alav_margem=8.5x → cap=2x → alav=2.0x | margem=$149.15 ⚠️MARGEM $149>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG XPL: score=7/25 | entry=0.0902 | SL=1.68% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG WLD: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]   SCORE WLD [LONG]: 3/25 | DQ=100% (abaixo do radar)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 LONG: SL ancorado em suporte 0.2702 (ATR=0.2732 → zona=0.2697)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=2.93% | notional=$171 | alav_margem=4.9x → cap=2x → alav=2.0x | margem=$85.32 ⚠️MARGEM $85>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG WLD: score=3/25 | entry=0.2778 | SL=2.93% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG WLFI: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/9L → 5H/9L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/9L → 5H/9L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/9L → 5H/9L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE WLFI [LONG]: 5/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · STRONG_BUY (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +1/3 █ OB 4H (0.0972-0.0989)
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +0/3 · Sem estrutura bullish no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 0.0975 (2.23% abaixo) | Order Block 1H (0.0978-0.0987)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (98%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +0/2 · 0.0050% (neutro)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (0.6%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (0.7x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (-4.0% vs média, 11.5M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/9L → 5H/9L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 LONG: SL ancorado em suporte 0.0978 (ATR=0.0982 → zona=0.0976)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=2.12% | notional=$236 | alav_margem=6.7x → cap=2x → alav=2.0x | margem=$117.84 ⚠️MARGEM $118>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG WLFI: score=5/25 | entry=0.0997 | SL=2.12% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ LONG CRV: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 3H/5L → 3H/5L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE CRV [LONG]: 8/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · BUY (contexto, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +1/3 █ OB 4H (0.2197-0.2248)
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +2/2 ██ Triângulo Ascendente (acumulação bullish)
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +1/3 █ Estrutura 4H saudável (Higher Lows)
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Suporte 1H           +4/4 ████ Suporte 1H em 0.2137 (2.46% abaixo) | Order Block 1H (0.2168-0.2215)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +0/3 · BB neutro (98%)
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +0/2 · 0.0100% (neutro)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (3.3%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (0.2x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (+1.2% vs média, 5.5M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 3H/5L → 3H/5L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📈 LONG CRV: score=8/25 | entry=0.2191 | SL=1.50% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ SHORT HYPE: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/3L → 5H/3L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/3L → 5H/3L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/3L → 5H/3L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 3H/4L → 3H/4L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE HYPE [SHORT]: 7/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · SELL (contexto SHORT, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +1/3 █ OB Bearish 4H (37.8510-38.5250)
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras bearish claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +0/3 · Sem estrutura bearish no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Resistência 1H       +2/4 ██ OB Bearish 1H (37.9930-38.3440)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +3/3 ███ BB superior (93%) — exaustão em resistência
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +1/2 █ 0.0014% (leve positivo)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (-1.7%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (0.4x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (-3.8% vs média, 46.5M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 5H/3L → 5H/3L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 3H/4L → 3H/4L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 SHORT: SL ancorado em resistência 38.3440 (ATR=38.1605 → zona=38.4207)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams SHORT: SL=2.25% | notional=$222 | alav_margem=6.3x → cap=2x → alav=2.0x | margem=$111.08 ⚠️MARGEM $111>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📉 SHORT HYPE: score=7/25 | entry=37.5750 | SL=2.25% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ SHORT HBAR: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/6L → 4H/6L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE HBAR [SHORT]: 10/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · SELL (contexto SHORT, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +1/3 █ OB Bearish 4H (0.0887-0.0903)
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras bearish claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +3/3 ███ CHOCH Bearish 4H (reversão confirmada)
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Resistência 1H       +4/4 ████ Resistência 1H em 0.0897 (2.00% acima) | OB Bearish 1H (0.0886-0.0891)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +2/3 ██ BB superior (78%) — exaustão em resistência
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           +0/2 · -0.0033% (neutro)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (-1.4%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +0/2 · Volume fraco (0.4x < 1.2x)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (-5.8% vs média, 6.0M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/6L → 4H/6L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 SHORT: SL ancorado em resistência 0.0891 (ATR=0.0892 → zona=0.0893)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams SHORT: SL=1.58% | notional=$317 | alav_margem=9.0x → cap=2x → alav=2.0x | margem=$158.34 ⚠️MARGEM $158>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📉 SHORT HBAR: score=10/25 | entry=0.0879 | SL=1.58% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ]   ─ SHORT APT: 15m=60 | 1H=60 | 4H=60
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/4L → 4H/4L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/4L → 4H/4L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/4L → 4H/4L)
+2026-03-30 23:22:04 BRT [INFO   ]   SCORE APT [SHORT]: 9/25 | DQ=100% | klines: 15m=✅ 1H=✅ 4H=✅
+2026-03-30 23:22:04 BRT [INFO   ]     Contexto 4H               +0/0 · SELL (contexto SHORT, não pontuado)
+2026-03-30 23:22:04 BRT [INFO   ]     P4 Liquidez 4H            +0/3 · Longe de resistências 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P5 Figuras 4H             +0/2 · Sem figuras bearish claras no 4H
+2026-03-30 23:22:04 BRT [INFO   ]     P6 CHOCH/BOS 4H           +3/3 ███ CHOCH Bearish 4H (reversão confirmada)
+2026-03-30 23:22:04 BRT [INFO   ]     P-1H Resistência 1H       +2/4 ██ OB Bearish 1H (0.9217-0.9255)
+2026-03-30 23:22:04 BRT [INFO   ]     P1 Bollinger 15m          +3/3 ███ BB superior (91%) — exaustão em resistência
+2026-03-30 23:22:04 BRT [INFO   ]     P2 Candles 15m            +0/4 · Nenhum
+2026-03-30 23:22:04 BRT [INFO   ]     P3 Funding Rate           -1/2 ▒ -0.0531% (shorts dominando — desfavorável para short)
+2026-03-30 23:22:04 BRT [INFO   ]     P7 Filtro Pump/Dump       +0/0 · OK (-3.4%)
+2026-03-30 23:22:04 BRT [INFO   ]     P8 Volume 15m             +2/2 ██ Volume forte (2.1x média)
+2026-03-30 23:22:04 BRT [INFO   ]     P9 OI Crescente           +0/2 · OI estável (-2.1% vs média, 7.4M)
+2026-03-30 23:22:04 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/4L → 4H/4L)
+2026-03-30 23:22:04 BRT [DEBUG  ]     M02 SHORT: SL ancorado em resistência 0.9255 (ATR=0.9159 → zona=0.9274)
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams SHORT: SL=2.76% | notional=$181 | alav_margem=5.2x → cap=2x → alav=2.0x | margem=$90.42 ⚠️MARGEM $90>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [INFO   ]   📉 SHORT APT: score=9/25 | entry=0.9024 | SL=2.76% | alav=2.0x ✅
+2026-03-30 23:22:04 BRT [INFO   ] 
+───────────────────────────────────────────────────────
+2026-03-30 23:22:04 BRT [INFO   ]   ETAPA 4b — Análise leve LONG + SHORT (sem klines) [v6.3.0 A8]
+2026-03-30 23:22:04 BRT [INFO   ] ───────────────────────────────────────────────────────
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [DEBUG  ]   SUI      score parcial LONG=0/25 → Em Observação
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=5.33% | notional=$94 | alav_margem=2.7x → cap=2x → alav=2.0x | margem=$46.91 ⚠️MARGEM $47>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [DEBUG  ]   RIVER    score parcial LONG=0/25 → Em Observação
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [DEBUG  ]   SOL      score parcial LONG=0/25 → Em Observação
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [DEBUG  ]   UNI      score parcial LONG=0/25 → Em Observação
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [DEBUG  ]   LINK     score parcial LONG=0/25 → Em Observação
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [DEBUG  ]   ETH      score parcial LONG=0/25 → Em Observação
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [DEBUG  ]   AVAX     score parcial LONG=0/25 → Em Observação
+2026-03-30 23:22:04 BRT [DEBUG  ]     TradeParams LONG: SL=1.50% | notional=$333 | alav_margem=9.5x → cap=2x → alav=2.0x | margem=$166.67 ⚠️MARGEM $167>35 | risco=$5.00 | ganho=$10.00
+2026-03-30 23:22:04 BRT [DEBUG  ]   TON      score parcial LONG=0/25 → Em Observação
+2026-03-30 23:22:04 BRT [INFO   ] 
+───────────────────────────────────────────────────────
+2026-03-30 23:22:04 BRT [INFO   ]   ETAPA 5 — Contexto de Mercado e Relatório Bidirecional
+2026-03-30 23:22:04 BRT [INFO   ] ───────────────────────────────────────────────────────
+2026-03-30 23:22:04 BRT [INFO   ]   📚  Score history: 29 tokens rastreados
+2026-03-30 23:22:04 BRT [DEBUG  ]   Contexto: FGI=11 | BTC=NEUTRAL | LONG=CAUTELOSO (Medo Extremo)(thr=20) | SHORT=MODERADO (Medo Extremo — mercado bearish)(thr=16) | risk_score=0
+2026-03-30 23:22:04 BRT [INFO   ]   BTC 4H: NEUTRAL | Thr LONG: 20 (CAUTELOSO (Medo Extremo)) | Thr SHORT: 16 (MODERADO (Medo Extremo — mercado bearish))
+2026-03-30 23:22:04 BRT [INFO   ]   Results LONG: 20 | SHORT: 3 | Obs LONG: 8 | Obs SHORT: 0
+2026-03-30 23:22:04 BRT [INFO   ] 
+───────────────────────────────────────────────────────
+2026-03-30 23:22:04 BRT [INFO   ]   ETAPA 6 — Notificações Telegram
+2026-03-30 23:22:04 BRT [INFO   ] ───────────────────────────────────────────────────────
+2026-03-30 23:22:05 BRT [INFO   ]   📲  Telegram heartbeat: enviado ✅
+2026-03-30 23:22:05 BRT [INFO   ]   📲  Telegram: 1/1 mensagens enviadas (1 heartbeat + 0 QUASE + 0 call)
+2026-03-30 23:22:05 BRT [INFO   ] ==========================================================
+🎯 SETUP ATIRADOR v6.6.3
+📅 30/03/2026 23:22 BRT
+📋 Log: atirador_LOG_20260330_2321.log
+==========================================================
+📊 CONTEXTO DE MERCADO
+   Fear & Greed: 11 | BTC 4H: NEUTRAL
+   LONG:  CAUTELOSO (Medo Extremo) | Threshold: 20 pts
+   SHORT: MODERADO (Medo Extremo — mercado bearish) | Threshold: 16 pts
+   Risk Score: 0
+==========================================================
+
+💼 SIZING Risk-First [v6.6.3]
+   Banca: $100.00 | Risco fixo/trade: $5.00 | Margem máx/trade: $35
+
+🔍 PIPELINE
+   Fonte de dados: OKX (perpetuals USDT)
+   Universo: 302 tokens | Qualificados: 37
+   Gate 4H: LONG=31 | SHORT=6
+   Gate 1H: LONG=28 | SHORT=3
+   Análise completa: LONG=20 | SHORT=3 | Obs: LONG=8 SHORT=0
+   ✅  Candle 15m fechado (424s após fechamento, último: 23:15:00 BRT)
+
+──────────────────────────────────────────────────────────
+📈 OPERAÇÕES LONG
+──────────────────────────────────────────────────────────
+ℹ️  Nenhum alerta LONG forte (score ≥ 20) no momento.
+   Score máximo: 10/25 (faltam 10 pts)
+
+📈 OPORTUNIDADES LONG em Formação — Score 10–19:
+   ▶ ADA | 10/25 | Zona liquidez 4H, Cunha Descendente
+
+🔎 RADAR LONG — Score 5–13:
+   ⚠️  Não operar — insuficiente. Monitorar.
+   · ONT | 8/25 | BUY 4H
+   · POL | 8/25 | NEUTRAL 4H
+   · ONDO | 8/25 | BUY 4H
+   · CRV | 8/25 | BUY 4H
+   · CHZ | 7/25 | STRONG_BUY 4H
+
+──────────────────────────────────────────────────────────
+📉 OPERAÇÕES SHORT
+──────────────────────────────────────────────────────────
+ℹ️  Nenhum alerta SHORT forte (score ≥ 16) no momento.
+   Score máximo SHORT: 10/25 (faltam 6 pts)
+
+🔎 RADAR SHORT — Score 5–15:
+   ⚠️  Não operar — insuficiente. Monitorar.
+   · HBAR | 10/25 | SELL 4H
+   · APT | 9/25 | SELL 4H
+   · HYPE | 7/25 | SELL 4H
+
+----------------------------------------------------------
+⏱️  Execução: 58.0s | Analisados: 302 tokens
+📁 Estado diário: /tmp/atirador_state.json
+📋 Log completo: /tmp/atirador_logs/atirador_LOG_20260330_2321.log
+
+2026-03-30 23:22:05 BRT [INFO   ] ✅ Scan v6.6.5 concluído em 58.0s | Fonte: OKX | Log: /tmp/atirador_logs/atirador_LOG_20260330_2321.log
+2026-03-30 23:22:05 BRT [DEBUG  ]   [M14] Timestamp watchdog gravado em /tmp/atirador_last_run.json
