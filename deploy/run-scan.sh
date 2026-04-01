@@ -25,6 +25,10 @@ if ! flock -n 200; then
     exit 0
 fi
 
+# Garante remoção do lock em qualquer saída (normal, erro ou kill).
+cleanup() { rm -f "$LOCK_FILE"; }
+trap cleanup EXIT
+
 cd "$REPO_DIR"
 
 # Atualiza APENAS código do GitHub, preservando arquivos de estado locais.
