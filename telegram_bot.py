@@ -36,6 +36,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -295,41 +296,206 @@ def cmd_pilares() -> str:
 
 
 def cmd_status() -> str:
+    lines: list[str] = []
+
+    # ── Seção 1: Operacional ──────────────────────────────────────────────────
+
+    # Último scan (fonte: score_history do state JSON)
     state = _load_atirador_state()
     sh    = state.get("score_history", {})
-
-    # Último timestamp registrado no histórico
-    ultimo_ts = None
+    ultimo_ts: str | None = None
     for hist in sh.values():
         if hist:
             ts = hist[-1].get("ts", "")
             if ultimo_ts is None or ts > ultimo_ts:
                 ultimo_ts = ts
+    ultimo_str = (_fmt_dt(ultimo_ts, "%d/%m %H:%M") + " BRT") if ultimo_ts else "—"
 
-    if ultimo_ts:
-        try:
-            dt = datetime.fromisoformat(ultimo_ts).astimezone(BRT)
-            ultimo_str = dt.strftime("%d/%m/%Y %H:%M BRT")
-        except Exception:
-            ultimo_str = ultimo_ts
-    else:
-        ultimo_str = "—"
+    # Próximo scan (com data + delta em minutos)
+    now = datetime.now(BRT)
+    mins_to_add = SCAN_INTERVAL_MIN - (now.minute % SCAN_INTERVAL_MIN)
+    if mins_to_add == 0:
+        mins_to_add = SCAN_INTERVAL_MIN
+    nxt = (now + timedelta(minutes=mins_to_add)).replace(second=0, microsecond=0)
+    delta_min = max(1, int((nxt - now).total_seconds() / 60))
+    proximo_str = f"{nxt.strftime('%d/%m %H:%M')} BRT  (~{delta_min} min)"
 
-    proximo = _next_scan_brt()
+    # Duração da última rodada (fonte: scan_log.jsonl, campo exec_seconds)
+    duracao_str  = "—"
+    duracao_icon = ""
+    try:
+        if os.path.exists(_SCAN_JSONL):
+            with open(_SCAN_JSONL, "rb") as fh:
+                fh.seek(0, 2)
+                size = fh.tell()
+                if size > 0:
+                    read_size = min(8192, size)
+                    fh.seek(-read_size, 2)
+                    chunk = fh.read().decode("utf-8", errors="replace")
+                    raw_lines = [l for l in chunk.split("\n") if l.strip()]
+                    if raw_lines:
+                        last_obj = json.loads(raw_lines[-1])
+                        exec_s = last_obj.get("exec_seconds")
+                        if exec_s is not None:
+                            exec_s = float(exec_s)
+                            duracao_str = _fmt_exec(exec_s)
+                            if exec_s < 1200:
+                                duracao_icon = "✅"
+                            elif exec_s <= 1380:
+                                duracao_icon = "⚠️"
+                            else:
+                                duracao_icon = "🔴"
+    except Exception:
+        pass
 
-    # Sizing (lê constantes padrão — sem importar o módulo principal)
-    bankroll    = 100.0
-    risco       = 5.0
-    margem_max  = 35.0
+    duracao_display = f"{duracao_str}  {duracao_icon}" if duracao_icon else duracao_str
 
-    return (
-        f"🤖 <b>ATIRADOR v6.6.5</b> | Status\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🕐 Último scan: {ultimo_str}\n"
-        f"⏭  Próximo: {proximo}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💼 Banca: ${bankroll:.0f}  |  Risco/trade: ${risco:.2f}  |  Margem máx: ${margem_max:.0f}"
+    lines.append("🤖 <b>ATIRADOR v6.6.5</b> | Status")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"🕐 Último scan   {ultimo_str}")
+    lines.append(f"⏭️ Próximo       {proximo_str}")
+    lines.append(f"⏱️ Duração       {duracao_display}")
+
+    # ── Seção 2: Logging ──────────────────────────────────────────────────────
+
+    rodadas_str         = "—"
+    ultima_escrita_str  = "—"
+    ultima_escrita_icon = ""
+    scan_db_size_str    = "—"
+    journal_size_str    = "—"
+    trades_abertos_str  = "—"
+
+    try:
+        conn = _scan_db_conn()
+        if conn:
+            cur = conn.cursor()
+            row = cur.execute("SELECT COUNT(*) FROM rounds").fetchone()
+            if row:
+                rodadas_str = str(row[0])
+            row2 = cur.execute(
+                "SELECT ts FROM rounds ORDER BY ts DESC LIMIT 1"
+            ).fetchone()
+            if row2 and row2[0]:
+                ultima_escrita_str = _fmt_dt(row2[0], "%d/%m %H:%M")
+                try:
+                    dt_last = datetime.fromisoformat(row2[0])
+                    if dt_last.tzinfo is None:
+                        dt_last = dt_last.replace(tzinfo=BRT)
+                    mins_since = (datetime.now(BRT) - dt_last).total_seconds() / 60
+                    if mins_since <= 35:
+                        ultima_escrita_icon = "✅"
+                    elif mins_since <= 65:
+                        ultima_escrita_icon = "⚠️"
+                    else:
+                        ultima_escrita_icon = "🔴"
+                except Exception:
+                    pass
+            conn.close()
+    except Exception:
+        pass
+
+    try:
+        if os.path.exists(_SCAN_DB):
+            sz = os.path.getsize(_SCAN_DB)
+            scan_db_size_str = (
+                f"{sz / (1024 * 1024):.1f} MB" if sz >= 1024 * 1024
+                else f"{sz // 1024} KB"
+            )
+    except Exception:
+        pass
+
+    try:
+        if os.path.exists(_JOURNAL_DB):
+            sz = os.path.getsize(_JOURNAL_DB)
+            journal_size_str = (
+                f"{sz / (1024 * 1024):.1f} MB" if sz >= 1024 * 1024
+                else f"{sz // 1024} KB"
+            )
+    except Exception:
+        pass
+
+    try:
+        conn = _journal_db_conn()
+        if conn:
+            cur = conn.cursor()
+            row = cur.execute(
+                "SELECT COUNT(*) FROM trades WHERE status = 'OPEN'"
+            ).fetchone()
+            if row:
+                trades_abertos_str = str(row[0])
+            conn.close()
+    except Exception:
+        pass
+
+    ultima_escrita_display = (
+        f"{ultima_escrita_str} {ultima_escrita_icon}"
+        if ultima_escrita_icon else ultima_escrita_str
     )
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("📋 Logging")
+    lines.append(f"  Rodadas gravadas   {rodadas_str}")
+    lines.append(f"  Última escrita     {ultima_escrita_display}")
+    lines.append(f"  scan_log.db        {scan_db_size_str}")
+    lines.append(f"  journal.db         {journal_size_str}")
+    lines.append(f"  Trades abertos     {trades_abertos_str}")
+
+    # ── Seção 3: VM ───────────────────────────────────────────────────────────
+
+    disco_str  = "—"
+    disco_icon = ""
+    try:
+        usage     = shutil.disk_usage(os.path.expanduser("~"))
+        free_bytes = usage.free
+        if free_bytes >= 1024 ** 3:
+            disco_str = f"{free_bytes / (1024 ** 3):.1f} GB"
+        else:
+            disco_str = f"{free_bytes // (1024 ** 2)} MB"
+        if free_bytes > 5 * 1024 ** 3:
+            disco_icon = "✅"
+        elif free_bytes >= 2 * 1024 ** 3:
+            disco_icon = "⚠️"
+        else:
+            disco_icon = "🔴"
+    except Exception:
+        pass
+
+    mem_str  = "—"
+    mem_icon = ""
+    try:
+        with open("/proc/meminfo", "r") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    mem_kb = int(line.split()[1])
+                    mem_mb = mem_kb // 1024
+                    mem_str = f"{mem_mb} MB"
+                    if mem_mb > 300:
+                        mem_icon = "✅"
+                    elif mem_mb >= 150:
+                        mem_icon = "⚠️"
+                    else:
+                        mem_icon = "🔴"
+                    break
+    except Exception:
+        pass
+
+    load_str = "—"
+    try:
+        with open("/proc/loadavg", "r") as fh:
+            load_str = fh.read().split()[0]
+    except Exception:
+        pass
+
+    disco_display = f"{disco_str}  {disco_icon}" if disco_icon else disco_str
+    mem_display   = f"{mem_str}   {mem_icon}"   if mem_icon   else mem_str
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("💾 VM")
+    lines.append(f"  Disco livre        {disco_display}")
+    lines.append(f"  Memória livre      {mem_display}")
+    lines.append(f"  CPU (1min avg)     {load_str}")
+
+    return "\n".join(lines)
 
 
 def cmd_radar() -> str:
