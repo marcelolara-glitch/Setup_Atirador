@@ -1,12 +1,58 @@
-2026-04-01 01:51:34 BRT [INFO   ] 📋 Log iniciado: /tmp/atirador_logs/atirador_LOG_20260401_0151.log
-2026-04-01 01:51:34 BRT [INFO   ] 
-🔍 ANÁLISE INDIVIDUAL — DUSKUSDT
-2026-04-01 01:51:34 BRT [INFO   ] =======================================================
-2026-04-01 01:51:34 BRT [INFO   ]   1/4 — FGI + OKX ticker + TradingView 4H...
-2026-04-01 01:51:34 BRT [DEBUG  ]   Buscando Fear & Greed Index...
-2026-04-01 01:51:34 BRT [DEBUG  ]   TV batch: 2 tokens (.P perpétuo) | cols: ['Recommend.All|240', 'RSI|240']
-2026-04-01 01:51:34 BRT [DEBUG  ]   GET https://api.alternative.me/fng/?limit=1
-2026-04-01 01:51:34 BRT [DEBUG  ]       → HTTP 200 | 0.2KB | enc:gzip | 0.09s
-2026-04-01 01:51:34 BRT [INFO   ]   📊 Fear & Greed: 8 (Extreme Fear)
-2026-04-01 01:51:35 BRT [DEBUG  ]   ✅  TV batch BYBIT: 2/2 retornados | 0.19s
-2026-04-01 01:51:35 BRT [ERROR  ]   DUSKUSDT não encontrado na OKX
+2026-04-01 01:51:59 BRT [INFO   ] 📋 Log iniciado: /tmp/atirador_logs/atirador_LOG_20260401_0151.log
+2026-04-01 01:51:59 BRT [INFO   ] 
+🔍 ANÁLISE INDIVIDUAL — TAOUSDT
+2026-04-01 01:51:59 BRT [INFO   ] =======================================================
+2026-04-01 01:51:59 BRT [INFO   ]   1/4 — FGI + OKX ticker + TradingView 4H...
+2026-04-01 01:51:59 BRT [DEBUG  ]   Buscando Fear & Greed Index...
+2026-04-01 01:51:59 BRT [DEBUG  ]   TV batch: 2 tokens (.P perpétuo) | cols: ['Recommend.All|240', 'RSI|240']
+2026-04-01 01:51:59 BRT [DEBUG  ]   GET https://api.alternative.me/fng/?limit=1
+2026-04-01 01:51:59 BRT [DEBUG  ]       → HTTP 200 | 0.2KB | enc:gzip | 0.09s
+2026-04-01 01:51:59 BRT [INFO   ]   📊 Fear & Greed: 8 (Extreme Fear)
+2026-04-01 01:51:59 BRT [DEBUG  ]   ✅  TV batch BYBIT: 2/2 retornados | 0.12s
+2026-04-01 01:52:00 BRT [INFO   ]   4H: NEUTRAL (RSI=43.3)
+2026-04-01 01:52:00 BRT [DEBUG  ]   Contexto: FGI=8 | BTC=BUY | LONG=CAUTELOSO (Medo Extremo)(thr=20) | SHORT=CAUTELOSO (Medo Extremo + BTC contra)(thr=20) | risk_score=1
+2026-04-01 01:52:00 BRT [INFO   ]   Mercado: FGI=8 | BTC=BUY | thr_L=20 | thr_S=20
+2026-04-01 01:52:00 BRT [INFO   ]   2/4 — TradingView 1H + 15m...
+2026-04-01 01:52:00 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['Recommend.All|60']
+2026-04-01 01:52:00 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['BB.upper|15', 'BB.lower|15', 'ATR|15']
+2026-04-01 01:52:00 BRT [DEBUG  ]   TV batch: 1 tokens (.P perpétuo) | cols: ['Candle.Engulfing.Bullish|15', 'Candle.Hammer|15', 'Candle.MorningStar|15', 'Candle.3WhiteSoldiers|15', 'Candle.Harami.Bullish|15', 'Candle.Doji.Dragonfly|15', 'Candle.Engulfing.Bearish|15', 'Candle.ShootingStar|15', 'Candle.EveningStar|15', 'Candle.3BlackCrows|15', 'Candle.Harami.Bearish|15']
+2026-04-01 01:52:00 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.03s
+2026-04-01 01:52:00 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.04s
+2026-04-01 01:52:00 BRT [DEBUG  ]   ✅  TV batch BYBIT: 1/1 retornados | 0.04s
+2026-04-01 01:52:00 BRT [INFO   ]   1H: NEUTRAL
+2026-04-01 01:52:00 BRT [INFO   ]   15m: ATR=1.878385 | BB [301.9910 – 307.2290]
+2026-04-01 01:52:00 BRT [INFO   ]   3/4 — Klines 15m / 1H / 4H...
+2026-04-01 01:52:00 BRT [DEBUG  ]   📡  Cache MISS TAOUSDT 1H: arquivo não existe — buscando
+2026-04-01 01:52:00 BRT [DEBUG  ]   📡  Cache MISS TAOUSDT 4H: arquivo não existe — buscando
+2026-04-01 01:52:00 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-04-01 01:52:00 BRT [DEBUG  ]       → HTTP 200 | 4.7KB | enc:gzip | 0.33s
+2026-04-01 01:52:00 BRT [DEBUG  ]   ✅  Klines TAOUSDT 15m: 60 candles | 04/01 01:45 → 03/31 11:00
+2026-04-01 01:52:00 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-04-01 01:52:00 BRT [DEBUG  ]       → HTTP 200 | 4.8KB | enc:gzip | 0.34s
+2026-04-01 01:52:00 BRT [DEBUG  ]   ✅  Klines TAOUSDT 1H: 60 candles | 04/01 01:00 → 03/29 14:00
+2026-04-01 01:52:00 BRT [DEBUG  ]   💾  Cache GRAVADO TAOUSDT 1H: 60 candles
+2026-04-01 01:52:00 BRT [DEBUG  ]   GET https://api.bitget.com/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol...
+2026-04-01 01:52:00 BRT [DEBUG  ]       → HTTP 200 | 4.9KB | enc:gzip | 0.35s
+2026-04-01 01:52:00 BRT [DEBUG  ]   ✅  Klines TAOUSDT 4H: 60 candles | 04/01 01:00 → 03/22 05:00
+2026-04-01 01:52:00 BRT [DEBUG  ]   💾  Cache GRAVADO TAOUSDT 4H: 60 candles
+2026-04-01 01:52:00 BRT [INFO   ]   Klines: 15m=60 | 1H=60 | 4H=60
+2026-04-01 01:52:00 BRT [INFO   ]   4/4 — Score forçado (LONG + SHORT)...
+2026-04-01 01:52:00 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-04-01 01:52:00 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-04-01 01:52:00 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-04-01 01:52:00 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-04-01 01:52:00 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-04-01 01:52:00 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-04-01 01:52:00 BRT [INFO   ]   LONG:  8/25 (thr≥20) | gate4H=✅ | gate1H=❌ | dq=100%
+2026-04-01 01:52:00 BRT [INFO   ]   SHORT: 10/25 (thr≥20) | gate4H=✅ | gate1H=❌ | dq=100%
+2026-04-01 01:52:00 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-04-01 01:52:00 BRT [DEBUG  ]     find_swing_points: fallback window=3 aplicado (window=5 insuficiente: 4H/5L → 4H/5L)
+2026-04-01 01:52:00 BRT [DEBUG  ]     TradeParams LONG: SL=1.53% | notional=$326 | alav_margem=9.3x → cap=2x → alav=2.0x | margem=$163.12 ⚠️MARGEM $163>35 | risco=$5.00 | ganho=$10.00
+2026-04-01 01:52:00 BRT [DEBUG  ]     M02 SHORT: SL ancorado em resistência 313.5500 (ATR=311.0960 → zona=314.1771)
+2026-04-01 01:52:00 BRT [DEBUG  ]     TradeParams SHORT: SL=2.54% | notional=$197 | alav_margem=5.6x → cap=2x → alav=2.0x | margem=$98.49 ⚠️MARGEM $98>35 | risco=$5.00 | ganho=$10.00
+2026-04-01 01:52:00 BRT [INFO   ] 
+=======================================================
+2026-04-01 01:52:00 BRT [INFO   ]   LONG 8/25 (thr≥20) | SHORT 10/25 (thr≥20)
+2026-04-01 01:52:00 BRT [INFO   ]   Mensagem: 3328 chars | 0.8s
+2026-04-01 01:52:00 BRT [INFO   ] =======================================================
+2026-04-01 01:52:01 BRT [INFO   ]   ✅ Telegram enviado
