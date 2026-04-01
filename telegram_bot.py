@@ -916,7 +916,7 @@ def cmd_perf_quase() -> str:
                AND timestamp >= datetime('now', '-30 days') AND status != 'OPEN'"""
         ).fetchall()
         quases = conn.execute(
-            """SELECT status, score, threshold FROM trades WHERE is_hypothetical=1
+            """SELECT status, score FROM trades WHERE is_hypothetical=1
                AND timestamp >= datetime('now', '-30 days') AND status != 'OPEN'"""
         ).fetchall()
         conn.close()
