@@ -1,0 +1,12 @@
+2026-04-01 01:51:34 BRT [INFO   ] 📋 Log iniciado: /tmp/atirador_logs/atirador_LOG_20260401_0151.log
+2026-04-01 01:51:34 BRT [INFO   ] 
+🔍 ANÁLISE INDIVIDUAL — DUSKUSDT
+2026-04-01 01:51:34 BRT [INFO   ] =======================================================
+2026-04-01 01:51:34 BRT [INFO   ]   1/4 — FGI + OKX ticker + TradingView 4H...
+2026-04-01 01:51:34 BRT [DEBUG  ]   Buscando Fear & Greed Index...
+2026-04-01 01:51:34 BRT [DEBUG  ]   TV batch: 2 tokens (.P perpétuo) | cols: ['Recommend.All|240', 'RSI|240']
+2026-04-01 01:51:34 BRT [DEBUG  ]   GET https://api.alternative.me/fng/?limit=1
+2026-04-01 01:51:34 BRT [DEBUG  ]       → HTTP 200 | 0.2KB | enc:gzip | 0.09s
+2026-04-01 01:51:34 BRT [INFO   ]   📊 Fear & Greed: 8 (Extreme Fear)
+2026-04-01 01:51:35 BRT [DEBUG  ]   ✅  TV batch BYBIT: 2/2 retornados | 0.19s
+2026-04-01 01:51:35 BRT [ERROR  ]   DUSKUSDT não encontrado na OKX
