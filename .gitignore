@@ -24,6 +24,11 @@ atirador_cache/
 # Arquivos temporários
 *.tmp
 
+# [v6.6.5] Bancos e logs de observabilidade — gerados em runtime na VM
+logs/*.jsonl
+logs/*.db
+journal/*.db
+
 # IDE
 .idea/
 .vscode/
