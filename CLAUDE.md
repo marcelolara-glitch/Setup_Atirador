@@ -108,6 +108,10 @@ tradingview-ta>=3.3.0
 - Bot daemon respondendo em <2s
 - GitHub Actions: apenas para `workflow_dispatch` manual
 
+## REGRAS DE ENTREGA
+- **Após criar ou fechar qualquer PR, sempre fazer merge para `main` e push.**
+  A VM faz `git pull origin main` a cada rodada — código que não está no `main` não chega à produção.
+
 ## PRÓXIMAS PRIORIDADES
 <!-- Atualize esta seção antes de cada sessão -->
 - [ ] (defina aqui o objetivo da sessão atual)
