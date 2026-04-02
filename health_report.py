@@ -256,23 +256,21 @@ def section5(jconn: sqlite3.Connection | None) -> str:
         for c in cols:
             out.append(f"      {c['cid']:>2}  {c['name']:<22} {c['type']}")
 
-    # 5b — Registros abertos ou fechados nas últimas 24h
-    out.append("\n--- 5b) Trades (abertos ou fechados nas últimas 24h) ---")
-    since = _since_iso(24)
+    # 5b — Registros abertos ou fechados nas últimas 48h
+    out.append("\n--- 5b) Trades (últimas 48h) ---")
     rows = jconn.execute(
         """SELECT id, timestamp, symbol, direction, type, is_hypothetical,
                   score, entry_price, sl_price, tp1_price, tp2_price, tp3_price,
-                  status, exit_price, exit_time, pnl_pct, max_runup, max_drawdown,
-                  kline_venue, tv_venue, venue_quality
+                  context_fgi, context_btc, status, exit_price, exit_time,
+                  pnl_pct, max_runup, max_drawdown, timeout_hours, pillars_json
            FROM trades
-           WHERE timestamp >= ? OR (status = 'OPEN')
-           ORDER BY timestamp""",
-        (since,)
+           WHERE timestamp >= datetime('now', '-48 hours')
+           ORDER BY timestamp"""
     ).fetchall()
     headers = ["id", "timestamp", "symbol", "direction", "type", "is_hypothetical",
                "score", "entry_price", "sl_price", "tp1_price", "tp2_price", "tp3_price",
-               "status", "exit_price", "exit_time", "pnl_pct",
-               "max_runup", "max_drawdown", "kline_venue", "tv_venue", "venue_quality"]
+               "context_fgi", "context_btc", "status", "exit_price", "exit_time",
+               "pnl_pct", "max_runup", "max_drawdown", "timeout_hours", "pillars_json"]
     out.append(_rows_as_text(rows, headers) if rows else "  (nenhum trade no período)")
 
     # 5c — Distribuição de status
