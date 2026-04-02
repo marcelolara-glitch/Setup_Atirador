@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS rounds (
     univ_count    INTEGER,
     gate_4h       INTEGER,
     gate_1h       INTEGER,
-    scored_15m    INTEGER
+    scored_15m    INTEGER,
+    venue_summary TEXT
 );
 
 CREATE TABLE IF NOT EXISTS token_scores (
@@ -70,6 +71,9 @@ CREATE TABLE IF NOT EXISTS token_scores (
     p8  INTEGER,  p8_reason  TEXT,
     p9  INTEGER,  p9_reason  TEXT,
     p1h INTEGER,  p1h_reason TEXT,
+    kline_venue   TEXT,
+    tv_venue      TEXT,
+    venue_quality TEXT,
     FOREIGN KEY (round_id) REFERENCES rounds(round_id)
 );
 
@@ -154,12 +158,15 @@ class RoundLogger:
             self._meta["exec_seconds"] = round(seconds, 1)
 
     def add_token(self, symbol: str, direction: str, score_total: int,
-                  threshold: int, gap: int, status: str, pillars: dict):
+                  threshold: int, gap: int, status: str, pillars: dict,
+                  venue_info: dict = None):
         """
         Chamado para cada token que chega ao scoring 15m.
         status: "CALL" | "QUASE" | "RADAR" | "DROP"
         pillars: dict com chaves P1..P9, P1H
           cada valor: {"score": int, "reason": str}
+        venue_info: {"kline_venue": str|None, "tv_venue": str|None,
+                     "mixed": bool, "quality": str}  [v6.6.6]
         """
         self._tokens.append({
             "symbol"     : symbol,
@@ -169,6 +176,7 @@ class RoundLogger:
             "gap"        : gap,
             "status"     : status,
             "pillars"    : pillars,
+            "venue_info" : venue_info if venue_info is not None else {},
         })
 
     def add_event(self, type: str, symbol: str, direction: str,
@@ -195,6 +203,19 @@ class RoundLogger:
         if self._committed:
             return True
         self._committed = True
+
+        # [v6.6.6] Compute venue_summary from all scored tokens
+        venue_summary = {
+            "clean"  : sum(1 for t in self._tokens
+                           if t.get("venue_info", {}).get("quality") == "clean"),
+            "mixed"  : sum(1 for t in self._tokens
+                           if t.get("venue_info", {}).get("quality") == "mixed"),
+            "unknown": sum(1 for t in self._tokens
+                           if t.get("venue_info", {}).get("quality") == "unknown"),
+            "mixed_symbols": [t["symbol"] for t in self._tokens
+                              if t.get("venue_info", {}).get("quality") == "mixed"],
+        }
+        self._meta["venue_summary"] = venue_summary
 
         record = {
             "ts"      : self.ts,
@@ -227,6 +248,18 @@ class RoundLogger:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_DDL)
 
+            # [v6.6.6] Migration: add new columns to existing tables
+            for _sql in [
+                "ALTER TABLE rounds ADD COLUMN venue_summary TEXT",
+                "ALTER TABLE token_scores ADD COLUMN kline_venue TEXT",
+                "ALTER TABLE token_scores ADD COLUMN tv_venue TEXT",
+                "ALTER TABLE token_scores ADD COLUMN venue_quality TEXT",
+            ]:
+                try:
+                    conn.execute(_sql)
+                except sqlite3.OperationalError:
+                    pass  # column already exists
+
             meta = record.get("meta", {})
             pipe = record.get("pipeline", {})
             rid  = record["round_id"]
@@ -234,7 +267,7 @@ class RoundLogger:
 
             conn.execute(
                 """INSERT OR REPLACE INTO rounds VALUES
-                   (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     rid, ts, record.get("version"),
                     meta.get("fgi"), meta.get("btc_4h_trend"),
@@ -244,18 +277,20 @@ class RoundLogger:
                     meta.get("exec_seconds"),
                     pipe.get("universe"), pipe.get("after_gate_4h"),
                     pipe.get("after_gate_1h"), pipe.get("scored_15m"),
+                    json.dumps(meta.get("venue_summary", {}), ensure_ascii=False),
                 )
             )
 
             for tok in record.get("tokens", []):
-                p = tok.get("pillars", {})
+                p  = tok.get("pillars", {})
+                vi = tok.get("venue_info", {})
                 def _ps(key):
                     return p.get(key, {}).get("score")
                 def _pr(key):
                     return p.get(key, {}).get("reason")
                 conn.execute(
                     """INSERT INTO token_scores VALUES
-                       (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         rid, ts, tok["symbol"], tok["direction"],
                         tok.get("score_total"), tok.get("threshold"), tok.get("gap"),
@@ -270,6 +305,9 @@ class RoundLogger:
                         _ps("P8"), _pr("P8"),
                         _ps("P9"), _pr("P9"),
                         _ps("P1H"), _pr("P1H"),
+                        vi.get("kline_venue"),
+                        vi.get("tv_venue"),
+                        vi.get("quality"),
                     )
                 )
 
