@@ -58,7 +58,10 @@ CREATE TABLE IF NOT EXISTS trades (
     max_runup        REAL,
     max_drawdown     REAL,
     timeout_hours    INTEGER NOT NULL DEFAULT 48,
-    pillars_json     TEXT
+    pillars_json     TEXT,
+    kline_venue      TEXT,
+    tv_venue         TEXT,
+    venue_quality    TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_status    ON trades(status);
@@ -104,6 +107,16 @@ class TradeJournal:
         try:
             conn = self._connect()
             conn.executescript(_DDL)
+            # [v6.6.6] Migration: add venue columns to existing tables
+            for _sql in [
+                "ALTER TABLE trades ADD COLUMN kline_venue TEXT",
+                "ALTER TABLE trades ADD COLUMN tv_venue TEXT",
+                "ALTER TABLE trades ADD COLUMN venue_quality TEXT",
+            ]:
+                try:
+                    conn.execute(_sql)
+                except sqlite3.OperationalError:
+                    pass  # column already exists
             conn.commit()
             conn.close()
         except Exception as e:
@@ -118,11 +131,14 @@ class TradeJournal:
     def open_trade(self, symbol: str, direction: str, type: str,
                    score: int, entry_price: float,
                    sl_price: float, tp1: float, tp2: float, tp3: float,
-                   fgi: int, btc_4h: str, pillars_dict: dict) -> str:
+                   fgi: int, btc_4h: str, pillars_dict: dict,
+                   kline_venue: str = None, tv_venue: str = None,
+                   venue_quality: str = None) -> str:
         """
         Registra novo trade com status OPEN.
         type: "CALL" | "QUASE"
         is_hypothetical definido automaticamente: QUASE → 1, CALL → 0
+        kline_venue, tv_venue, venue_quality: observabilidade de venue [v6.6.6]
         Retorna o id gerado.
         """
         now   = _now_brt()
@@ -147,13 +163,15 @@ class TradeJournal:
                 """INSERT INTO trades
                    (id, timestamp, symbol, direction, type, is_hypothetical,
                     score, entry_price, sl_price, tp1_price, tp2_price, tp3_price,
-                    context_fgi, context_btc, status, pillars_json)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'OPEN',?)""",
+                    context_fgi, context_btc, status, pillars_json,
+                    kline_venue, tv_venue, venue_quality)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'OPEN',?,?,?,?)""",
                 (
                     trade_id, ts, symbol, direction, type, is_hyp,
                     score, entry_price, sl_price, tp1, tp2, tp3,
                     fgi, btc_4h,
                     json.dumps(pillars_dict, ensure_ascii=False),
+                    kline_venue, tv_venue, venue_quality,
                 )
             )
             conn.commit()
