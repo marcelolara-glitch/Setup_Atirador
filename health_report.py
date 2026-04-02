@@ -186,10 +186,7 @@ def section3(conn: sqlite3.Connection, hours: int) -> str:
                   t.gap,
                   t.status,
                   t.p1,  t.p2,  t.p3,  t.p4,  t.p5,
-                  t.p6,  t.p7,  t.p8,  t.p9,  t.p1h,
-                  t.kline_venue,
-                  t.tv_venue,
-                  t.venue_quality
+                  t.p6,  t.p7,  t.p8,  t.p9,  t.p1h
            FROM token_scores t
            JOIN rounds r ON r.round_id = t.round_id
            WHERE r.ts >= ?
@@ -201,8 +198,7 @@ def section3(conn: sqlite3.Connection, hours: int) -> str:
     out.append("")
     headers = ["timestamp", "symbol", "direction", "total_score", "threshold",
                "gap", "status",
-               "p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p1h",
-               "kline_venue", "tv_venue", "venue_quality"]
+               "p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p1h"]
     out.append(_rows_as_text(rows, headers) if rows else "  (nenhum token no período)")
     return "\n".join(out)
 
