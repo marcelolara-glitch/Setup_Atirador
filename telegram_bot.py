@@ -96,8 +96,9 @@ def _tg_register_commands():
         {"command": "log_token",   "description": "Histórico 48h de um token (ex: /log_token AVAX)"},
         {"command": "log_quase",   "description": "Pilares dos QUASEs da última rodada"},
         {"command": "log_calls",   "description": "CALLs recentes (ex: /log_calls 7d)"},
-        {"command": "log_export",  "description": "Exportar scan_log.jsonl"},
-        {"command": "perf",        "description": "Performance das CALLs (30d)"},
+        {"command": "log_export",    "description": "Exportar scan_log.jsonl"},
+        {"command": "health_export", "description": "Relatório de saúde + logs + state"},
+        {"command": "perf",          "description": "Performance das CALLs (30d)"},
         {"command": "perf_quase",  "description": "Calibração do threshold via QUASEs"},
         {"command": "trade",       "description": "Trade aberto para um símbolo (ex: /trade AVAX)"},
         {"command": "ajuda",       "description": "Esta mensagem"},
@@ -256,6 +257,7 @@ def cmd_ajuda() -> str:
         "/log_quase        — pilares dos QUASEs da última rodada\n"
         "/log_calls [Nd]   — CALLs recentes (padrão: 7d)\n"
         "/log_export       — exportar scan_log.jsonl\n"
+        "/health_export    — relatório de saúde + logs + state\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/perf             — performance das CALLs (30d)\n"
         "/perf_quase       — calibração do threshold\n"
@@ -1070,6 +1072,85 @@ def cmd_log_export() -> str:
         return f"❌ Erro ao exportar: {e}"
 
 
+def cmd_health_export() -> str:
+    """Gera health_report.py e envia 4 arquivos via Telegram."""
+    import glob
+    import subprocess as _sp
+
+    now = _now_brt()
+    stamp = now.strftime("%Y%m%d_%H%M")
+    saude_path = os.path.join(LOG_DIR, f"saude_{stamp}.txt")
+
+    # Gera o relatório
+    script = os.path.expanduser("~/Setup_Atirador/health_report.py")
+    try:
+        result = _sp.run(
+            ["python3", script, "--out", saude_path],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode != 0:
+            return f"❌ health_report.py falhou:\n{result.stderr[-500:]}"
+    except Exception as e:
+        return f"❌ Erro ao rodar health_report.py: {e}"
+
+    # Localiza log de rodada mais recente
+    scan_logs = sorted(
+        glob.glob(os.path.join(LOG_DIR, "atirador_LOG_*.log")),
+        key=os.path.getmtime,
+    )
+    latest_scan_log = scan_logs[-1] if scan_logs else None
+
+    # Localiza log do bot do dia atual
+    bot_logs = sorted(
+        glob.glob(os.path.join(LOG_DIR, "bot_*.log")),
+        key=os.path.getmtime,
+    )
+    latest_bot_log = bot_logs[-1] if bot_logs else None
+
+    state_path = STATE_FILE  # states/atirador_state.json
+
+    # Monta lista de arquivos a enviar, pulando os que não existem
+    files_to_send = []
+    missing = []
+
+    def _add(path, label):
+        if path and os.path.exists(path):
+            files_to_send.append((path, label))
+        else:
+            missing.append(label)
+
+    _add(saude_path,       "saúde")
+    _add(latest_scan_log,  "log rodada")
+    _add(latest_bot_log,   "log bot")
+    _add(state_path,       "state")
+
+    # Mensagem de cabeçalho
+    header = (
+        f"🔍 Health Export — {now.strftime('%Y-%m-%d %H:%M')}\n"
+        f"Arquivos: {' | '.join(l for _, l in files_to_send)}"
+    )
+    if missing:
+        header += f"\n⚠️ Não encontrados: {', '.join(missing)}"
+    _tg_send(header)
+
+    # Envia cada arquivo
+    errors = []
+    for path, label in files_to_send:
+        try:
+            with open(path, "rb") as fh:
+                content = fh.read()
+            fname = os.path.basename(path)
+            ok = _tg_send_document(fname, content, caption=label)
+            if not ok:
+                errors.append(label)
+        except Exception as e:
+            errors.append(f"{label} ({e})")
+
+    if errors:
+        return f"❌ Falha ao enviar: {', '.join(errors)}"
+    return ""  # vazio = tudo enviado via sendDocument
+
+
 # ── Polling principal ─────────────────────────────────────────────────────────
 
 HANDLERS = {
@@ -1183,6 +1264,12 @@ def main():
                 _tg_send(response)
             _log(f"{_ts()} | /log_export → {'enviado ✅' if not response else 'falhou'}")
             continue
+        if command == "/health_export":
+            response = cmd_health_export()
+            if response:    # vazio = documentos já enviados via sendDocument
+                _tg_send(response)
+            _log(f"{_ts()} | /health_export → {'enviado ✅' if not response else 'falhou'}")
+            continue
 
         handler = HANDLERS.get(command)
         if handler is None:
@@ -1256,6 +1343,12 @@ def _process_updates(updates: list, bot_state: dict, offset: int) -> int:
             if response:
                 _tg_send(response)
             _log(f"{_ts()} | /log_export → {'enviado ✅' if not response else 'falhou'}")
+            continue
+        if command == "/health_export":
+            response = cmd_health_export()
+            if response:
+                _tg_send(response)
+            _log(f"{_ts()} | /health_export → {'enviado ✅' if not response else 'falhou'}")
             continue
 
         handler = HANDLERS.get(command)
