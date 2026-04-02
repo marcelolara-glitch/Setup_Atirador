@@ -28,6 +28,7 @@ atirador_cache/
 logs/*.jsonl
 logs/*.db
 journal/*.db
+logs/saude_*.txt
 
 # IDE
 .idea/
