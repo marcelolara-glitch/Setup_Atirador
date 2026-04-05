@@ -1949,10 +1949,10 @@ async def run_scan_async():
         tv1h, _ = await fetch_tv_batch_async(session, gate_syms, COLS_1H)
 
     # ── Candle lock ───────────────────────────────────────────────────────────
-    locked, lock_ts, lock_eta = get_candle_lock_status()
-    if locked:
-        gate_syms = apply_candle_lock(gate_syms, locked)
-        LOG.info(f"[v7] Candle lock ativo até {lock_eta}")
+    candle_lock = get_candle_lock_status()
+    if candle_lock["use_prev"]:
+        gate_syms = apply_candle_lock(gate_syms, candle_lock)
+        LOG.info(f"[v7] Candle lock ativo — vela em formação ({candle_lock['seconds_open']:.0f}s), próximo fechamento em {candle_lock['next_close']:.0f}s")
 
     # ── TV batch 15m ─────────────────────────────────────────────────────────
     async with aiohttp.ClientSession() as session:
