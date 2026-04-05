@@ -1528,8 +1528,8 @@ def check_forca_movimento(candles_15m: list, d: dict, state: dict,
     # C1 — Bollinger Band position
     try:
         close  = float(d.get("close", 0))
-        bb_up  = float(d.get("BB.upper", 0))
-        bb_lo  = float(d.get("BB.lower", 0))
+        bb_up  = float(d.get("BB.upper|15", 0))
+        bb_lo  = float(d.get("BB.lower|15", 0))
         bb_rng = bb_up - bb_lo
         if bb_rng > 0:
             pos = (close - bb_lo) / bb_rng  # 0=low, 1=high
@@ -1792,8 +1792,8 @@ async def analisar_token_async(session: aiohttp.ClientSession,
     6. Check C (amplificador, threshold varia por zona)
     7. Decisão: CALL | QUASE
     """
-    rec_4h = recommendation_from_value(d_4h.get("Recommend.All", 0))
-    rec_1h = recommendation_from_value(d_1h.get("Recommend.All", 0))
+    rec_4h = recommendation_from_value(d_4h.get("Recommend.All|240", 0))
+    rec_1h = recommendation_from_value(d_1h.get("Recommend.All|60", 0))
 
     # ── Gate 4H strict ───────────────────────────────────────────────────────
     direction_4h = None
@@ -1908,7 +1908,9 @@ async def run_scan_async():
 
     # ── Fear & Greed ──────────────────────────────────────────────────────────
     async with aiohttp.ClientSession() as session:
-        fg_val, fg_class = await fetch_fear_greed_async(session)
+        fg = await fetch_fear_greed_async(session)
+        fg_val   = fg["value"]
+        fg_class = fg["classification"]
 
     fg_val = fg_val or 50
     LOG.info(f"[v7] FGI={fg_val} ({fg_class})")
@@ -1932,7 +1934,7 @@ async def run_scan_async():
     gate_short_syms = []
     for sym in symbols:
         d4 = tv4h.get(sym, {})
-        rec = recommendation_from_value(d4.get("Recommend.All", 0))
+        rec = recommendation_from_value(d4.get("Recommend.All|240", 0))
         if rec in ("BUY", "STRONG_BUY"):
             gate_long_syms.append(sym)
         elif rec in ("SELL", "STRONG_SELL"):
@@ -2025,7 +2027,7 @@ async def run_scan_async():
     btc_4h = "–"
     btc_d4 = tv4h.get("BTCUSDT", {})
     if btc_d4:
-        btc_rec = recommendation_from_value(btc_d4.get("Recommend.All", 0))
+        btc_rec = recommendation_from_value(btc_d4.get("Recommend.All|240", 0))
         btc_4h  = btc_rec
 
     # ── Notificações ─────────────────────────────────────────────────────────
@@ -2047,11 +2049,8 @@ async def run_scan_async():
     )
 
     # ── Estado ───────────────────────────────────────────────────────────────
-    for p in perps:
-        sym = p["symbol"]
-        oi_now = p.get("oi_usd", 0.0)
-        if oi_now:
-            update_score_history(state, sym, oi_now)
+    ts_now = datetime.now().strftime("%Y-%m-%dT%H:%M")
+    update_score_history(state, perps, ts_now)
     cleanup_score_history(state)
     save_daily_state(state)
 
