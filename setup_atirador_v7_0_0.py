@@ -1914,7 +1914,7 @@ async def run_scan_async():
     LOG.info(f"[v7] FGI={fg_val} ({fg_class})")
 
     # ── Perpetuals (universo) ─────────────────────────────────────────────────
-    perps, exchange = await fetch_perpetuals()
+    perps, exchange = fetch_perpetuals()
     if not perps:
         LOG.error("[v7] Sem perpetuals — abortando")
         return
