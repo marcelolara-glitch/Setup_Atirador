@@ -114,7 +114,7 @@ def setup_logger():
     logger.info(f"📋 Log iniciado: {logfile}")
     return logger, logfile, ts_str
 
-LOG      = None
+LOG      = logging.getLogger("atirador")   # fallback (sem handlers até setup_logger())
 LOG_FILE = None
 TS_SCAN  = None
 
@@ -2120,7 +2120,8 @@ def main():
                         help="Não envia Telegram, apenas loga")
     args = parser.parse_args()
 
-    setup_logger()
+    global LOG, LOG_FILE
+    LOG, LOG_FILE, _ = setup_logger()
 
     if args.dry_run:
         import os as _os
