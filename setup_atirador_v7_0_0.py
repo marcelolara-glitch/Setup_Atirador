@@ -1908,7 +1908,9 @@ async def run_scan_async():
 
     # ── Fear & Greed ──────────────────────────────────────────────────────────
     async with aiohttp.ClientSession() as session:
-        fg_val, fg_class = await fetch_fear_greed_async(session)
+        fg = await fetch_fear_greed_async(session)
+        fg_val   = fg["value"]
+        fg_class = fg["classification"]
 
     fg_val = fg_val or 50
     LOG.info(f"[v7] FGI={fg_val} ({fg_class})")
@@ -1932,7 +1934,7 @@ async def run_scan_async():
     gate_short_syms = []
     for sym in symbols:
         d4 = tv4h.get(sym, {})
-        rec = recommendation_from_value(d4.get("Recommend.All", 0))
+        rec = recommendation_from_value(d4.get("Recommend.All|240", 0))
         if rec in ("BUY", "STRONG_BUY"):
             gate_long_syms.append(sym)
         elif rec in ("SELL", "STRONG_SELL"):
@@ -2047,11 +2049,8 @@ async def run_scan_async():
     )
 
     # ── Estado ───────────────────────────────────────────────────────────────
-    for p in perps:
-        sym = p["symbol"]
-        oi_now = p.get("oi_usd", 0.0)
-        if oi_now:
-            update_score_history(state, sym, oi_now)
+    ts_now = datetime.now().strftime("%Y-%m-%dT%H:%M")
+    update_score_history(state, perps, ts_now)
     cleanup_score_history(state)
     save_daily_state(state)
 
