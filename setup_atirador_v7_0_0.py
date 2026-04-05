@@ -1925,8 +1925,7 @@ async def run_scan_async():
 
     # ── TV batch 4H ───────────────────────────────────────────────────────────
     async with aiohttp.ClientSession() as session:
-        tv4h_data = await fetch_tv_batch_async(session, symbols, COLS_4H, "240")
-    tv4h = {d["symbol"]: d for d in tv4h_data if d}
+        tv4h, _ = await fetch_tv_batch_async(session, symbols, COLS_4H)
 
     # ── Gate 4H strict ────────────────────────────────────────────────────────
     gate_long_syms  = []
@@ -1947,8 +1946,7 @@ async def run_scan_async():
 
     # ── TV batch 1H ───────────────────────────────────────────────────────────
     async with aiohttp.ClientSession() as session:
-        tv1h_data = await fetch_tv_batch_async(session, gate_syms, COLS_1H, "60")
-    tv1h = {d["symbol"]: d for d in tv1h_data if d}
+        tv1h, _ = await fetch_tv_batch_async(session, gate_syms, COLS_1H)
 
     # ── Candle lock ───────────────────────────────────────────────────────────
     locked, lock_ts, lock_eta = get_candle_lock_status()
@@ -1958,8 +1956,7 @@ async def run_scan_async():
 
     # ── TV batch 15m ─────────────────────────────────────────────────────────
     async with aiohttp.ClientSession() as session:
-        tv15m_data = await fetch_tv_batch_async(session, gate_syms, COLS_15M_TECH, "15")
-    tv15m = {d["symbol"]: d for d in tv15m_data if d}
+        tv15m, _ = await fetch_tv_batch_async(session, gate_syms, COLS_15M_TECH)
 
     # ── Análise por token ─────────────────────────────────────────────────────
     results = []
