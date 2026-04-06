@@ -2067,39 +2067,38 @@ async def run_scan_async():
         candle_locked= candle_lock.get("use_prev", False),
     )
     log.set_pipeline(
-        universe     = len(symbols),
-        after_gate4h = len(gate_syms),
-        after_zone   = n_zona_long + n_zona_short,
-        n_calls      = n_calls,
-        n_quase      = n_quase,
+        universe      = len(symbols),
+        gate_4h_long  = n_gate_long,
+        gate_4h_short = n_gate_short,
+        in_zona_long  = n_zona_long,
+        in_zona_short = n_zona_short,
     )
 
     ZONA_ORDER = ["MAXIMA", "ALTA_OB4H", "ALTA_OB1H", "MEDIA", "BASE"]
     for r in results:
         det = r.get("check_c_det", {})
         log.add_token(
-            symbol          = r["symbol"],
-            direction       = r["direction"],
-            zona_qualidade  = r["zona_qualidade"],
-            zona_descricao  = r["zona_descricao"],
-            check_a         = r["check_a_ok"],
-            check_a_reason  = r["check_a_reason"],
-            check_b         = r["check_b_ok"],
-            check_b_reason  = r["check_b_reason"],
-            check_c         = r["check_c_total"],
-            check_c_thr     = r["check_c_thr"],
-            status          = r["status"],
-            detalhes        = det,
+            symbol           = r["symbol"],
+            direction        = r["direction"],
+            zona_qualidade   = r["zona_qualidade"],
+            zona_descricao   = r["zona_descricao"],
+            check_a          = r["check_a_ok"],
+            check_a_razao    = r["check_a_reason"],
+            check_b          = r["check_b_ok"],
+            check_b_razao    = r["check_b_reason"],
+            check_c_total    = r["check_c_total"],
+            check_c_detalhes = det,
+            status           = r["status"],
         )
 
     for r in results:
         if r["status"] in ("CALL", "QUASE"):
             log.add_event(
-                type           = r["status"],
-                symbol         = r["symbol"],
-                direction      = r["direction"],
-                zona_qualidade = r["zona_qualidade"],
-                check_c        = r["check_c_total"],
+                r["status"],
+                symbol    = r["symbol"],
+                direction = r["direction"],
+                zona      = r["zona_qualidade"],
+                check_c   = r["check_c_total"],
             )
 
     log.set_exec_seconds(elapsed)
