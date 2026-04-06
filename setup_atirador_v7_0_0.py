@@ -1813,8 +1813,8 @@ async def analisar_token_async(session: aiohttp.ClientSession,
     )
 
     # ── Klines 4H e 1H ──────────────────────────────────────────────────────
-    candles_4h = await fetch_klines_cached_async(session, symbol, "4H", 50, exchange)
-    candles_1h = await fetch_klines_cached_async(session, symbol, "1H", 50, exchange)
+    candles_4h = await fetch_klines_cached_async(session, symbol, "4H", 50)
+    candles_1h = await fetch_klines_cached_async(session, symbol, "1H", 50)
     if not candles_4h or not candles_1h:
         return None
 
@@ -1824,7 +1824,7 @@ async def analisar_token_async(session: aiohttp.ClientSession,
         return None  # Fora de zona → DROP
 
     # ── Klines 15m ───────────────────────────────────────────────────────────
-    candles_15m = await fetch_klines_cached_async(session, symbol, "15", 20, exchange)
+    candles_15m = await fetch_klines_cached_async(session, symbol, "15", 20)
     if not candles_15m:
         return None
 
@@ -1987,7 +1987,7 @@ async def run_scan_async():
                     d15m = tv15m.get(sym, {})
                     if d15m:
                         candles_15m_recheck = await fetch_klines_cached_async(
-                            session, sym, "15", 20, exchange)
+                            session, sym, "15", 20)
                         if candles_15m_recheck:
                             c_total, c_det = check_forca_movimento(
                                 candles_15m_recheck, d15m, state, r["direction"])
@@ -2000,17 +2000,17 @@ async def run_scan_async():
                                 if r["status"] == "CALL" and not r.get("params"):
                                     if r["direction"] == "LONG":
                                         candles_4h = await fetch_klines_cached_async(
-                                            session, sym, "4H", 50, exchange)
+                                            session, sym, "4H", 50)
                                         candles_1h = await fetch_klines_cached_async(
-                                            session, sym, "1H", 50, exchange)
+                                            session, sym, "1H", 50)
                                         r["params"] = calc_trade_params(
                                             sym, price, r["zona_qualidade"],
                                             c_total, candles_4h, candles_1h)
                                     else:
                                         candles_4h = await fetch_klines_cached_async(
-                                            session, sym, "4H", 50, exchange)
+                                            session, sym, "4H", 50)
                                         candles_1h = await fetch_klines_cached_async(
-                                            session, sym, "1H", 50, exchange)
+                                            session, sym, "1H", 50)
                                         r["params"] = calc_trade_params_short(
                                             sym, price, r["zona_qualidade"],
                                             c_total, candles_4h, candles_1h)
@@ -2023,12 +2023,17 @@ async def run_scan_async():
             except Exception as e:
                 LOG.warning(f"[v7] Erro em {sym}: {e}", exc_info=True)
 
-    # ── BTC 4H trend ─────────────────────────────────────────────────────────
+    # ── BTC 4H trend (busca independente do universo) ────────────────────────
     btc_4h = "–"
-    btc_d4 = tv4h.get("BTCUSDT", {})
-    if btc_d4:
-        btc_rec = recommendation_from_value(btc_d4.get("Recommend.All|240", 0))
-        btc_4h  = btc_rec
+    try:
+        async with aiohttp.ClientSession() as session:
+            btc_tv, _ = await fetch_tv_batch_async(session, ["BTCUSDT"], COLS_4H)
+        btc_d4 = btc_tv.get("BTCUSDT", {})
+        if btc_d4:
+            btc_rec = recommendation_from_value(btc_d4.get("Recommend.All|240", 0))
+            btc_4h  = btc_rec
+    except Exception:
+        pass
 
     # ── Notificações ─────────────────────────────────────────────────────────
     n_calls = sum(1 for r in results if r["status"] == "CALL")
@@ -2059,7 +2064,7 @@ async def run_scan_async():
         fgi          = fg_val,
         btc_4h       = btc_4h,
         exchange     = exchange,
-        candle_locked= locked,
+        candle_locked= candle_lock.get("use_prev", False),
     )
     log.set_pipeline(
         universe     = len(symbols),
