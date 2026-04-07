@@ -58,7 +58,7 @@ def main():
 
     rounds = conn.execute("""
         SELECT ts, univ_count, gate_4h_long, gate_4h_short,
-               in_zona_long, in_zona_short, exec_secs, fgi, btc_bias
+               in_zona_long, in_zona_short, exec_secs, fgi, btc_4h
         FROM rounds WHERE ts >= ? ORDER BY ts
     """, (desde,)).fetchall()
 
@@ -97,7 +97,7 @@ def main():
     fgis = [r['fgi'] for r in rounds if r['fgi'] is not None]
     biases = {}
     for r in rounds:
-        b = r['btc_bias'] or '?'
+        b = r['btc_4h'] or '?'
         biases[b] = biases.get(b, 0) + 1
 
     w(subsep("2a) Fear & Greed Index"))
@@ -106,7 +106,7 @@ def main():
     else:
         w("  (sem dados de FGI)")
 
-    w(subsep("2b) BTC 4H bias (contagem de rodadas)"))
+    w(subsep("2b) BTC 4H (contagem de rodadas)"))
     for b, c in sorted(biases.items(), key=lambda x: -x[1]):
         w(f"  {b:<12}: {c} rodadas")
 
@@ -186,6 +186,21 @@ def main():
                 w(f"  {p}: {c}x")
         else:
             w("  (sem QUASEs no período)")
+
+        w(subsep("4d) Breakdown sub-checks do Check C (todos os tokens)"))
+        if total_tok:
+            for sub, label in [
+                ('check_c1_bb',  'C1 — Bollinger'),
+                ('check_c2_vol', 'C2 — Volume'),
+                ('check_c3_cvd', 'C3 — CVD'),
+                ('check_c4_oi',  'C4 — OI'),
+            ]:
+                # buscar do banco pois token_scores tem esses campos
+                rows_sub = conn.execute(f"""
+                    SELECT COUNT(*) FROM token_scores
+                    WHERE ts >= ? AND {sub} = 1
+                """, (desde,)).fetchone()[0]
+                w(f"  {label:<20}: {rows_sub} ({rows_sub/total_tok*100:.0f}%)")
     else:
         w("  (sem tokens no período)")
 
