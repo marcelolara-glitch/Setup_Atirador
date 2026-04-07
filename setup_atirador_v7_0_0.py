@@ -317,7 +317,7 @@ def tg_notify_v7(results: list, fg_val: int,
         msg = _tg_quase_v7(r, r["direction"], fg_val)
         if _tg_send(msg):
             n_env += 1
-            LOG.info(f"  📲  Telegram QUASE {r['direction']} {r['base_coin']}: enviado ✅")
+            LOG.info(f"  📲  Telegram QUASE {r['direction']} {r['symbol']}: enviado ✅")
 
     # 3. CALLs
     for r in calls:
