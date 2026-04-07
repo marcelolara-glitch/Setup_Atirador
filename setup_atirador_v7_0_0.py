@@ -1639,7 +1639,7 @@ def _get_nearest_resistance_zone(candles_4h, candles_1h, current_price: float) -
         if ob["high"] > current_price:
             candidates.append(ob["high"])
     # Resistência 4H
-    rl4, _ = analyze_liquidity_zones_4h(candles_4h)
+    rl4, _ = find_swing_points(candles_4h)
     for r in rl4:
         if r["price"] > current_price:
             candidates.append(r["price"])
@@ -1660,7 +1660,7 @@ def _get_nearest_support_zone(candles_4h, candles_1h, current_price: float) -> f
         if ob["low"] < current_price:
             candidates.append(ob["low"])
     # Suporte 4H
-    _, sl4 = analyze_liquidity_zones_4h(candles_4h)
+    _, sl4 = find_swing_points(candles_4h)
     for s in sl4:
         if s["price"] < current_price:
             candidates.append(s["price"])
