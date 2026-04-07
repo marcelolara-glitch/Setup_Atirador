@@ -174,7 +174,7 @@ class RoundLoggerV7:
 
         def _parse_c(key):
             """Extrai bool (1/0) e razão de um detalhe do check C."""
-            txt = det.get(key, "")
+            txt = str(det.get(key, "") or "")
             passed = 1 if "✅" in txt else (0 if "❌" in txt else None)
             return passed, txt
 
