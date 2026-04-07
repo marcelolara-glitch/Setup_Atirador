@@ -1826,7 +1826,7 @@ async def analisar_token_async(session: aiohttp.ClientSession,
         return None  # Fora de zona → DROP
 
     # ── Klines 15m ───────────────────────────────────────────────────────────
-    candles_15m = await fetch_klines_cached_async(session, symbol, "15", 20)
+    candles_15m = await fetch_klines_cached_async(session, symbol, "15m", 20)
     if not candles_15m:
         return None
 
@@ -1989,7 +1989,7 @@ async def run_scan_async():
                     d15m = tv15m.get(sym, {})
                     if d15m:
                         candles_15m_recheck = await fetch_klines_cached_async(
-                            session, sym, "15", 20)
+                            session, sym, "15m", 20)
                         if candles_15m_recheck:
                             c_total, c_det = check_forca_movimento(
                                 candles_15m_recheck, d15m, state, r["direction"])
