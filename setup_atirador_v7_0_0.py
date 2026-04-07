@@ -134,9 +134,10 @@ def _tg_send(text: str) -> bool:
     try:
         url  = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         resp = requests.post(url, json={
-            "chat_id"    : TELEGRAM_CHAT_ID,
-            "text"       : text,
-            "parse_mode" : "HTML",
+            "chat_id"                  : TELEGRAM_CHAT_ID,
+            "text"                     : text,
+            "parse_mode"               : "HTML",
+            "disable_web_page_preview" : True,
         }, timeout=8)
         if resp.status_code != 200:
             LOG.warning(f"  ⚠️  Telegram: HTTP {resp.status_code} — {resp.text[:80]}")
