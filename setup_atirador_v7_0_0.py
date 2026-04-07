@@ -230,17 +230,17 @@ def _tg_call_v7(r: dict, direction: str, fg_val: int) -> str:
 
 def _tg_quase_v7(r: dict, direction: str, fg_val: int) -> str:
     """Mensagem de QUASE v7.0.0."""
-    sym  = r["base_coin"]
+    sym  = r["symbol"].replace("USDT", "")
     zona_q = r.get("zona_qualidade", "?")
     zona_d = r.get("zona_descricao", "")
-    s4h    = r.get("summary_4h", "?")
-    s1h    = r.get("summary_1h", "?")
-    ca     = r.get("check_a", False)
-    ca_razao = r.get("check_a_razao", "")
-    cb     = r.get("check_b")
-    cb_razao = r.get("check_b_razao", "não avaliado")
+    s4h    = r.get("rec_4h", "?")
+    s1h    = r.get("rec_1h", "?")
+    ca     = r.get("check_a_ok", False)
+    ca_razao = r.get("check_a_reason", "")
+    cb     = r.get("check_b_ok")
+    cb_razao = r.get("check_b_reason", "não avaliado")
     cc_total = r.get("check_c_total", 0) or 0
-    det      = r.get("check_c_detalhes", {}) or {}
+    det      = r.get("check_c_det", {}) or {}
 
     ico = "🟡"
     link_15m, link_4h = _tv_links(r["symbol"])
