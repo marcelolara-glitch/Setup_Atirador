@@ -741,7 +741,7 @@ async def fetch_klines_cached_async(session, symbol, granularity="4H", limit=60)
         try:
             with open(cache_file) as f:
                 cached = json.load(f)
-            if cached and age_h < KLINE_CACHE_TTL_H:
+            if cached and age_h < KLINE_CACHE_TTL_H and len(cached) >= 20:
                 return cached
         except Exception:
             pass
@@ -1816,6 +1816,8 @@ async def analisar_token_async(session: aiohttp.ClientSession,
     candles_4h = await fetch_klines_cached_async(session, symbol, "4H", 50)
     candles_1h = await fetch_klines_cached_async(session, symbol, "1H", 50)
     if not candles_4h or not candles_1h:
+        return None
+    if len(candles_4h) < 20 or len(candles_1h) < 20:
         return None
 
     # ── Identify zona ────────────────────────────────────────────────────────
