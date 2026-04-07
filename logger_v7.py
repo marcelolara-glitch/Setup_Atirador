@@ -230,6 +230,7 @@ class RoundLoggerV7:
         """Persiste todos os dados acumulados no SQLite. Idempotente."""
         if self._committed:
             return
+        conn = None
         try:
             conn = _ensure_db(self.db_path)
             with conn:
