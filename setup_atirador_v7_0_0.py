@@ -1665,7 +1665,7 @@ def _get_nearest_support_zone(candles_4h, candles_1h, current_price: float) -> f
         if s["price"] < current_price:
             candidates.append(s["price"])
     # Suporte 1H
-    sl1 = analyze_support_1h(candles_1h)
+    sl1 = analyze_support_1h(candles_1h, current_price)
     for s in sl1:
         if s["price"] < current_price:
             candidates.append(s["price"])
@@ -1985,7 +1985,7 @@ async def run_scan_async():
                 if r is None:
                     continue
                 # Inject 15m TV data for BB (Check C C1)
-                if "check_c_det" in r and not r["check_c_det"].get("c1_bb"):
+                if "check_c_det" not in r:
                     # Re-run C1 with proper d_15m
                     d15m = tv15m.get(sym, {})
                     if d15m:
@@ -2106,6 +2106,18 @@ async def run_scan_async():
 
     log.set_exec_seconds(elapsed)
     log.commit()
+
+    # Watchdog — registra última execução bem-sucedida
+    try:
+        import json as _json, os as _os
+        _wd = {
+            "last_run": datetime.now(BRT).isoformat(),
+            "version": f"v{VERSION}"
+        }
+        with open("/tmp/atirador_last_run.json", "w") as _f:
+            _json.dump(_wd, _f)
+    except Exception:
+        pass
 
     LOG.info(f"[v7] Rodada concluída em {elapsed:.1f}s — "
              f"{n_calls} CALL, {n_quase} QUASE")
