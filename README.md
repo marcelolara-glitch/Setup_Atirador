@@ -1,85 +1,51 @@
-# Setup Atirador
+# Setup Atirador v8.0.0
 
-Scanner profissional de criptomoedas para operações **LONG e SHORT alavancadas** de curto prazo.
+Scanner automatizado de perpetual futures (crypto) com emissão de
+alertas LONG/SHORT/QUASE via Telegram.
 
-Analisa perpetuals USDT em múltiplas exchanges (Bybit + Bitget + OKX) com sistema multi-timeframe
-(4H macro + 1H estrutura + 15m gatilho), 15 pilares de scoring (máx. 28 pts), e gestão de risco
-risk-first. Envia alertas e heartbeats via Telegram.
+## Arquitetura
 
----
+Sistema modular com 9 módulos independentes. Cada módulo tem
+responsabilidade única — manutenção e evolução cirúrgicas.
 
-## Execução Rápida
+| Módulo | Responsabilidade |
+|---|---|
+| `config.py` | Constantes, parâmetros, URLs — UM lugar só |
+| `exchanges.py` | Fetch de klines e universo (Bitget→OKX fallback) |
+| `gates.py` | TradingView Scanner API |
+| `indicators.py` | Análise técnica: swing, OB, zonas (IndicatorParams injetável) |
+| `scoring.py` | Checks A, B, C (rejeição, estrutura, força) |
+| `signals.py` | Pipeline por token, cálculo de trade params |
+| `telegram.py` | Formatação e envio de mensagens |
+| `state.py` | Persistência de estado entre rodadas |
+| `main.py` | Orquestração, entry point do cron |
 
-```bash
-# 1. Instalar dependências
-pip install -r requirements.txt
+## Infraestrutura
 
-# 2. Configurar credenciais do Telegram
-export TELEGRAM_TOKEN="seu_token_aqui"
-export TELEGRAM_CHAT_ID="seu_chat_id_aqui"
+- **VM:** Oracle Cloud Ubuntu 22.04 (IP 137.131.132.190)
+- **Execução:** cron `*/30 * * * *` → `deploy/run-scan.sh` → `python3 main.py`
+- **Bot:** daemon systemd → `telegram_bot.py` (long-polling)
+- **Dados:** OKX (universo) | Bitget→OKX (klines) | TradingView (indicadores)
+- **Observabilidade:** `scan_log.jsonl` + `scan_log.db` + `atirador_journal.db`
 
-# 3. Executar
-python setup_atirador.py
-```
-
----
-
-## Execução Automática (GitHub Actions)
-
-O workflow `.github/workflows/scan.yml` executa o scan automaticamente **3x por dia**
-(06h, 12h e 18h BRT — horário de Brasília).
-
-**Para ativar:**
-
-1. Acesse o repositório no GitHub pelo celular ou computador
-2. Vá em **Settings → Secrets and variables → Actions**
-3. Clique em **New repository secret** e adicione:
-   - `TELEGRAM_TOKEN` — token do seu bot Telegram (obtido via @BotFather)
-   - `TELEGRAM_CHAT_ID` — ID do chat que receberá os alertas
-4. Pronto. O workflow já está configurado e rodará automaticamente.
-
-Para acionar manualmente: **Actions → Setup Atirador — Scan Programado → Run workflow**
-
----
-
-## Estrutura do Projeto
+## Pipeline de decisão
 
 ```
-Setup_Atirador/
-├── setup_atirador.py           ← Entry point (executa versão ativa) ⭐
-├── setup_atirador_v6_6_2.py    ← Versão ativa atual
-├── requirements.txt
-├── .env.example                ← Template de configuração (sem dados reais)
-├── .github/
-│   └── workflows/
-│       └── scan.yml            ← Agendamento automático 3x/dia
-├── docs/
-│   ├── SKILL.md                ← Documentação completa do skill
-│   ├── config.md               ← Parâmetros configuráveis
-│   └── scoring-system.md       ← Sistema de 15 pilares (28 pts)
-└── (versões anteriores na raiz — referência histórica)
+Universo OKX → Gate 4H (macro) → Zona (OB/S&R) → Check A + B + C (15m)
+                                                         ↓
+                                              CALL / QUASE / descarte
 ```
 
----
+## Proteção de versões
 
-## Saídas por Execução
+- Tag `v7-pre-modular` — estado do monolito v7 antes da modularização
+- Branch `modular-v8` — histórico completo da refatoração v8
 
-| Destino | Conteúdo |
-|---------|----------|
-| **Telegram — Heartbeat** | Contexto de mercado + pipeline + radar + veredicto (toda rodada) |
-| **Telegram — QUASE** | Alerta por token quando score está a ≤4 pts do threshold |
-| **Telegram — Call** | Mensagem operacional completa: entrada, SL, TPs, alavancagem |
-| `/tmp/atirador_SCAN_*.txt` | Relatório executivo local |
-| `/tmp/atirador_logs/*.log` | Log técnico completo (DEBUG) |
+## Dependências
 
----
-
-## Atualizar Versão
-
-Quando uma nova versão for desenvolvida (ex: v6.7.0), basta editar **uma linha** em `setup_atirador.py`:
-
-```python
-VERSION = "v6_7_0"   # era v6_6_2
 ```
-
-Histórico completo de versões em [docs/SKILL.md](docs/SKILL.md).
+aiohttp>=3.8.0
+requests
+numpy
+tradingview-ta
+```
