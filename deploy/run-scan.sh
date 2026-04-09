@@ -47,7 +47,7 @@ fi
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/atirador_$(date +%Y%m%d).log"
 echo "--- $(date '+%Y-%m-%d %H:%M:%S') BRT --- início da rodada ---" >> "$LOG_FILE"
-timeout 25m python3 setup_atirador.py 2>&1 | tee -a "$LOG_FILE"
+timeout 25m python3 main.py 2>&1 | tee -a "$LOG_FILE"
 SCAN_EXIT=${PIPESTATUS[0]}
 echo "--- $(date '+%Y-%m-%d %H:%M:%S') BRT --- fim da rodada (exit=$SCAN_EXIT) ---" >> "$LOG_FILE"
 
