@@ -47,6 +47,18 @@ def load_daily_state() -> dict:
             del state["oi_history"]
             save_daily_state(state)
             LOG.info("[state] Migração de schema oi_history concluída")
+        # Migração v7→v8: score_history por símbolo era lista, agora é dict
+        migrated_symbols = 0
+        for symbol, value in state.get("score_history", {}).items():
+            if isinstance(value, list):
+                state["score_history"][symbol] = {
+                    "scores": value,
+                    "oi_history": []
+                }
+                migrated_symbols += 1
+        if migrated_symbols > 0:
+            save_daily_state(state)
+            LOG.info(f"[state] Migração score_history v7→v8: {migrated_symbols} símbolos convertidos")
         return state
     except Exception as e:
         LOG.warning(f"[state] Erro ao carregar estado: {e}")
