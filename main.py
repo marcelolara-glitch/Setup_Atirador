@@ -322,7 +322,23 @@ async def run_scan_async() -> None:
         try:
             for r in results:
                 if r["status"] == "CALL" and r.get("params"):
-                    trade_journal.register_signal(r)
+                    p = r["params"]
+                    trade_journal.open_trade(
+                        symbol        = r["symbol"],
+                        direction     = r["direction"],
+                        type          = r["status"],
+                        score         = r.get("check_c_total", 0),
+                        entry_price   = p["entry"],
+                        sl_price      = p["sl"],
+                        tp1           = p["tp1"],
+                        tp2           = p["tp2"],
+                        tp3           = p["tp3"],
+                        fgi           = fg_val,
+                        btc_4h        = btc_4h,
+                        pillars_dict  = r.get("check_c_det", {}),
+                        kline_venue   = r.get("exchange"),
+                        venue_quality = r.get("zona_qualidade"),
+                    )
         except Exception:
             LOG.warning("[v8] TradeJournal falhou", exc_info=True)
 
