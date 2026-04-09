@@ -45,6 +45,7 @@ from indicators import (
     find_swing_points,
     get_candle_lock_status,
     identify_zona,
+    identify_zona_rich,
     ZONA_ORDER,
 )
 from scoring import (
@@ -320,6 +321,7 @@ async def analisar_token_async(
     zona_qualidade, zona_descricao = identify_zona(candles_4h, candles_1h, current_price, direction)
     if zona_qualidade == "NENHUMA":
         return None  # Fora de zona -> DROP
+    zona_rich = identify_zona_rich(candles_4h, candles_1h, current_price, direction)
 
     # Klines 15m
     candles_15m = await fetch_klines_cached_async(session, symbol, "15m", 20)
@@ -330,10 +332,10 @@ async def analisar_token_async(
     d_15m: dict = {}
 
     # Check A
-    check_a_ok, check_a_reason = check_rejeicao_presente(candles_15m, direction)
+    check_a_ok, check_a_reason, check_a_ev = check_rejeicao_presente(candles_15m, direction)
 
     # Check B
-    check_b_ok, check_b_reason = check_estrutura_direcional(candles_15m, direction)
+    check_b_ok, check_b_reason, check_b_ev = check_estrutura_direcional(candles_15m, direction)
 
     # Check C (d_15m pode estar vazio; C1 BB re-avaliado em run_scan_async)
     check_c_total, check_c_det = check_forca_movimento(candles_15m, d_15m, state, direction)
@@ -376,8 +378,10 @@ async def analisar_token_async(
         "zona_descricao" : zona_descricao,
         "check_a_ok"     : check_a_ok,
         "check_a_reason" : check_a_reason,
+        "check_a_ev"     : check_a_ev,
         "check_b_ok"     : check_b_ok,
         "check_b_reason" : check_b_reason,
+        "check_b_ev"     : check_b_ev,
         "check_c_total"  : check_c_total,
         "check_c_det"    : check_c_det,
         "check_c_thr"    : thr_c,
@@ -385,6 +389,7 @@ async def analisar_token_async(
         "params"         : params,
         "rec_1h_raw"     : rec_1h,
         "exchange"       : exchange,
+        "zona_rich"      : zona_rich,
     }
 
 
