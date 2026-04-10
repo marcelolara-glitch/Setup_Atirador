@@ -1,5 +1,5 @@
 """
-scoring.py — Módulo de scoring para v8.0.0
+scoring.py — Módulo de scoring para v8.1.0
 Checks A, B, C e conversão de zona → score final.
 Depende de: config.py, indicators.py (IndicatorParams)
 """

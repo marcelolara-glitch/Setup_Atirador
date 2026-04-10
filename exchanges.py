@@ -491,7 +491,7 @@ async def fetch_perpetuals() -> tuple[list[dict], str]:
     """
     global _data_source_attempts
     _data_source_attempts = []
-    LOG.info("📡 [v8.0.0] Iniciando busca de tickers — hierarquia OKX → Gate.io → Bitget")
+    LOG.info("📡 [v8.1.0] Iniciando busca de tickers — hierarquia OKX → Gate.io → Bitget")
 
     tickers_with_oi = await _fetch_okx_tickers_with_oi()
     if tickers_with_oi:
