@@ -82,7 +82,7 @@ def check_estrutura_direcional(
         count = sum(1 for c in recentes if float(c["close"]) < float(c["open"]))
     else:
         count = sum(1 for c in recentes if float(c["close"]) > float(c["open"]))
-    passed = count >= 5
+    passed = count >= 6
     ev = {"direcionais": count, "janela": janela, "ratio": round(count / janela, 4)}
     return passed, f"{count}/{janela} velas direcionais", ev
 

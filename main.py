@@ -275,12 +275,10 @@ async def run_scan_async() -> None:
     if round_log is not None:
         try:
             round_log.set_meta(
-                fgi            = fg_val,
-                btc_4h         = btc_4h,
-                threshold_long = 20,
-                threshold_short= 16,
-                exchange       = exchange,
-                candle_locked  = candle_lock.get("use_prev", False),
+                fgi          = fg_val,
+                btc_4h       = btc_4h,
+                exchange     = exchange,
+                candle_locked= candle_lock.get("use_prev", False),
             )
             round_log.set_pipeline(
                 universe      = len(symbols),
@@ -289,28 +287,32 @@ async def run_scan_async() -> None:
                 scored_15m    = len(results),
             )
             for r in results:
-                det = r.get("check_c_det", {})
-                c_total = r.get("check_c_total", 0)
-                thr     = r.get("check_c_thr", 0)
                 round_log.add_token(
-                    symbol      = r["symbol"],
-                    direction   = r["direction"],
-                    score_total = c_total,
-                    threshold   = thr,
-                    gap         = c_total - thr,
-                    status      = r["status"],
-                    pillars     = det,
+                    symbol         = r["symbol"],
+                    direction      = r["direction"],
+                    status         = r["status"],
+                    zona_qualidade = r.get("zona_qualidade", ""),
+                    zona_descricao = r.get("zona_descricao", ""),
+                    check_a_ok     = r.get("check_a_ok", False),
+                    check_a_reason = r.get("check_a_reason", ""),
+                    check_a_ev     = r.get("check_a_ev", {}),
+                    check_b_ok     = r.get("check_b_ok", False),
+                    check_b_reason = r.get("check_b_reason", ""),
+                    check_b_ev     = r.get("check_b_ev", {}),
+                    check_c_total  = r.get("check_c_total", 0),
+                    check_c_thr    = r.get("check_c_thr", 0),
+                    check_c_det    = r.get("check_c_det", {}),
+                    zona_rich      = r.get("zona_rich"),
                 )
             for r in results:
                 if r["status"] in ("CALL", "QUASE"):
-                    c_total = r.get("check_c_total", 0)
-                    thr     = r.get("check_c_thr", 0)
                     round_log.add_event(
-                        type      = r["status"],
-                        symbol    = r["symbol"],
-                        direction = r["direction"],
-                        score     = c_total,
-                        gap       = c_total - thr,
+                        type           = r["status"],
+                        symbol         = r["symbol"],
+                        direction      = r["direction"],
+                        zona_qualidade = r.get("zona_qualidade", ""),
+                        check_c_total  = r.get("check_c_total", 0),
+                        check_c_thr    = r.get("check_c_thr", 0),
                     )
             round_log.set_exec_seconds(elapsed)
             round_log.commit()
