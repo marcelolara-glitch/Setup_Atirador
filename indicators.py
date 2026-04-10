@@ -121,9 +121,10 @@ def detect_order_blocks(
         impulse_pct = (max_close - ref) / ref * 100
         if impulse_pct >= p.ob_impulse_pct:
             obs.append({
-                "high" : max(c["open"], c["close"]),
-                "low"  : min(c["open"], c["close"]),
-                "index": i,
+                "high"       : max(c["open"], c["close"]),
+                "low"        : min(c["open"], c["close"]),
+                "index"      : i,
+                "impulso_pct": round(impulse_pct, 2),
             })
     return obs
 
@@ -145,9 +146,10 @@ def detect_order_blocks_bearish(
         impulse_pct = (ref - min_close) / ref * 100
         if impulse_pct >= p.ob_impulse_pct:
             obs.append({
-                "high" : max(c["open"], c["close"]),
-                "low"  : min(c["open"], c["close"]),
-                "index": i,
+                "high"       : max(c["open"], c["close"]),
+                "low"        : min(c["open"], c["close"]),
+                "index"      : i,
+                "impulso_pct": round(impulse_pct, 2),
             })
     return obs
 
@@ -417,6 +419,234 @@ def identify_zona(
         if near_sup_1h:
             return "BASE", f"Suporte 1H: {_fmt_price(sup_1h_price)}"
         return "NENHUMA", "Fora de zona"
+
+
+_ZONA_SCORE_RICH: dict[str, int] = {
+    "MAXIMA": 4, "ALTA_OB4H": 3, "ALTA_OB1H": 3,
+    "MEDIA": 2, "BASE": 1, "NENHUMA": 0,
+}
+
+
+def identify_zona_rich(
+    candles_4h: list[dict],
+    candles_1h: list[dict],
+    current_price: float,
+    direction: str,
+    params: IndicatorParams | None = None,
+) -> dict:
+    """Versão rica de identify_zona() — mesma lógica, retorna evidências detalhadas.
+
+    identify_zona() original não é alterada — continua sendo a fonte de
+    zona_qualidade e zona_descricao para o pipeline de decisão.
+
+    Retorna dict com zona, descricao, score_contribuicao e evidencias.
+    """
+    p = params if params is not None else IndicatorParams()
+
+    def _build(zona: str, descricao: str, ev: dict) -> dict:
+        return {
+            "zona"              : zona,
+            "descricao"         : descricao,
+            "score_contribuicao": _ZONA_SCORE_RICH.get(zona, 0),
+            "evidencias"        : ev,
+        }
+
+    _empty_ev: dict = {"ob_4h": None, "ob_1h": None, "sr_4h": None, "sr_1h": None}
+
+    if not candles_4h or not candles_1h:
+        return _build("NENHUMA", "Klines insuficientes", _empty_ev)
+
+    sh4, sl4 = find_swing_points(candles_4h, params=p)
+    sh1, sl1 = find_swing_points(candles_1h, params=p)
+
+    ev_ob_4h: dict | None = None
+    ev_ob_1h: dict | None = None
+    ev_sr_4h: dict | None = None
+    ev_sr_1h: dict | None = None
+
+    if direction == "SHORT":
+        # OB Bearish 4H
+        obs_4h_b    = detect_order_blocks_bearish(candles_4h, params=p)
+        in_ob_4h    = False
+        ob_4h_desc  = ""
+        found_ob_4h = None
+        for ob in reversed(obs_4h_b[-10:]):
+            if ob["low"] <= current_price <= ob["high"]:
+                in_ob_4h    = True
+                ob_4h_desc  = f"OB Bearish 4H: {_fmt_price(ob['low'])}–{_fmt_price(ob['high'])}"
+                found_ob_4h = ob
+                break
+        if found_ob_4h is not None:
+            ob_mid   = (found_ob_4h["high"] + found_ob_4h["low"]) / 2
+            ev_ob_4h = {
+                "low"          : found_ob_4h["low"],
+                "high"         : found_ob_4h["high"],
+                "impulso_pct"  : found_ob_4h.get("impulso_pct", 0.0),
+                "distancia_pct": round(abs(current_price - ob_mid) / current_price * 100, 4),
+                "preco_dentro" : found_ob_4h["low"] <= current_price <= found_ob_4h["high"],
+            }
+
+        # Resistência 4H
+        near_res_4h  = False
+        res_4h_price = 0.0
+        if sh4:
+            for s in reversed(sh4):
+                if s["price"] >= current_price:
+                    dist_pct = (s["price"] - current_price) / current_price * 100
+                    if dist_pct <= p.zone_proximity_pct:
+                        near_res_4h  = True
+                        res_4h_price = s["price"]
+                        break
+        if near_res_4h:
+            ev_sr_4h = {
+                "price"        : res_4h_price,
+                "distancia_pct": round(abs(current_price - res_4h_price) / current_price * 100, 4),
+                "dentro_zona"  : True,
+            }
+
+        # OB Bearish 1H
+        obs_1h_b    = detect_order_blocks_bearish(candles_1h, params=p)
+        in_ob_1h    = False
+        ob_1h_desc  = ""
+        found_ob_1h = None
+        for ob in reversed(obs_1h_b[-10:]):
+            if ob["low"] <= current_price <= ob["high"]:
+                in_ob_1h    = True
+                ob_1h_desc  = f"OB Bearish 1H: {_fmt_price(ob['low'])}–{_fmt_price(ob['high'])}"
+                found_ob_1h = ob
+                break
+        if found_ob_1h is not None:
+            ob_mid   = (found_ob_1h["high"] + found_ob_1h["low"]) / 2
+            ev_ob_1h = {
+                "low"          : found_ob_1h["low"],
+                "high"         : found_ob_1h["high"],
+                "impulso_pct"  : found_ob_1h.get("impulso_pct", 0.0),
+                "distancia_pct": round(abs(current_price - ob_mid) / current_price * 100, 4),
+                "preco_dentro" : found_ob_1h["low"] <= current_price <= found_ob_1h["high"],
+            }
+
+        # Resistência 1H
+        near_res_1h  = False
+        res_1h_price = 0.0
+        if sh1:
+            for s in reversed(sh1):
+                if s["price"] >= current_price:
+                    dist_pct = (s["price"] - current_price) / current_price * 100
+                    if dist_pct <= p.zone_proximity_pct:
+                        near_res_1h  = True
+                        res_1h_price = s["price"]
+                        break
+        if near_res_1h:
+            ev_sr_1h = {
+                "price"        : res_1h_price,
+                "distancia_pct": round(abs(current_price - res_1h_price) / current_price * 100, 4),
+                "dentro_zona"  : True,
+            }
+
+        ev = {"ob_4h": ev_ob_4h, "ob_1h": ev_ob_1h, "sr_4h": ev_sr_4h, "sr_1h": ev_sr_1h}
+        if in_ob_4h and near_res_4h:
+            return _build("MAXIMA",    f"{ob_4h_desc} + Res 4H: {_fmt_price(res_4h_price)}", ev)
+        if in_ob_4h:
+            return _build("ALTA_OB4H", ob_4h_desc, ev)
+        if in_ob_1h:
+            return _build("ALTA_OB1H", ob_1h_desc, ev)
+        if near_res_4h:
+            return _build("MEDIA",     f"Resistência 4H: {_fmt_price(res_4h_price)}", ev)
+        if near_res_1h:
+            return _build("BASE",      f"Resistência 1H: {_fmt_price(res_1h_price)}", ev)
+        return _build("NENHUMA", "Fora de zona", ev)
+
+    else:  # LONG
+        # OB Bullish 4H
+        obs_4h_b    = detect_order_blocks(candles_4h, params=p)
+        in_ob_4h    = False
+        ob_4h_desc  = ""
+        found_ob_4h = None
+        for ob in reversed(obs_4h_b[-10:]):
+            if ob["low"] <= current_price <= ob["high"]:
+                in_ob_4h    = True
+                ob_4h_desc  = f"OB Bullish 4H: {_fmt_price(ob['low'])}–{_fmt_price(ob['high'])}"
+                found_ob_4h = ob
+                break
+        if found_ob_4h is not None:
+            ob_mid   = (found_ob_4h["high"] + found_ob_4h["low"]) / 2
+            ev_ob_4h = {
+                "low"          : found_ob_4h["low"],
+                "high"         : found_ob_4h["high"],
+                "impulso_pct"  : found_ob_4h.get("impulso_pct", 0.0),
+                "distancia_pct": round(abs(current_price - ob_mid) / current_price * 100, 4),
+                "preco_dentro" : found_ob_4h["low"] <= current_price <= found_ob_4h["high"],
+            }
+
+        # Suporte 4H
+        near_sup_4h  = False
+        sup_4h_price = 0.0
+        if sl4:
+            for s in reversed(sl4):
+                if s["price"] <= current_price:
+                    dist_pct = (current_price - s["price"]) / current_price * 100
+                    if dist_pct <= p.zone_proximity_pct:
+                        near_sup_4h  = True
+                        sup_4h_price = s["price"]
+                        break
+        if near_sup_4h:
+            ev_sr_4h = {
+                "price"        : sup_4h_price,
+                "distancia_pct": round(abs(current_price - sup_4h_price) / current_price * 100, 4),
+                "dentro_zona"  : True,
+            }
+
+        # OB Bullish 1H
+        obs_1h_b    = detect_order_blocks(candles_1h, params=p)
+        in_ob_1h    = False
+        ob_1h_desc  = ""
+        found_ob_1h = None
+        for ob in reversed(obs_1h_b[-10:]):
+            if ob["low"] <= current_price <= ob["high"]:
+                in_ob_1h    = True
+                ob_1h_desc  = f"OB Bullish 1H: {_fmt_price(ob['low'])}–{_fmt_price(ob['high'])}"
+                found_ob_1h = ob
+                break
+        if found_ob_1h is not None:
+            ob_mid   = (found_ob_1h["high"] + found_ob_1h["low"]) / 2
+            ev_ob_1h = {
+                "low"          : found_ob_1h["low"],
+                "high"         : found_ob_1h["high"],
+                "impulso_pct"  : found_ob_1h.get("impulso_pct", 0.0),
+                "distancia_pct": round(abs(current_price - ob_mid) / current_price * 100, 4),
+                "preco_dentro" : found_ob_1h["low"] <= current_price <= found_ob_1h["high"],
+            }
+
+        # Suporte 1H
+        near_sup_1h  = False
+        sup_1h_price = 0.0
+        if sl1:
+            for s in reversed(sl1):
+                if s["price"] <= current_price:
+                    dist_pct = (current_price - s["price"]) / current_price * 100
+                    if dist_pct <= p.zone_proximity_pct:
+                        near_sup_1h  = True
+                        sup_1h_price = s["price"]
+                        break
+        if near_sup_1h:
+            ev_sr_1h = {
+                "price"        : sup_1h_price,
+                "distancia_pct": round(abs(current_price - sup_1h_price) / current_price * 100, 4),
+                "dentro_zona"  : True,
+            }
+
+        ev = {"ob_4h": ev_ob_4h, "ob_1h": ev_ob_1h, "sr_4h": ev_sr_4h, "sr_1h": ev_sr_1h}
+        if in_ob_4h and near_sup_4h:
+            return _build("MAXIMA",    f"{ob_4h_desc} + Sup 4H: {_fmt_price(sup_4h_price)}", ev)
+        if in_ob_4h:
+            return _build("ALTA_OB4H", ob_4h_desc, ev)
+        if in_ob_1h:
+            return _build("ALTA_OB1H", ob_1h_desc, ev)
+        if near_sup_4h:
+            return _build("MEDIA",     f"Suporte 4H: {_fmt_price(sup_4h_price)}", ev)
+        if near_sup_1h:
+            return _build("BASE",      f"Suporte 1H: {_fmt_price(sup_1h_price)}", ev)
+        return _build("NENHUMA", "Fora de zona", ev)
 
 
 def get_candle_lock_status() -> dict:
