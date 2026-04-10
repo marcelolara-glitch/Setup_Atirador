@@ -138,6 +138,55 @@ def _chk(passed: bool) -> str:
 # Formatação de mensagens
 # ---------------------------------------------------------------------------
 
+def _fmt_ev(val, suffix: str = "", scale: float = 1.0) -> str:
+    """Formata valor de evidência para exibição inline. Retorna '' se None."""
+    if val is None:
+        return ""
+    v = val * scale
+    if suffix == '%':
+        return f"({v:.0f}%)"
+    if suffix == '×':
+        return f"({v:.1f}×)"
+    if suffix == '/4':
+        return f"({int(v)}/4)"
+    return f"({v})"
+
+
+def _fmt_zona_ev(zona_rich: dict | None) -> str:
+    """Formata bloco de evidências de zona. Retorna '' se None."""
+    if not zona_rich:
+        return ""
+    ev = zona_rich.get("evidencias", {})
+    lines = []
+    ob4 = ev.get("ob_4h")
+    if ob4:
+        lines.append(
+            f"   OB 4H: {_fmt_price(ob4['low'])}–{_fmt_price(ob4['high'])}"
+            f"  imp {ob4['impulso_pct']}%  dist {ob4['distancia_pct']:.2f}%"
+        )
+    ob1 = ev.get("ob_1h")
+    if ob1:
+        lines.append(
+            f"   OB 1H: {_fmt_price(ob1['low'])}–{_fmt_price(ob1['high'])}"
+            f"  imp {ob1['impulso_pct']}%  dist {ob1['distancia_pct']:.2f}%"
+        )
+    sr4 = ev.get("sr_4h")
+    if sr4:
+        lines.append(
+            f"   S/R 4H: {_fmt_price(sr4['price'])}"
+            f"  dist {sr4['distancia_pct']:.2f}%"
+        )
+    sr1 = ev.get("sr_1h")
+    if sr1:
+        lines.append(
+            f"   S/R 1H: {_fmt_price(sr1['price'])}"
+            f"  dist {sr1['distancia_pct']:.2f}%"
+        )
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
 def _tg_call_v7(r: dict, direction: str, fg_val: int) -> str:
     """Mensagem de CALL v7.0.0."""
     sym      = r["base_coin"]
@@ -180,14 +229,15 @@ def _tg_call_v7(r: dict, direction: str, fg_val: int) -> str:
         f"{ico} {direction} CALL — {sym}USDT\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 Zona: {html.escape(zona_d)} [{zona_q}]\n"
+        f"{_fmt_zona_ev(r.get('zona_rich'))}"
         f"\n⚡ Confirmação 15m\n"
         f"   A — Rejeição: {_chk(True)} {html.escape(ca_razao)}\n"
         f"   B — Estrutura: {_chk(True)} {html.escape(cb_razao)}\n"
         f"   C — Força: {cc_total}/4\n"
-        f"      BB: {det.get('c1_bb', '—')}\n"
-        f"      Volume: {det.get('c2_vol', '—')}\n"
-        f"      CVD: {det.get('c3_cvd', '—')}\n"
-        f"      OI: {det.get('c4_oi', '—')}\n"
+        f"      BB: {det.get('c1_bb', '—')}  {_fmt_ev(det.get('c1_bb_pos'), '%', scale=100)}\n"
+        f"      Volume: {det.get('c2_vol', '—')}  {_fmt_ev(det.get('c2_vol_ratio'), '×')}\n"
+        f"      CVD: {det.get('c3_cvd', '—')}  {_fmt_ev(det.get('c3_cvd_count'), '/4')}\n"
+        f"      OI: {det.get('c4_oi', '—')}  {det.get('c4_reason', '')}\n"
         f"\n📊 Contexto\n"
         f"   4H: {s4h} | 1H: {s1h} | FGI: {fg_val}"
         f"{niveis}\n"
@@ -226,14 +276,15 @@ def _tg_quase_v7(r: dict, direction: str, fg_val: int) -> str:
         f"{ico} {direction} QUASE — {sym}USDT\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 Zona: {html.escape(zona_d)} [{zona_q}]\n"
+        f"{_fmt_zona_ev(r.get('zona_rich'))}"
         f"\n⚡ Confirmação 15m\n"
         f"   A — Rejeição: {_chk(ca)} {html.escape(ca_razao)}\n"
         f"{cb_line}\n"
         f"   C — Força: {cc_total}/4\n"
-        f"      BB: {det.get('c1_bb', '—')}\n"
-        f"      Volume: {det.get('c2_vol', '—')}\n"
-        f"      CVD: {det.get('c3_cvd', '—')}\n"
-        f"      OI: {det.get('c4_oi', '—')}\n"
+        f"      BB: {det.get('c1_bb', '—')}  {_fmt_ev(det.get('c1_bb_pos'), '%', scale=100)}\n"
+        f"      Volume: {det.get('c2_vol', '—')}  {_fmt_ev(det.get('c2_vol_ratio'), '×')}\n"
+        f"      CVD: {det.get('c3_cvd', '—')}  {_fmt_ev(det.get('c3_cvd_count'), '/4')}\n"
+        f"      OI: {det.get('c4_oi', '—')}  {det.get('c4_reason', '')}\n"
         f"\n📊 Contexto\n"
         f"   4H: {s4h} | 1H: {s1h} | FGI: {fg_val}\n"
         f"\n🔗 <a href=\"{link_15m}\">15m</a> · <a href=\"{link_4h}\">4H</a>"

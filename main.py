@@ -1,4 +1,4 @@
-# main.py — Orquestrador principal do Setup Atirador v8.0.0
+# main.py — Orquestrador principal do Setup Atirador v8.1.0
 # Entry point para cron e execução manual.
 # Contém apenas lógica de orquestração — toda lógica de negócio vive nos módulos.
 
@@ -90,7 +90,7 @@ def log_section(title: str) -> None:
 
 async def run_scan_async() -> None:
     """
-    Pipeline principal v8.0.0:
+    Pipeline principal v8.1.0:
     1. Fetch perpetuals (universo)
     2. TV batch 4H (Gate 4H strict — LONG/SHORT, NEUTRAL → drop)
     3. TV batch 1H (contexto)
