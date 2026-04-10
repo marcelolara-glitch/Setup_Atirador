@@ -189,7 +189,7 @@ def _fmt_zona_ev(zona_rich: dict | None) -> str:
 
 def _tg_call_v7(r: dict, direction: str, fg_val: int) -> str:
     """Mensagem de CALL v7.0.0."""
-    sym      = r["base_coin"]
+    sym      = r.get("base_coin") or r["symbol"].replace("USDT", "")
     zona_q   = r.get("zona_qualidade", "?")
     zona_d   = r.get("zona_descricao", "")
     s4h      = r.get("summary_4h", "?")
@@ -371,7 +371,7 @@ def tg_notify_v7(
         msg = _tg_call_v7(r, r["direction"], fg_val)
         if _tg_send(msg):
             n_env += 1
-            LOG.info(f"  📲  Telegram CALL {r['direction']} {r['base_coin']}: enviado ✅")
+            LOG.info(f"  📲  Telegram CALL {r['direction']} {r.get('base_coin') or r['symbol'].replace('USDT', '')}: enviado ✅")
 
     total = (1 if TELEGRAM_HEARTBEAT else 0) + n_quase + n_calls
     LOG.info(f"  📲  Telegram: {n_env}/{total} mensagens enviadas")

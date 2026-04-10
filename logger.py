@@ -53,39 +53,38 @@ CREATE TABLE IF NOT EXISTS rounds (
 );
 
 CREATE TABLE IF NOT EXISTS token_scores (
-    round_id      TEXT NOT NULL,
-    ts            TEXT NOT NULL,
-    symbol        TEXT NOT NULL,
-    direction     TEXT NOT NULL,
-    score_total   INTEGER,
-    threshold     INTEGER,
-    gap           INTEGER,
-    status        TEXT,
-    p1  INTEGER,  p1_reason  TEXT,
-    p2  INTEGER,  p2_reason  TEXT,
-    p3  INTEGER,  p3_reason  TEXT,
-    p4  INTEGER,  p4_reason  TEXT,
-    p5  INTEGER,  p5_reason  TEXT,
-    p6  INTEGER,  p6_reason  TEXT,
-    p7  INTEGER,  p7_reason  TEXT,
-    p8  INTEGER,  p8_reason  TEXT,
-    p9  INTEGER,  p9_reason  TEXT,
-    p1h INTEGER,  p1h_reason TEXT,
-    kline_venue   TEXT,
-    tv_venue      TEXT,
-    venue_quality TEXT,
+    round_id       TEXT NOT NULL,
+    ts             TEXT NOT NULL,
+    symbol         TEXT NOT NULL,
+    direction      TEXT NOT NULL,
+    status         TEXT,
+    zona_qualidade TEXT,
+    zona_descricao TEXT,
+    check_a_ok     INTEGER,
+    check_a_reason TEXT,
+    check_a_ev     TEXT,
+    check_b_ok     INTEGER,
+    check_b_reason TEXT,
+    check_b_ev     TEXT,
+    check_c_total  INTEGER,
+    check_c_thr    INTEGER,
+    check_c_gap    INTEGER,
+    check_c_det    TEXT,
+    zona_rich      TEXT,
     FOREIGN KEY (round_id) REFERENCES rounds(round_id)
 );
 
 CREATE TABLE IF NOT EXISTS round_events (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    round_id  TEXT NOT NULL,
-    ts        TEXT NOT NULL,
-    type      TEXT NOT NULL,
-    symbol    TEXT NOT NULL,
-    direction TEXT NOT NULL,
-    score     INTEGER,
-    gap       INTEGER
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    round_id       TEXT NOT NULL,
+    ts             TEXT NOT NULL,
+    type           TEXT NOT NULL,
+    symbol         TEXT NOT NULL,
+    direction      TEXT NOT NULL,
+    zona_qualidade TEXT,
+    check_c_total  INTEGER,
+    check_c_thr    INTEGER,
+    gap            INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_ts_scores  ON token_scores(ts);
@@ -128,14 +127,11 @@ class RoundLogger:
         self._committed = False
         os.makedirs(BASE_DIR, exist_ok=True)
 
-    def set_meta(self, fgi: int, btc_4h: str, threshold_long: int,
-                 threshold_short: int, exchange: str, candle_locked: bool):
+    def set_meta(self, fgi: int, btc_4h: str, exchange: str, candle_locked: bool):
         """Contexto da rodada — chamado após determinar FGI e thresholds."""
         self._meta = {
             "fgi"              : fgi,
             "btc_4h_trend"     : btc_4h,
-            "threshold_long"   : threshold_long,
-            "threshold_short"  : threshold_short,
             "exchange_primary" : exchange,
             "exec_seconds"     : None,   # preenchido em set_exec_seconds
             "candle_locked"    : candle_locked,
@@ -157,40 +153,59 @@ class RoundLogger:
         if self._meta:
             self._meta["exec_seconds"] = round(seconds, 1)
 
-    def add_token(self, symbol: str, direction: str, score_total: int,
-                  threshold: int, gap: int, status: str, pillars: dict,
-                  venue_info: dict = None):
-        """
-        Chamado para cada token que chega ao scoring 15m.
-        status: "CALL" | "QUASE" | "RADAR" | "DROP"
-        pillars: dict com chaves P1..P9, P1H
-          cada valor: {"score": int, "reason": str}
-        venue_info: {"kline_venue": str|None, "tv_venue": str|None,
-                     "mixed": bool, "quality": str}  [v6.6.6]
-        """
+    def add_token(
+        self,
+        symbol         : str,
+        direction      : str,
+        status         : str,
+        zona_qualidade : str,
+        zona_descricao : str,
+        check_a_ok     : bool,
+        check_a_reason : str,
+        check_a_ev     : dict,
+        check_b_ok     : bool,
+        check_b_reason : str,
+        check_b_ev     : dict,
+        check_c_total  : int,
+        check_c_thr    : int,
+        check_c_det    : dict,
+        zona_rich      : dict | None = None,
+    ) -> None:
         self._tokens.append({
-            "symbol"     : symbol,
-            "direction"  : direction,
-            "score_total": score_total,
-            "threshold"  : threshold,
-            "gap"        : gap,
-            "status"     : status,
-            "pillars"    : pillars,
-            "venue_info" : venue_info if venue_info is not None else {},
+            "symbol"         : symbol,
+            "direction"      : direction,
+            "status"         : status,
+            "zona_qualidade" : zona_qualidade,
+            "zona_descricao" : zona_descricao,
+            "check_a_ok"     : check_a_ok,
+            "check_a_reason" : check_a_reason,
+            "check_a_ev"     : check_a_ev or {},
+            "check_b_ok"     : check_b_ok,
+            "check_b_reason" : check_b_reason,
+            "check_b_ev"     : check_b_ev or {},
+            "check_c_total"  : check_c_total,
+            "check_c_thr"    : check_c_thr,
+            "check_c_det"    : check_c_det or {},
+            "zona_rich"      : zona_rich or {},
         })
 
-    def add_event(self, type: str, symbol: str, direction: str,
-                  score: int, gap: int):
-        """
-        Chamado ao emitir CALL ou QUASE para o Telegram.
-        type: "CALL" | "QUASE"
-        """
+    def add_event(
+        self,
+        type           : str,
+        symbol         : str,
+        direction      : str,
+        zona_qualidade : str,
+        check_c_total  : int,
+        check_c_thr    : int,
+    ) -> None:
         self._events.append({
-            "type"     : type,
-            "symbol"   : symbol,
-            "direction": direction,
-            "score"    : score,
-            "gap"      : gap,
+            "type"          : type,
+            "symbol"        : symbol,
+            "direction"     : direction,
+            "zona_qualidade": zona_qualidade,
+            "check_c_total" : check_c_total,
+            "check_c_thr"   : check_c_thr,
+            "gap"           : check_c_total - check_c_thr,
         })
 
     def commit(self) -> bool:
@@ -246,19 +261,18 @@ class RoundLogger:
         try:
             conn = sqlite3.connect(DB_PATH, timeout=10)
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.executescript(_DDL)
 
-            # [v6.6.6] Migration: add new columns to existing tables
-            for _sql in [
-                "ALTER TABLE rounds ADD COLUMN venue_summary TEXT",
-                "ALTER TABLE token_scores ADD COLUMN kline_venue TEXT",
-                "ALTER TABLE token_scores ADD COLUMN tv_venue TEXT",
-                "ALTER TABLE token_scores ADD COLUMN venue_quality TEXT",
-            ]:
-                try:
-                    conn.execute(_sql)
-                except sqlite3.OperationalError:
-                    pass  # column already exists
+            try:
+                cur = conn.execute("PRAGMA table_info(token_scores)")
+                cols = [row[1] for row in cur.fetchall()]
+                if "p1" in cols:
+                    conn.execute("DROP TABLE IF EXISTS token_scores")
+                    conn.execute("DROP TABLE IF EXISTS round_events")
+                    LOG.info("[logger] Migração v8: schema v6 detectado, recriando tabelas")
+            except Exception:
+                pass
+
+            conn.executescript(_DDL)
 
             meta = record.get("meta", {})
             pipe = record.get("pipeline", {})
@@ -281,42 +295,47 @@ class RoundLogger:
                 )
             )
 
-            for tok in record.get("tokens", []):
-                p  = tok.get("pillars", {})
-                vi = tok.get("venue_info", {})
-                def _ps(key):
-                    return p.get(key, {}).get("score")
-                def _pr(key):
-                    return p.get(key, {}).get("reason")
+            for t in record.get("tokens", []):
                 conn.execute(
                     """INSERT INTO token_scores VALUES
-                       (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
-                        rid, ts, tok["symbol"], tok["direction"],
-                        tok.get("score_total"), tok.get("threshold"), tok.get("gap"),
-                        tok.get("status"),
-                        _ps("P1"), _pr("P1"),
-                        _ps("P2"), _pr("P2"),
-                        _ps("P3"), _pr("P3"),
-                        _ps("P4"), _pr("P4"),
-                        _ps("P5"), _pr("P5"),
-                        _ps("P6"), _pr("P6"),
-                        _ps("P7"), _pr("P7"),
-                        _ps("P8"), _pr("P8"),
-                        _ps("P9"), _pr("P9"),
-                        _ps("P1H"), _pr("P1H"),
-                        vi.get("kline_venue"),
-                        vi.get("tv_venue"),
-                        vi.get("quality"),
+                        rid, ts,
+                        t.get("symbol"),
+                        t.get("direction"),
+                        t.get("status"),
+                        t.get("zona_qualidade"),
+                        t.get("zona_descricao"),
+                        1 if t.get("check_a_ok") else 0,
+                        t.get("check_a_reason"),
+                        json.dumps(t.get("check_a_ev", {}), ensure_ascii=False),
+                        1 if t.get("check_b_ok") else 0,
+                        t.get("check_b_reason"),
+                        json.dumps(t.get("check_b_ev", {}), ensure_ascii=False),
+                        t.get("check_c_total", 0),
+                        t.get("check_c_thr", 0),
+                        (t.get("check_c_total", 0) or 0) - (t.get("check_c_thr", 0) or 0),
+                        json.dumps(t.get("check_c_det", {}), ensure_ascii=False),
+                        json.dumps(t.get("zona_rich", {}), ensure_ascii=False),
                     )
                 )
 
-            for ev in record.get("events", []):
+            for e in record.get("events", []):
                 conn.execute(
-                    """INSERT INTO round_events (round_id, ts, type, symbol, direction, score, gap)
-                       VALUES (?,?,?,?,?,?,?)""",
-                    (rid, ts, ev["type"], ev["symbol"], ev["direction"],
-                     ev.get("score"), ev.get("gap"))
+                    """INSERT INTO round_events
+                       (round_id, ts, type, symbol, direction,
+                        zona_qualidade, check_c_total, check_c_thr, gap)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (
+                        rid, ts,
+                        e.get("type"),
+                        e.get("symbol"),
+                        e.get("direction"),
+                        e.get("zona_qualidade"),
+                        e.get("check_c_total", 0),
+                        e.get("check_c_thr", 0),
+                        e.get("gap", 0),
+                    )
                 )
 
             conn.commit()

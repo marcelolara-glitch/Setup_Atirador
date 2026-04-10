@@ -348,11 +348,11 @@ async def analisar_token_async(
     if not check_a_ok:
         status = "RADAR"
     elif not check_b_ok:
-        status = "QUASE"
+        status = "QUASE" if check_c_total >= 1 else "RADAR"
     elif check_c_total >= thr_c:
         status = "CALL"
     else:
-        status = "QUASE"
+        status = "QUASE" if check_c_total >= 1 else "RADAR"
 
     # Trade params (apenas para CALL)
     params = None
