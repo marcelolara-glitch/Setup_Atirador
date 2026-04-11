@@ -134,10 +134,33 @@ def api_get(url: str, retries: int = 3) -> dict:
 async def fetch_klines_async(
     session: aiohttp.ClientSession,
     symbol: str,
-    granularity: str = "15m",
-    limit: int = 60
+    granularity: str = "4H",
+    limit: int = 60,
 ) -> tuple[list[dict], str | None]:
-    """Busca klines com fallback Bitget → OKX. Retorna (candles, venue)."""
+    """Busca klines com fallback OKX → Bitget. Retorna (candles, venue).
+
+    OKX retorna decrescente → result.reverse() → crescente (antiga→recente).
+    Bitget retorna crescente → sem reverse necessário.
+    """
+
+    # OKX — primário
+    base_coin  = symbol.replace("USDT", "")
+    okx_instid = f"{base_coin}-USDT-SWAP"
+    url_okx    = (f"{URLS['okx_klines']}"
+                  f"?instId={okx_instid}&bar={granularity}&limit={limit}")
+    try:
+        data_okx = await api_get_async(session, url_okx)
+        if data_okx and "data" in data_okx and data_okx["data"]:
+            raw = data_okx["data"]
+            result = [{"ts": int(c[0]), "open": float(c[1]), "high": float(c[2]),
+                       "low": float(c[3]), "close": float(c[4]), "volume": float(c[5])}
+                      for c in raw]
+            result.reverse()  # OKX: decrescente → crescente
+            return result, "okx"
+    except Exception as e:
+        LOG.error(f"  ❌   fetch_klines_async OKX {symbol} {granularity}: {e}")
+
+    # Bitget — fallback
     url_bitget = (
         f"{URLS['bitget_klines']}"
         f"?productType={BITGET_PRODUCT_TYPE}&symbol={symbol}"
@@ -150,29 +173,12 @@ async def fetch_klines_async(
             result = [{"ts": int(c[0]), "open": float(c[1]), "high": float(c[2]),
                        "low": float(c[3]), "close": float(c[4]), "volume": float(c[5])}
                       for c in raw_candles]
-            result.reverse()
+            # Bitget: já crescente → sem reverse
             return result, "bitget"
     except Exception as e:
-        LOG.error(f"  ❌  fetch_klines_async Bitget {symbol} {granularity}: {e}")
+        LOG.error(f"  ❌   fetch_klines_async Bitget {symbol} {granularity}: {e}")
 
-    base_coin  = symbol.replace("USDT", "")
-    okx_instid = f"{base_coin}-USDT-SWAP"
-    url_okx    = (f"{URLS['okx_klines']}"
-                  f"?instId={okx_instid}&bar={granularity}&limit={limit}")
-    try:
-        data_okx = await api_get_async(session, url_okx)
-        if data_okx and "data" in data_okx and data_okx["data"]:
-            raw = data_okx["data"]
-            result = [{"ts": int(c[0]), "open": float(c[1]), "high": float(c[2]),
-                       "low": float(c[3]), "close": float(c[4]), "volume": float(c[5])}
-                      for c in raw]
-            result.reverse()
-            return result, "okx"
-        else:
-            return [], None
-    except Exception as e:
-        LOG.error(f"  ❌  fetch_klines_async OKX {symbol} {granularity}: {e}")
-        return [], None
+    return [], None
 
 
 async def fetch_klines_cached_async(
@@ -181,7 +187,8 @@ async def fetch_klines_cached_async(
     granularity: str = "4H",
     limit: int = 60
 ) -> list[dict]:
-    """Klines com cache local."""
+    """Klines com cache local. Primário: OKX. Fallback: Bitget.
+    Retorna klines em ordem crescente (antiga → recente)."""
     cache_dir  = "/tmp/atirador_cache"
     os.makedirs(cache_dir, exist_ok=True)
     cache_file = f"{cache_dir}/klines_{symbol}_{granularity}.json"

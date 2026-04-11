@@ -470,34 +470,13 @@ def _calc_metrics(trades: list) -> dict:
 
 
 def _fetch_klines_sync(symbol: str, granularity: str = "15m", limit: int = 60) -> list:
+    """Fetcher interno de klines — primário OKX, fallback Bitget.
+
+    Retorna lista de klines no formato [ts, open, high, low, close, vol].
+    OKX retorna decrescente → revertido para crescente.
+    Bitget retorna crescente → sem reverse necessário.
     """
-    Fetcher interno de klines via Bitget (requests síncrono).
-    Fallback: OKX. Retorna lista de klines ou [] em caso de falha.
-    Cada kline: [ts, open, high, low, close, vol]
-    """
-    if not _HAS_REQUESTS:
-        return []
-
-    # Mapeamento de granularidade Bitget
-    gran_map = {"15m": "15min", "1H": "1H", "4H": "4H"}
-    bg_gran  = gran_map.get(granularity, "15min")
-
-    try:
-        url  = f"https://api.bitget.com/api/v2/mix/market/candles"
-        resp = _requests.get(url, params={
-            "symbol"      : symbol,
-            "productType" : "USDT-FUTURES",
-            "granularity" : bg_gran,
-            "limit"       : str(limit),
-        }, timeout=8)
-        if resp.status_code == 200:
-            data = resp.json().get("data", [])
-            if data:
-                return data
-    except Exception:
-        pass
-
-    # Fallback OKX
+    # OKX — primário
     try:
         okx_bar = {"15m": "15m", "1H": "1H", "4H": "4H"}.get(granularity, "15m")
         url  = "https://www.okx.com/api/v5/market/candles"
@@ -509,8 +488,28 @@ def _fetch_klines_sync(symbol: str, granularity: str = "15m", limit: int = 60) -
         if resp.status_code == 200:
             data = resp.json().get("data", [])
             if data:
-                # OKX: [ts, open, high, low, close, vol, ...]
-                return [[c[0], c[1], c[2], c[3], c[4], c[5]] for c in data]
+                result = [[c[0], c[1], c[2], c[3], c[4], c[5]] for c in data]
+                result.reverse()  # OKX: decrescente → crescente
+                return result
+    except Exception:
+        pass
+
+    # Bitget — fallback
+    gran_map = {"15m": "15min", "1H": "1H", "4H": "4H"}
+    bg_gran  = gran_map.get(granularity, "15min")
+    try:
+        url  = f"https://api.bitget.com/api/v2/mix/market/candles"
+        resp = _requests.get(url, params={
+            "symbol"      : symbol,
+            "productType" : "USDT-FUTURES",
+            "granularity" : bg_gran,
+            "limit"       : str(limit),
+        }, timeout=8)
+        if resp.status_code == 200:
+            data = resp.json().get("data", [])
+            if data:
+                # Bitget: já crescente → sem reverse
+                return data
     except Exception:
         pass
 
