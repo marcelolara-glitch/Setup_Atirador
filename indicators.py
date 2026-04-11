@@ -672,9 +672,13 @@ def apply_candle_lock(
     candles_15m: list[dict],
     lock: dict,
 ) -> list[dict]:
-    """[v6.3.0 A4] Aplica a trava de candle fechado à lista de klines 15m."""
+    """[v8.1.0] Descarta candle aberto baseado no timestamp real do kline."""
     if not candles_15m or len(candles_15m) < 2:
         return candles_15m
-    if lock["use_prev"]:
-        return candles_15m[:-1]
+    now_ts_ms = int(time.time() * 1000)
+    period_ms = CANDLE_15M_SECONDS * 1000
+    current_period_open_ms = (now_ts_ms // period_ms) * period_ms
+    last_ts = candles_15m[-1]["ts"]
+    if last_ts >= current_period_open_ms:
+        return candles_15m[:-1]  # descarta candle aberto
     return candles_15m
