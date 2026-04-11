@@ -278,6 +278,7 @@ async def analisar_token_async(
     current_price: float,
     state: dict,
     exchange: str,
+    candle_lock: dict | None = None,
 ) -> dict | None:
     """Pipeline v7 por token:
 
@@ -326,6 +327,10 @@ async def analisar_token_async(
 
     # Klines 15m
     candles_15m = await fetch_klines_cached_async(session, symbol, "15m", 20)
+    if not candles_15m:
+        return None
+    if candle_lock:
+        candles_15m = apply_candle_lock(candles_15m, candle_lock)
     if not candles_15m:
         return None
 
@@ -463,7 +468,6 @@ async def run_scan_async() -> None:
     # Candle lock 15m
     candle_lock = get_candle_lock_status()
     if candle_lock["use_prev"]:
-        gate_syms = apply_candle_lock(gate_syms, candle_lock)
         LOG.info(
             f"[v8] Candle lock ativo -- vela em formacao "
             f"({candle_lock['seconds_open']:.0f}s), "
@@ -491,7 +495,7 @@ async def run_scan_async() -> None:
 
         for sym, d4, d1, price in tasks:
             try:
-                r = await analisar_token_async(session, sym, d4, d1, price, state, exchange)
+                r = await analisar_token_async(session, sym, d4, d1, price, state, exchange, candle_lock)
                 if r is None:
                     continue
 
@@ -501,6 +505,8 @@ async def run_scan_async() -> None:
                     if d15m:
                         candles_15m_recheck = await fetch_klines_cached_async(
                             session, sym, "15m", 20)
+                        if candles_15m_recheck:
+                            candles_15m_recheck = apply_candle_lock(candles_15m_recheck, candle_lock)
                         if candles_15m_recheck:
                             c_total, c_det = check_forca_movimento(
                                 candles_15m_recheck, d15m, state, r["direction"])

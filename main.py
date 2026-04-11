@@ -208,6 +208,8 @@ async def run_scan_async() -> None:
                         candles_15m_recheck = await fetch_klines_cached_async(
                             session, sym, "15m", 20)
                         if candles_15m_recheck:
+                            candles_15m_recheck = apply_candle_lock(candles_15m_recheck, candle_lock)
+                        if candles_15m_recheck:
                             c_total, c_det = check_forca_movimento(
                                 candles_15m_recheck, d15, state, r["direction"])
                             r["check_c_total"] = c_total
