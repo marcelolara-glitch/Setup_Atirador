@@ -88,8 +88,6 @@ def _tg_register_commands():
     """Registra o menu de comandos visível no Telegram (setMyCommands)."""
     commands = [
         {"command": "status",      "description": "Último scan e sizing de risco"},
-        {"command": "radar",       "description": "Ranking dos tokens do último scan"},
-        {"command": "pilares",     "description": "Explicação dos pilares do score"},
         {"command": "scan",        "description": "Disparar scan imediato"},
         {"command": "analisar",    "description": "Análise completa de um token (ex: /analisar BTCUSDT)"},
         {"command": "log_last",    "description": "Detalhes da última rodada"},
@@ -267,34 +265,6 @@ def cmd_ajuda() -> str:
     )
 
 
-def cmd_pilares() -> str:
-    return (
-        "🎯 <b>PILARES DO SCORE — /25 pts</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "\n"
-        "🏗 <b>ESTRUTURA 4H</b> — até 8 pts\n"
-        "<b>P4</b> Liquidez   +3 — preço próximo de Res/OB (confluência = máx)\n"
-        "<b>P5</b> Figuras    +2 — padrão gráfico de reversão (Cunha, Wedge)\n"
-        "<b>P6</b> CHOCH/BOS  +3 — mudança de estrutura confirmada no 4H\n"
-        "\n"
-        "🔍 <b>CONFIRMAÇÃO 1H</b> — até 4 pts\n"
-        "<b>P-1H</b> Res/OB 1H +4 — preço na zona de res/sup + OB alinhado\n"
-        "\n"
-        "⚡ <b>GATILHO 15m</b> — até 7 pts\n"
-        "<b>P1</b> Bollinger  +3 — preço esticado na banda sup/inf (≥95% = máx)\n"
-        "<b>P2</b> Candles    +4 — padrão de reversão 15m (Shooting Star...)\n"
-        "\n"
-        "🌐 <b>CONTEXTO</b> — até 6 pts\n"
-        "<b>P3</b> Funding    +2/-1 — funding favorável/desfavorável à direção\n"
-        "<b>P8</b> Volume 15m +2 — volume ≥1.2x média (confirmação)\n"
-        "<b>P9</b> OI         +2 — Open Interest crescendo (dinheiro entrando)\n"
-        "\n"
-        "🚫 <b>FILTRO</b> (não pontua — apenas veta)\n"
-        "<b>P7</b> Pump/Dump — bloqueia entrada após variação excessiva recente\n"
-        "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Thr: LONG ≥20 (cauteloso) | SHORT ≥16 (moderado)"
-    )
 
 
 def cmd_status() -> str:
@@ -500,61 +470,25 @@ def cmd_status() -> str:
     return "\n".join(lines)
 
 
-def cmd_radar() -> str:
-    state = _load_atirador_state()
-    sh    = state.get("score_history", {})
-
-    if not sh:
-        return "📊 Sem dados de scan disponíveis. Use /scan para atualizar."
-
-    # Última entrada por token
-    tokens = []
-    for sym, hist in sh.items():
-        if not hist:
-            continue
-        last   = hist[-1]
-        ts     = last.get("ts", "")
-        score_l = last.get("long", 0)
-        score_s = last.get("short", 0)
-        trend_l = _score_trend(hist, "LONG")
-        trend_s = _score_trend(hist, "SHORT")
-        base    = sym.replace("USDT", "").replace("PERP", "")
-        tokens.append({
-            "sym": base, "ts": ts,
-            "long": score_l, "short": score_s,
-            "tl": trend_l,   "ts_": trend_s,
-        })
-
-    if not tokens:
-        return "📊 Sem tokens no histórico. Use /scan para atualizar."
-
-    # Horário do último scan
-    ultimo_ts = max(t["ts"] for t in tokens)
-    try:
-        dt_last = datetime.fromisoformat(ultimo_ts).astimezone(BRT)
-        last_str = dt_last.strftime("%H:%M BRT")
-    except Exception:
-        last_str = ultimo_ts
-
-    top_long  = sorted(tokens, key=lambda x: x["long"],  reverse=True)[:5]
-    top_short = sorted(tokens, key=lambda x: x["short"], reverse=True)[:5]
-
-    lines  = [f"📊 <b>RADAR</b> — último scan {last_str}"]
-    lines += ["━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
-    lines += ["📈 <b>LONG — top 5:</b>"]
-    for t in top_long:
-        lines.append(f"  · {t['sym']:<6} {t['long']:>2} {t['tl']}")
-    lines += ["━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
-    lines += ["📉 <b>SHORT — top 5:</b>"]
-    for t in top_short:
-        lines.append(f"  · {t['sym']:<6} {t['short']:>2} {t['ts_']}")
-    lines += ["━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
-    lines += ["⚠️ Scores do último scan — use /scan para atualizar"]
-
-    return "\n".join(lines)
-
-
 def cmd_scan() -> str:
+    """
+    OBJETIVO:
+        Disparar um scan imediato via GitHub Actions workflow_dispatch.
+        Útil para forçar uma análise fora do ciclo de 30min do cron.
+
+    FONTE DE DADOS:
+        GitHub API — workflow_dispatch no arquivo scan.yml.
+
+    LIMITAÇÕES CONHECIDAS:
+        O scan roda numa máquina efêmera do GitHub Actions e NÃO alimenta
+        os bancos SQLite da VM (scan_log.db, atirador_journal.db).
+        O heartbeat que chega após o /scan não representa o estado real
+        da VM — é apenas confirmação de execução no Actions.
+
+    NÃO FAZER:
+        Não interpretar o resultado como equivalente ao cron da VM.
+        Não chamar subprocess nem bloquear o daemon.
+    """
     if not GITHUB_TOKEN or not GITHUB_REPOSITORY:
         return "❌ GITHUB_TOKEN ou GITHUB_REPOSITORY não configurados."
     try:
@@ -583,8 +517,23 @@ def cmd_scan() -> str:
 
 def cmd_analisar(symbol: str | None) -> str:
     """
-    Dispara análise individual de um token via workflow_dispatch.
-    Retorna mensagem de confirmação ou erro.
+    OBJETIVO:
+        Disparar análise individual de um token via GitHub Actions.
+        Permite analisar tokens que não saíram nas rodadas automáticas
+        ou validar manualmente um símbolo específico.
+
+    FONTE DE DADOS:
+        GitHub API — workflow_dispatch no arquivo analisar.yml.
+        O resultado chega via mensagem Telegram pelo próprio workflow.
+
+    LIMITAÇÕES CONHECIDAS:
+        Roda numa máquina efêmera do GitHub Actions — NÃO alimenta os
+        bancos SQLite da VM. Resultado não aparece em /log_last ou /perf.
+        O workflow analisar.yml precisa estar atualizado para a v8.
+
+    NÃO FAZER:
+        Não bloquear o daemon aguardando resultado — o retorno é apenas
+        confirmação de disparo, não o resultado da análise.
     """
     if not symbol:
         return (
@@ -682,7 +631,26 @@ def cmd_log_last() -> str:
 
 
 def cmd_log_token(symbol: str | None) -> str:
-    """Histórico de scores de um token nas últimas 48h."""
+    """
+    OBJETIVO:
+        Mostrar o histórico de aparições de um token nas últimas 48h,
+        com score do Check C e status (CALL, QUASE, RADAR, DROP) por rodada.
+        Permite acompanhar a evolução de um token ao longo do tempo.
+
+    FONTE DE DADOS:
+        scan_log.db — tabela token_scores, campos: ts, direction,
+        score_total, threshold, status. Filtro: últimas 48h, limit 96.
+
+    LIMITAÇÕES CONHECIDAS:
+        score_total na v8 é o Check C (0–4), não score de pilares (0–25).
+        Colunas p1..p9 existem na tabela mas são NULL na v8 — não ler.
+        Só aparecem tokens que chegaram ao 15m (passaram pelo gate 4H
+        e foram encontrados em zona).
+
+    NÃO FAZER:
+        Não ler colunas p1..p9 — são NULL na v8 (legado v6).
+        Não bloquear o daemon.
+    """
     if not symbol:
         return "⚠️ Informe o símbolo.\nEx: /log_token AVAX"
     sym = symbol.upper().strip()
@@ -794,7 +762,25 @@ def cmd_log_quase() -> str:
 
 
 def cmd_log_calls(arg: str | None = None) -> str:
-    """Lista CALLs recentes. Argumento: '7d' ou '30d' (padrão: 7d)."""
+    """
+    OBJETIVO:
+        Listar CALLs reais (não hipotéticas) dos últimos N dias com
+        status de cada trade (WIN/LOSS/OPEN/EXPIRED). Dá uma visão
+        rápida do histórico de sinais emitidos e seus desfechos.
+
+    FONTE DE DADOS:
+        atirador_journal.db — tabela trades, filtro is_hypothetical=0.
+        Campos: timestamp, symbol, direction, score, status, type.
+
+    LIMITAÇÕES CONHECIDAS:
+        score na v8 é o Check C (0–4), não score de pilares.
+        Trades OPEN ainda não têm desfecho — contam separados.
+        Limite de exibição: 20 trades mais recentes na mensagem.
+
+    NÃO FAZER:
+        Não exibir QUASEs hipotéticos neste comando — use /perf_quase.
+        Não bloquear o daemon.
+    """
     days = 7
     if arg:
         m = re.match(r"(\d+)d?", arg.strip())
@@ -837,7 +823,26 @@ def cmd_log_calls(arg: str | None = None) -> str:
 
 
 def cmd_perf() -> str:
-    """Métricas de performance das CALLs dos últimos 30 dias."""
+    """
+    OBJETIVO:
+        Exibir métricas de performance das CALLs reais dos últimos 30d:
+        Win Rate, Profit Factor e Expectancy separados por LONG e SHORT.
+        Principal indicador de qualidade do sistema de sinais.
+
+    FONTE DE DADOS:
+        atirador_journal.db — tabela trades, filtro is_hypothetical=0,
+        status != 'OPEN', últimos 30d. Campos: direction, status, pnl_pct.
+
+    LIMITAÇÕES CONHECIDAS:
+        Requer mínimo de 10 trades fechados para métricas confiáveis.
+        pnl_pct pode ser None para trades muito antigos.
+        Não separa performance por zona ou por contexto de mercado.
+        score na v8 é Check C (0–4) — não exibir como score de pilares.
+
+    NÃO FAZER:
+        Não incluir trades OPEN no cálculo — desfecho indefinido.
+        Não incluir QUASEs hipotéticos — use /perf_quase para isso.
+    """
     conn = _journal_db_conn()
     if not conn:
         return "⚠️ atirador_journal.db não encontrado."
@@ -966,7 +971,27 @@ def cmd_perf_quase() -> str:
 
 
 def cmd_trade(symbol: str | None) -> str:
-    """Mostra trade aberto para um símbolo."""
+    """
+    OBJETIVO:
+        Mostrar o status atual de um trade aberto para um símbolo:
+        preço de entrada, SL, TPs, tempo decorrido, max runup/drawdown
+        e tempo até expiração. Permite monitorar um trade específico.
+
+    FONTE DE DADOS:
+        atirador_journal.db — tabela trades, filtro symbol=?, status='OPEN',
+        is_hypothetical=0.
+
+    LIMITAÇÕES CONHECIDAS:
+        Mostra apenas o trade mais recente aberto para o símbolo.
+        Preços de SL/TP são calculados no momento do sinal — não são
+        atualizados em tempo real.
+        max_runup e max_drawdown são atualizados a cada rodada do cron,
+        não em tempo real.
+
+    NÃO FAZER:
+        Não exibir trades hipotéticos (QUASEs) — apenas CALLs reais.
+        Não fazer chamada à exchange para preço atual.
+    """
     if not symbol:
         return "⚠️ Informe o símbolo.\nEx: /trade AVAX"
     sym = symbol.upper().strip()
@@ -1046,7 +1071,25 @@ def cmd_trade(symbol: str | None) -> str:
 
 
 def cmd_log_export() -> str:
-    """Envia scan_log.jsonl via Telegram sendDocument."""
+    """
+    OBJETIVO:
+        Exportar o arquivo scan_log.jsonl completo via Telegram
+        sendDocument. Permite análise offline da verdade bruta de
+        todas as rodadas.
+
+    FONTE DE DADOS:
+        logs/scan_log.jsonl — leitura direta do arquivo.
+
+    LIMITAÇÕES CONHECIDAS:
+        Se o arquivo ultrapassar 50MB, envia apenas as últimas 1000
+        linhas com nome scan_log_tail1000.jsonl.
+        A leitura do arquivo inteiro é feita em memória — em arquivos
+        grandes pode consumir RAM significativa na VM (1GB total).
+
+    NÃO FAZER:
+        Não bloquear o daemon por mais de 30s — o timeout do sendDocument
+        já cobre casos normais.
+    """
     if not os.path.exists(_SCAN_JSONL):
         return "⚠️ scan_log.jsonl não encontrado. Execute pelo menos um scan."
 
@@ -1157,9 +1200,7 @@ HANDLERS = {
     "/ajuda":       cmd_ajuda,
     "/help":        cmd_ajuda,
     "/status":      cmd_status,
-    "/radar":       cmd_radar,
     "/scan":        cmd_scan,
-    "/pilares":     cmd_pilares,
     "/log_last":    cmd_log_last,
     "/log_quase":   cmd_log_quase,
     "/perf":        cmd_perf,
