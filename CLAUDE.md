@@ -105,6 +105,27 @@ Implementação → commit na feature branch → PR aberto → PARAR
 
 ---
 
+## REFERÊNCIAS E HISTÓRICO
+
+### Arquivos de referência
+- `CONTRATO_V8.md` — assinaturas completas de todas as funções
+  cross-módulo. Leia antes de qualquer alteração em interfaces públicas.
+
+### Bugs críticos resolvidos na v8.0.0 — nunca regredir
+| # | Bug | Módulo |
+|---|---|---|
+| 1 | `fetch_perpetuals` retornava `int` onde `run_scan_async` esperava `str` | `exchanges.py` |
+| 2 | `ALAV_POR_SCORE.get()` com chaves tuple — sempre retornava default | `config.py` |
+| 3 | `_get_nearest_resistance_zone` chamava `analyze_resistance_1h` sem `current_price` | `signals.py` |
+| 4 | `score_oi_trend` lia `state["score_history"][sym]["oi_history"]` mas `update_score_history` escrevia em `state["oi_history"][sym]` | `state.py` |
+
+### Constantes críticas — imutáveis
+- `BITGET_PRODUCT_TYPE = "USDT-FUTURES"` (com hífen) — nunca alterar
+- Todas as constantes vivem exclusivamente em `config.py`
+- URLs e parâmetros de API nunca são strings literais inline
+
+---
+
 ## CONTEXTO DE SESSÃO
 O escopo de cada sessão é definido no briefing entregue pelo produto.
 Roadmap e prioridades são mantidos externamente pelo produto.
