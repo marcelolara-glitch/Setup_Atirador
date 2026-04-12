@@ -330,12 +330,26 @@ async def run_scan_async() -> None:
                     continue
                 p = r.get("params") or {}
                 pillars = {
-                    "check_a_ok":    r.get("check_a_ok"),
-                    "check_b_ok":    r.get("check_b_ok"),
-                    "check_c_total": r.get("check_c_total"),
-                    "check_c_thr":   r.get("check_c_thr"),
+                    # Checks — resultados booleanos
+                    "check_a_ok":     r.get("check_a_ok"),
+                    "check_a_reason": r.get("check_a_reason"),
+                    "check_a_ev":     r.get("check_a_ev", {}),
+                    "check_b_ok":     r.get("check_b_ok"),
+                    "check_b_reason": r.get("check_b_reason"),
+                    "check_b_ev":     r.get("check_b_ev", {}),
+                    "check_c_total":  r.get("check_c_total"),
+                    "check_c_thr":    r.get("check_c_thr"),
+                    "check_c_det":    r.get("check_c_det", {}),
+                    # Zona
                     "zona_qualidade": r.get("zona_qualidade"),
-                    **(r.get("check_c_det") or {}),
+                    "zona_descricao": r.get("zona_descricao"),
+                    "zona_rich":      r.get("zona_rich", {}),
+                    # Contexto de mercado no momento do sinal
+                    "gate_4h":        r.get("rec_4h"),
+                    "gate_1h":        r.get("rec_1h"),
+                    "price":          r.get("price"),
+                    # Candle de referência (OHLCV completo)
+                    "candle_ref":     r.get("candle_ref", {}),
                 }
                 trade_journal.open_trade(
                     symbol        = r["symbol"],
