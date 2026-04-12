@@ -169,108 +169,108 @@ def main():
     # ══════════════════════════════════════════════════════════════════════════
     w(sep("SEÇÃO 4 — CHECKS A/B/C"))
     # ══════════════════════════════════════════════════════════════════════════
-    # Fonte: pillars_json do journal — único lugar onde checks A/B/C estão
-    # registrados na v8. token_scores tem colunas p1..p9 todas NULL (legado).
+    # Fonte: token_scores (check_a_ok, check_b_ok, check_c_det) — v8.1.x.
+    # O journal registra CALLs/QUASEs mas checks A/B/C estão em token_scores.
 
-    if not conn_journal:
-        w("  ⚠️ atirador_journal.db não encontrado — seção indisponível")
-    else:
-        jtrades = conn_journal.execute("""
-            SELECT direction, is_hypothetical, venue_quality,
-                   status, pillars_json, score
-            FROM trades WHERE timestamp >= ? ORDER BY timestamp
-        """, (desde,)).fetchall()
+    token_rows = conn_scan.execute("""
+        SELECT direction, status,
+               check_a_ok, check_b_ok, check_c_det, zona_qualidade
+        FROM token_scores WHERE ts >= ?
+        ORDER BY ts
+    """, (desde,)).fetchall()
 
-        parsed = []
-        for row in jtrades:
-            try:
-                p = json.loads(row["pillars_json"] or "{}")
-            except Exception:
-                p = {}
-            parsed.append({
-                "direction":       row["direction"],
-                "is_hypo":         row["is_hypothetical"],
-                "venue_quality":   row["venue_quality"],
-                "status":          row["status"],
-                "score":           row["score"],
-                "check_a":         p.get("check_a",  False),
-                "check_b":         p.get("check_b",  False),
-                "c1_bb":           p.get("c1_bb",    False),
-                "c2_vol":          p.get("c2_vol",   False),
-                "c3_cvd":          p.get("c3_cvd",   False),
-                "c4_oi":           p.get("c4_oi",    False),
-                "check_a_reason":  p.get("check_a_reason", ""),
-                "check_b_reason":  p.get("check_b_reason", ""),
-                "c1_reason":       p.get("c1_reason", ""),
-                "c2_reason":       p.get("c2_reason", ""),
-                "c3_reason":       p.get("c3_reason", ""),
-                "c4_reason":       p.get("c4_reason", ""),
-                "has_pillars":     bool(p),
-            })
+    parsed = []
+    for row in token_rows:
+        try:
+            det = json.loads(row["check_c_det"] or "{}")
+        except Exception:
+            det = {}
+        parsed.append({
+            "direction": row["direction"],
+            "status":    row["status"],
+            "check_a":   bool(row["check_a_ok"]),
+            "check_b":   bool(row["check_b_ok"]),
+            "c1_bb":     det.get("c1_bb",  False),
+            "c2_vol":    det.get("c2_vol", False),
+            "c3_cvd":    det.get("c3_cvd", False),
+            "c4_oi":     det.get("c4_oi",  False),
+            "has_data":  bool(det),
+        })
 
-        valid = [x for x in parsed if x["has_pillars"]]
-        n     = len(valid)
+    valid = [x for x in parsed if x["has_data"]]
+    n     = len(valid)
 
-        w(subsep("4a) Frequência de ativação (todos os registros com pillars_json)"))
-        if n:
-            def _pct(lst, key):
-                c = sum(1 for x in lst if x[key])
-                return c, f"{c/len(lst)*100:.0f}%"
+    w(subsep("4a) Frequência de ativação (todos os registros com check_c_det)"))
+    if n:
+        def _pct(lst, key):
+            c = sum(1 for x in lst if x[key])
+            return c, f"{c/len(lst)*100:.0f}%"
 
-            w(f"  Total registros válidos   : {n}")
-            ca, ca_p = _pct(valid, "check_a")
-            cb, cb_p = _pct(valid, "check_b")
-            c1, c1_p = _pct(valid, "c1_bb")
-            c2, c2_p = _pct(valid, "c2_vol")
-            c3, c3_p = _pct(valid, "c3_cvd")
-            c4, c4_p = _pct(valid, "c4_oi")
-            w(f"  Check A ativo             : {ca} ({ca_p})")
-            w(f"  Check B ativo             : {cb} ({cb_p})")
-            w(f"  C1 BB  ativo              : {c1} ({c1_p})")
-            w(f"  C2 Vol ativo              : {c2} ({c2_p})")
-            w(f"  C3 CVD ativo              : {c3} ({c3_p})")
-            w(f"  C4 OI  ativo              : {c4} ({c4_p})")
+        w(f"  Total registros válidos   : {n}")
+        ca, ca_p = _pct(valid, "check_a")
+        cb, cb_p = _pct(valid, "check_b")
+        c1, c1_p = _pct(valid, "c1_bb")
+        c2, c2_p = _pct(valid, "c2_vol")
+        c3, c3_p = _pct(valid, "c3_cvd")
+        c4, c4_p = _pct(valid, "c4_oi")
+        w(f"  Check A ativo             : {ca} ({ca_p})")
+        w(f"  Check B ativo             : {cb} ({cb_p})")
+        w(f"  C1 BB  ativo              : {c1} ({c1_p})")
+        w(f"  C2 Vol ativo              : {c2} ({c2_p})")
+        w(f"  C3 CVD ativo              : {c3} ({c3_p})")
+        w(f"  C4 OI  ativo              : {c4} ({c4_p})")
 
-            w(subsep("4b) Por direção"))
-            for direcao in ["LONG", "SHORT"]:
-                td = [x for x in valid if x["direction"] == direcao]
-                if not td:
-                    continue
-                w(f"  {direcao} (n={len(td)})")
-                for key, label in [("check_a","A"),("check_b","B"),
-                                   ("c1_bb","C1"),("c2_vol","C2"),
-                                   ("c3_cvd","C3"),("c4_oi","C4")]:
-                    c = sum(1 for x in td if x[key])
-                    w(f"    {label}: {c} ({c/len(td)*100:.0f}%)")
+        w(subsep("4b) Por direção"))
+        for direcao in ["LONG", "SHORT"]:
+            td = [x for x in valid if x["direction"] == direcao]
+            if not td:
+                continue
+            w(f"  {direcao} (n={len(td)})")
+            for key, label in [("check_a","A"),("check_b","B"),
+                               ("c1_bb","C1"),("c2_vol","C2"),
+                               ("c3_cvd","C3"),("c4_oi","C4")]:
+                c = sum(1 for x in td if x[key])
+                w(f"    {label}: {c} ({c/len(td)*100:.0f}%)")
 
-            w(subsep("4c) Padrão de checks nos QUASEs (is_hypothetical=1)"))
-            qtoks = [x for x in valid if x["is_hypo"] == 1]
-            if qtoks:
-                patterns = {}
-                for x in qtoks:
-                    p = (f"A={int(x['check_a'])} B={int(x['check_b'])} "
-                         f"C1={int(x['c1_bb'])} C2={int(x['c2_vol'])} "
-                         f"C3={int(x['c3_cvd'])} C4={int(x['c4_oi'])}")
-                    patterns[p] = patterns.get(p, 0) + 1
-                for p, c in sorted(patterns.items(), key=lambda x: -x[1]):
-                    w(f"  {p}: {c}x")
-            else:
-                w("  (sem QUASEs no período)")
-
-            w(subsep("4d) Breakdown sub-checks do Check C por direção"))
-            for direcao in ["LONG", "SHORT"]:
-                td = [x for x in valid if x["direction"] == direcao]
-                if not td:
-                    continue
-                w(f"  {direcao}:")
-                for key, label in [("c1_bb","C1 BB "),
-                                   ("c2_vol","C2 Vol"),
-                                   ("c3_cvd","C3 CVD"),
-                                   ("c4_oi", "C4 OI ")]:
-                    c = sum(1 for x in td if x[key])
-                    w(f"    {label}: {c}/{len(td)} ({c/len(td)*100:.0f}%)")
+        w(subsep("4c) Padrão de checks nos QUASEs (status=QUASE)"))
+        qtoks = [x for x in valid if x["status"] == "QUASE"]
+        if qtoks:
+            patterns = {}
+            for x in qtoks:
+                pat = (f"A={int(x['check_a'])} B={int(x['check_b'])} "
+                       f"C1={int(x['c1_bb'])} C2={int(x['c2_vol'])} "
+                       f"C3={int(x['c3_cvd'])} C4={int(x['c4_oi'])}")
+                patterns[pat] = patterns.get(pat, 0) + 1
+            for pat, c in sorted(patterns.items(), key=lambda x: -x[1]):
+                w(f"  {pat}: {c}x")
         else:
-            w("  (sem registros com pillars_json no período)")
+            w("  (sem QUASEs no período)")
+
+        w(subsep("4d) Breakdown sub-checks do Check C por direção"))
+        for direcao in ["LONG", "SHORT"]:
+            td = [x for x in valid if x["direction"] == direcao]
+            if not td:
+                continue
+            w(f"  {direcao}:")
+            for key, label in [("c1_bb","C1 BB "),
+                               ("c2_vol","C2 Vol"),
+                               ("c3_cvd","C3 CVD"),
+                               ("c4_oi", "C4 OI ")]:
+                c = sum(1 for x in td if x[key])
+                w(f"    {label}: {c}/{len(td)} ({c/len(td)*100:.0f}%)")
+    else:
+        w("  (sem registros com check_c_det no período)")
+
+    # Fetch journal trades para seções 5 e 6 (venue_quality, is_hypothetical)
+    jtrades = []
+    if conn_journal:
+        try:
+            jtrades = conn_journal.execute("""
+                SELECT symbol, direction, is_hypothetical, venue_quality, status
+                FROM trades WHERE timestamp >= ? ORDER BY timestamp
+            """, (desde,)).fetchall()
+        except Exception:
+            pass
 
     # ══════════════════════════════════════════════════════════════════════════
     w(sep("SEÇÃO 5 — ZONAS DE DECISÃO"))

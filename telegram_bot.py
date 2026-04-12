@@ -51,7 +51,7 @@ TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID", "")
 GITHUB_TOKEN      = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY", "")
-BOT_VERSION       = "8.2.0"
+BOT_VERSION       = "8.2.1"
 
 BOT_STATE_FILE    = "states/bot_state.json"
 STATE_FILE        = "states/atirador_state.json"
@@ -312,32 +312,26 @@ def cmd_status() -> str:
     lines: list[str] = []
 
     # ── Seção 1: Operacional ─────────────────────────────────────────────────
-    # Último scan: fonte primária = scan_log.jsonl (tem exec_seconds)
-    ultimo_ts:   str | None = None
-    exec_secs:   float | None = None
+    # Último scan: leitura direta da tabela rounds (JSONL tem problema de parse)
+    ultimo_ts    = None
+    exec_secs    = None
     duracao_str  = "—"
     duracao_icon = ""
-
     try:
-        if os.path.exists(_SCAN_JSONL):
-            with open(_SCAN_JSONL, "rb") as fh:
-                fh.seek(0, 2)
-                size = fh.tell()
-                if size > 0:
-                    read_size = min(8192, size)
-                    fh.seek(-read_size, 2)
-                    chunk = fh.read().decode("utf-8", errors="replace")
-                    raw_lines = [l for l in chunk.split("\n") if l.strip()]
-                    if raw_lines:
-                        last_obj = json.loads(raw_lines[-1])
-                        ultimo_ts = last_obj.get("ts")
-                        exec_secs = last_obj.get("exec_seconds")
-                        if exec_secs is not None:
-                            exec_secs = float(exec_secs)
-                            duracao_str  = _fmt_exec(exec_secs)
-                            duracao_icon = ("✅" if exec_secs < 1200
-                                            else "⚠️" if exec_secs <= 1380
-                                            else "🔴")
+        conn = _scan_db_conn()
+        if conn:
+            row = conn.execute(
+                "SELECT ts, exec_secs FROM rounds ORDER BY round_id DESC LIMIT 1"
+            ).fetchone()
+            if row:
+                ultimo_ts = row["ts"]
+                if row["exec_secs"] is not None:
+                    exec_secs    = float(row["exec_secs"])
+                    duracao_str  = _fmt_exec(exec_secs)
+                    duracao_icon = ("✅" if exec_secs < 1200
+                                    else "⚠️" if exec_secs <= 1380
+                                    else "🔴")
+            conn.close()
     except Exception:
         pass
 
@@ -636,7 +630,7 @@ def cmd_log_last() -> str:
             conn.close()
             return "📋 Nenhuma rodada registrada ainda."
         evs = conn.execute(
-            """SELECT type, symbol, direction, score
+            """SELECT type, symbol, direction, check_c_total
                FROM round_events WHERE round_id=?
                ORDER BY type DESC""",
             (row["round_id"],)
@@ -666,7 +660,7 @@ def cmd_log_last() -> str:
             ico = "🚀" if ev["direction"] == "LONG" else "📉"
             tag = "CALL" if ev["type"] == "CALL" else "⚠️ QUASE"
             sym = (ev["symbol"] or "").replace("USDT", "")
-            lines.append(f"  {ico} {tag} {ev['direction']}  {sym}  C={ev['score']}")
+            lines.append(f"  {ico} {tag} {ev['direction']}  {sym}  C={ev['check_c_total']}")
     else:
         lines.append("  Nenhuma CALL ou QUASE nesta rodada")
     return "\n".join(lines)
@@ -704,7 +698,7 @@ def cmd_log_token(symbol: str | None) -> str:
         return "⚠️ scan_log.db não encontrado."
     try:
         rows = conn.execute(
-            """SELECT ts, direction, score_total, threshold, status
+            """SELECT ts, direction, check_c_total, check_c_thr, status
                FROM token_scores
                WHERE symbol=? AND ts >= datetime('now', '-48 hours')
                ORDER BY ts DESC LIMIT 96""",
@@ -724,7 +718,7 @@ def cmd_log_token(symbol: str | None) -> str:
         key = r["ts"][:16]
         if key not in rounds:
             rounds[key] = {}
-        rounds[key][r["direction"]] = (r["score_total"], r["status"])
+        rounds[key][r["direction"]] = (r["check_c_total"], r["status"])
 
     lines = [f"📈 <b>{base} — Histórico 48h</b>", SEP]
     _status_ico = {"CALL": "✅CALL", "QUASE": "⚠️QUASE", "RADAR": "⬜", "DROP": "⬜"}
@@ -734,7 +728,7 @@ def cmd_log_token(symbol: str | None) -> str:
         sd  = rounds[ts_key].get("SHORT", (0, ""))
         l_ico = _status_ico.get(ld[1], "⬜")
         s_ico = _status_ico.get(sd[1], "⬜")
-        lines.append(f"  {dt}  LONG {ld[0]:>2} {l_ico}  SHORT {sd[0]:>2} {s_ico}")
+        lines.append(f"  {dt}  LONG C={ld[0]:>2} {l_ico}  SHORT C={sd[0]:>2} {s_ico}")
     lines += [SEP, f"  Rodadas registradas: {len(rounds)}"]
     return "\n".join(lines)
 
@@ -747,90 +741,119 @@ def cmd_log_quase() -> str:
         o operador entender por que o sinal não se qualificou como CALL.
 
     FONTE DE DADOS:
-        scan_log.db tabela round_events (última rodada, type='QUASE')
-        + atirador_journal.db tabela trades (pillars_json, venue_quality,
-        is_hypothetical=1) para os mesmos símbolos/direção.
+        scan_log.db — tabela round_events (lista de QUASEs)
+        + tabela token_scores (check_a_ok, check_b_ok, check_c_det)
+        para os mesmos symbol/direction/round_id.
 
     LIMITAÇÕES CONHECIDAS:
-        Só mostra QUASEs registrados no journal (is_hypothetical=1).
-        Tokens que chegaram ao 15m mas não geraram QUASE não aparecem.
-        pillars_json pode ser None se houve falha de logging.
+        check_c_det é JSON — parse pode falhar se corrompido.
+        Só mostra QUASEs da última rodada registrada.
 
     NÃO FAZER:
-        Não ler colunas p1..p9 de token_scores — são NULL na v8.
-        Não enviar uma mensagem separada por token.
+        Não buscar no journal (atirador_journal.db) — dados de
+        checks A/B/C estão em token_scores na v8.1.x.
+        Não ler colunas p1..p9 — são NULL (legado v6).
     """
-    conn_scan = _scan_db_conn()
-    if not conn_scan:
+    conn = _scan_db_conn()
+    if not conn:
         return "⚠️ scan_log.db não encontrado."
 
     try:
-        last = conn_scan.execute(
+        last = conn.execute(
             "SELECT round_id, ts FROM rounds ORDER BY round_id DESC LIMIT 1"
         ).fetchone()
         if not last:
-            conn_scan.close()
+            conn.close()
             return "📋 Nenhuma rodada registrada."
-        quases = conn_scan.execute(
-            """SELECT symbol, direction, score, gap
+
+        quases = conn.execute(
+            """SELECT symbol, direction, check_c_total, gap
                FROM round_events
                WHERE round_id=? AND type='QUASE'
-               ORDER BY score DESC""",
+               ORDER BY check_c_total DESC""",
             (last["round_id"],)
         ).fetchall()
-        conn_scan.close()
     except Exception as e:
+        conn.close()
         return f"❌ Erro: {e}"
 
     if not quases:
+        conn.close()
         return "✅ Nenhum QUASE na última rodada."
 
-    conn_j = _journal_db_conn()
     dt_str = _fmt_dt(last["ts"], "%d/%m %H:%M")
-
-    lines = [f"⚠️ <b>QUASEs — {dt_str}</b>", SEP]
+    lines  = [f"⚠️ <b>QUASEs — {dt_str}</b>", SEP]
 
     for q in quases:
-        sym  = (q["symbol"] or "").replace("USDT", "")
-        ico  = "🚀" if q["direction"] == "LONG" else "📉"
-        p    = {}
+        sym = (q["symbol"] or "").replace("USDT", "")
+        ico = "🚀" if q["direction"] == "LONG" else "📉"
 
-        if conn_j:
-            try:
-                row = conn_j.execute(
-                    """SELECT pillars_json, venue_quality FROM trades
-                       WHERE symbol=? AND direction=? AND is_hypothetical=1
-                       ORDER BY timestamp DESC LIMIT 1""",
-                    (q["symbol"], q["direction"])
-                ).fetchone()
-                if row and row["pillars_json"]:
-                    p = json.loads(row["pillars_json"])
-                zona = (row["venue_quality"] if row else None) or "—"
-            except Exception:
-                zona = "—"
-        else:
-            zona = "—"
+        # Buscar breakdown em token_scores
+        ts_row = None
+        try:
+            ts_row = conn.execute(
+                """SELECT check_a_ok, check_a_reason,
+                          check_b_ok, check_b_reason,
+                          check_c_det, zona_qualidade
+                   FROM token_scores
+                   WHERE round_id=? AND symbol=? AND direction=?
+                   LIMIT 1""",
+                (last["round_id"], q["symbol"], q["direction"])
+            ).fetchone()
+        except Exception:
+            pass
 
-        lines.append(f"\n{ico} <b>{sym} {q['direction']}</b>  C={q['score']}  zona={zona}")
+        zona = (ts_row["zona_qualidade"] if ts_row else None) or "—"
+        lines.append(
+            f"\n{ico} <b>{sym} {q['direction']}</b>"
+            f"  C={q['check_c_total']}  zona={zona}"
+        )
 
-        if not p:
-            lines.append("  ⚠️ breakdown não disponível (pillars_json ausente)")
+        if not ts_row:
+            lines.append("  ⚠️ breakdown não disponível")
             continue
 
         def _ico(val):
             return "✅" if val else "❌"
 
-        lines.append(f"  Check A  {_ico(p.get('check_a'))}  {p.get('check_a_reason','')}")
-        lines.append(f"  Check B  {_ico(p.get('check_b'))}  {p.get('check_b_reason','')}")
-        lines.append(f"  ── Check C ──")
-        lines.append(f"  C1 BB   {_ico(p.get('c1_bb'))}  {p.get('c1_reason','')}")
-        lines.append(f"  C2 Vol  {_ico(p.get('c2_vol'))}  {p.get('c2_reason','')}")
-        lines.append(f"  C3 CVD  {_ico(p.get('c3_cvd'))}  {p.get('c3_reason','')}")
-        lines.append(f"  C4 OI   {_ico(p.get('c4_oi'))}   {p.get('c4_reason','')}")
+        lines.append(
+            f"  Check A  {_ico(ts_row['check_a_ok'])}"
+            f"  {ts_row['check_a_reason'] or ''}"
+        )
+        lines.append(
+            f"  Check B  {_ico(ts_row['check_b_ok'])}"
+            f"  {ts_row['check_b_reason'] or ''}"
+        )
+        lines.append("  ── Check C ──")
 
-    if conn_j:
-        conn_j.close()
+        # Parse check_c_det
+        det = {}
+        try:
+            det = json.loads(ts_row["check_c_det"] or "{}")
+        except Exception:
+            pass
 
+        if det:
+            lines.append(
+                f"  C1 BB   {_ico(det.get('c1_bb'))}"
+                f"  {det.get('c1_reason','')}"
+            )
+            lines.append(
+                f"  C2 Vol  {_ico(det.get('c2_vol'))}"
+                f"  {det.get('c2_reason','')}"
+            )
+            lines.append(
+                f"  C3 CVD  {_ico(det.get('c3_cvd'))}"
+                f"  {det.get('c3_reason','')}"
+            )
+            lines.append(
+                f"  C4 OI   {_ico(det.get('c4_oi'))}"
+                f"  {det.get('c4_reason','')}"
+            )
+        else:
+            lines.append("  ⚠️ check_c_det ausente ou inválido")
+
+    conn.close()
     lines += [SEP, f"Total: {len(quases)} QUASEs"]
     return "\n".join(lines)
 
