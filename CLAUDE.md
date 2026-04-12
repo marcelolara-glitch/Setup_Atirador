@@ -1,117 +1,110 @@
-# Setup Atirador — Contexto para Claude
+# Setup Atirador — Contexto para Claude Code
 
-## ARQUITETURA ATUAL
+## ARQUITETURA ATUAL — v8.1.2 (produção)
 
 ### Execução (Oracle Cloud VM)
-- **VM**: Ubuntu 22.04, VM.Standard.E2.1.Micro, IP: 137.131.132.190
-- **Scan**: cron Linux `*/30 * * * *` → `deploy/run-scan.sh`
+- **VM**: Ubuntu 22.04, IP 137.131.132.190
+- **Scan**: cron `/etc/cron.d/atirador-scan` → `2-59/30 * * * *`
+  → `deploy/run-scan.sh` → `python3 main.py`
   - Faz `git pull origin main` antes de cada rodada
-  - Preserva estado em `~/Setup_Atirador/states/atirador_state.json`
-- **Bot Telegram**: systemd `atirador-bot.service` → `python3 telegram_bot.py --daemon`
-  - Long-polling contínuo (`getUpdates timeout=60`), resposta em <2s
+  - Estado persistido em `states/atirador_state.json`
+- **Bot Telegram**: systemd `atirador-bot.service`
+  → `python3 telegram_bot.py --daemon` (long-polling)
 
-### GitHub (fonte da verdade do código)
-- `scan.yml` e `telegram_bot.yml`: apenas `workflow_dispatch` (sem cron)
-- `analisar.yml`: ativo para análises individuais on-demand
-- `/scan` e `/analisar` no Telegram disparam `workflow_dispatch` via GitHub API
+### GitHub
+- Repositório: `marcelolara-glitch/Setup_Atirador`, branch `main`
+- `scan.yml` / `telegram_bot.yml`: apenas `workflow_dispatch`
+- `/scan` e `/analisar` disparam `workflow_dispatch` — rodam em
+  máquina efêmera, **não alimentam os bancos SQLite da VM**
 
 ---
 
-## SISTEMA DE ANÁLISE
+## MÓDULOS (9 independentes)
 
-**Script principal**: `setup_atirador_v6_6_2.py` (~4.390 linhas)
+| Módulo | Responsabilidade |
+|---|---|
+| `config.py` | Todas as constantes e VERSION (única fonte) |
+| `exchanges.py` | Klines + universo (OKX primário, Bitget fallback) |
+| `gates.py` | TradingView Scanner API (4H/1H/15m) |
+| `indicators.py` | Análise técnica + `IndicatorParams` injetável |
+| `scoring.py` | Checks A, B, C |
+| `signals.py` | Pipeline por token + `calc_trade_params` |
+| `telegram.py` | Formatação e envio de mensagens |
+| `state.py` | Persistência entre rodadas |
+| `main.py` | Orquestração + entry point do cron |
 
-### Fontes de dados
-- OKX (primário) → Gate.io → Bitget (fallback)
-- TradingView Scanner API: indicadores 4H, 1H, 15m
-- Filtros de universo: volume ≥ $2M/24h, OI ≥ $50M, pares USDT
+Preexistentes inalterados: `logger.py`, `journal.py`, `telegram_bot.py`
 
-### Pipeline
-```
-Tickers (OKX) + TV 4H + FGI
-        ↓
-  Gate 4H (direção macro)
-        ↓
-  TV 1H + Gate 1H (estrutura)
-        ↓
-  TV 15m (Tech + Candles) + Klines + Funding Rate
-        ↓
-  Score LONG + Score SHORT (15 pilares, máx 25 pts)
-        ↓
-  Telegram: Heartbeat / QUASE / Call
-```
+---
 
-### 15 Pilares de score
-| Pilar | Camada | Máx |
-|-------|--------|-----|
-| P4 Liquidez 4H | Estrutura 4H | 3 pts |
-| P5 Figuras 4H | Estrutura 4H | 2 pts |
-| P6 CHOCH/BOS 4H | Estrutura 4H | 3 pts |
-| P-1H Res/OB 1H | Confirmação 1H | 4 pts |
-| P1 Bollinger 15m | Gatilho 15m | 3 pts |
-| P2 Candles 15m | Gatilho 15m | 4 pts |
-| P3 Funding Rate | Contexto | 2 pts |
-| P8 Volume 15m | Contexto | 2 pts |
-| P9 OI Trend | Contexto | 2 pts |
-| P7 Pump/Dump | Filtro (veto) | 0 pts |
+## LÓGICA DE DECISÃO
+Universo OKX → Gate 4H (BUY/SELL) → Zona (OB/S&R) → Checks 15m
+| Check | Critério |
+|---|---|
+| A — Rejeição | Wick inferior (LONG) ou superior (SHORT) ≥ 40% do range |
+| B — Estrutura | ≥ 6/8 velas fechadas direcionais |
+| C — Força | 4 sub-checks (BB, Volume, CVD proxy, OI trend), 0–4 pts |
 
-### Thresholds adaptativos
-- LONG: ≥ 20 pts (cauteloso) — ajustado por FGI + BTC 4H
-- SHORT: ≥ 16 pts (moderado)
+**CALL**: A ✅ + B ✅ + C ≥ threshold (2 zona ALTA, 3 zona MEDIA/BASE)
+**QUASE**: A ✅ mas B ❌ ou C abaixo do threshold
 
-### Notificações Telegram (3 tipos)
-1. **Heartbeat**: contexto de mercado + pipeline + radar top-5
-2. **QUASE**: alerta quando score ≤ threshold - 4
-3. **Call**: operacional completo com entrada, SL, TP1/TP2/TP3, leverage
+---
+
+## OBSERVABILIDADE
+
+**Camada 1 — `logger.py`**: grava cada rodada em `logs/scan_log.jsonl`
+e `logs/scan_log.db` (SQLite)
+
+**Camada 2 — `journal.py`**: registra CALLs e QUASEs como forward test.
+- CALLs: `is_hypothetical=0` — métricas operacionais reais
+- QUASEs: `is_hypothetical=1` — calibração de threshold
+- `pillars_json` contém: `check_a_ok`, `check_b_ok`, `check_c_total`,
+  `check_c_thr`, `zona_qualidade` + sub-checks de C
 
 ---
 
 ## INFRAESTRUTURA
 
-### VM `~/.env_atirador`
-```bash
-TELEGRAM_TOKEN=...
-TELEGRAM_CHAT_ID=...
-GITHUB_TOKEN=...        # PAT com Actions read/write
-GITHUB_REPOSITORY=marcelolara-glitch/Setup_Atirador
-```
-
-### Dependências Python
-```
-aiohttp>=3.8.0
-requests>=2.28.0
-numpy>=1.23.0
-tradingview-ta>=3.3.0
-```
-
-### Arquivos de estado (VM local, persistentes)
-- `states/atirador_state.json` — OI history (48 candles), score history por token
-- `states/bot_state.json` — last_update_id do Telegram
-- `logs/atirador_YYYYMMDD.log` — log diário com rotação de 7 dias
+- **Swap**: 1GB swapfile em `/etc/fstab` (necessário — VM tem 1GB RAM)
+- **Env**: `~/.env_atirador` (TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
+  GITHUB_TOKEN, GITHUB_REPOSITORY)
+- **Bancos**: `logs/scan_log.db`, `journal/atirador_journal.db`
+- **Estado**: `states/atirador_state.json`
 
 ---
 
-## HISTÓRICO DE VERSÕES RELEVANTE
-- **v6.6.2** (atual): fix endpoint FR, split TV batch 15m, arquitetura 3 mensagens
-- **v6.6.0**: redesign Heartbeat/QUASE/Call
-- **v6.5.0**: risk-first sizing, margem como warning
-- **v6.4.1**: fix Bollinger SHORT, split COLS_15M_TECH + COLS_15M_CANDLES
-- **v6.3.0**: 6 padrões de candle para SHORT
-- **v6.2.0**: P9 OI trend, score history, radar no heartbeat
-- **v6.0.0**: bidirecional LONG+SHORT com posição exclusiva
+## REGRAS DE DESENVOLVIMENTO — LEIA ANTES DE QUALQUER AÇÃO
+
+### 1. Fluxo obrigatório
+Implementação → commit na feature branch → PR aberto → PARAR
+**Nunca fazer merge em `main` sem instrução explícita do produto.**
+**Nunca fazer commit direto em `main`.**
+
+### 2. Aprovação de merge
+- Após abrir o PR, reportar o que foi feito e aguardar instrução
+- Merge só ocorre quando o produto disser explicitamente:
+  "pode fazer o merge" ou "aprovado para merge"
+- Diff só é mostrado se explicitamente solicitado no briefing
+
+### 3. Versionamento
+- VERSION só é incrementada após aprovação explícita de merge
+- Toda nova versão atualiza TODAS as ocorrências operacionais:
+  header, constante `VERSION`, docstrings, scan logs, heartbeat,
+  state JSON, changelog
+- Versões nunca pulam — sempre sequencial
+
+### 4. Escopo cirúrgico
+- Implementar exatamente o que o briefing descreve
+- Nunca alterar módulos fora do escopo definido
+- Nunca "melhorar" código adjacente sem instrução explícita
+
+### 5. Proteções — nunca delegadas ao Claude Code
+- Tags de versão no GitHub
+- Backups físicos
+- Merges em `main` sem aprovação explícita do produto
 
 ---
 
-## ESTADO OPERACIONAL
-- VM ativa desde 28/03/2026
-- Scans a cada 30min no horário exato (cron Linux)
-- Bot daemon respondendo em <2s
-- GitHub Actions: apenas para `workflow_dispatch` manual
-
-## REGRAS DE ENTREGA
-- **Após criar ou fechar qualquer PR, sempre fazer merge para `main` e push.**
-  A VM faz `git pull origin main` a cada rodada — código que não está no `main` não chega à produção.
-
-## PRÓXIMAS PRIORIDADES
-<!-- Atualize esta seção antes de cada sessão -->
-- [ ] (defina aqui o objetivo da sessão atual)
+## CONTEXTO DE SESSÃO
+O escopo de cada sessão é definido no briefing entregue pelo produto.
+Roadmap e prioridades são mantidos externamente pelo produto.
