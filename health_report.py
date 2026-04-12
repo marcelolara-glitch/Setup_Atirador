@@ -1,16 +1,28 @@
 #!/usr/bin/env python3
 """
-health_report.py — Relatório de saúde do Setup Atirador v7
+health_report.py — Relatório de saúde do Setup Atirador v8
 Uso: python3 health_report.py [--horas N] [--out arquivo.txt]
 Default: últimas 24h, saída em stdout
+
+Seções:
+  1 — Integridade das rodadas (gaps, cadência)
+  2 — Contexto de mercado (FGI, BTC bias)
+  3 — Funil v8 (universo → gate 4H → score 15m)
+  4 — Checks A/B/C (frequência de ativação via pillars_json)
+  5 — Zonas de decisão (distribuição e taxa de conversão)
+  6 — Top tokens (aparições e win rate)
+  7 — Eventos emitidos (CALLs e QUASEs do período)
+  8 — Saúde do sistema (erros de log, tamanho de arquivos, watchdog)
 """
 import sqlite3, sys, os, argparse, glob, json
 from datetime import datetime, timezone, timedelta
 
-BRT = timezone(timedelta(hours=-3))
-DB_V7   = "/home/ubuntu/Setup_Atirador/logs/scan_log_v7.db"
-DIR_LOGS = "/home/ubuntu/Setup_Atirador/logs"
-WATCHDOG = "/tmp/atirador_last_run.json"
+BRT        = timezone(timedelta(hours=-3))
+DB_SCAN    = "/home/ubuntu/Setup_Atirador/logs/scan_log.db"
+DB_JOURNAL = "/home/ubuntu/Setup_Atirador/journal/atirador_journal.db"
+DIR_LOGS   = "/home/ubuntu/Setup_Atirador/logs"
+STATE_FILE = "/home/ubuntu/Setup_Atirador/states/atirador_state.json"
+WATCHDOG   = "/tmp/atirador_last_run.json"
 
 
 def sep(titulo=""):
@@ -24,60 +36,78 @@ def subsep(titulo):
     return f"\n--- {titulo} ---\n"
 
 
+def _out(lines, path):
+    text = "\n".join(lines)
+    if path:
+        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+    else:
+        print(text)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--horas", type=int, default=24)
-    parser.add_argument("--out", type=str, default=None)
+    parser.add_argument("--out",   type=str, default=None)
     args = parser.parse_args()
 
     lines = []
-    w = lines.append
-
-    now = datetime.now(BRT)
+    w     = lines.append
+    now   = datetime.now(BRT)
     desde = (now - timedelta(hours=args.horas)).isoformat()
 
     w(sep())
-    w(f"  SETUP ATIRADOR — HEALTH REPORT v7")
+    w(f"  SETUP ATIRADOR — HEALTH REPORT v8")
     w(f"  Gerado em : {now.strftime('%Y-%m-%d %H:%M')} BRT")
     w(f"  Janela    : últimas {args.horas}h")
-    w(f"  scan_log_v7.db : {DB_V7}")
+    w(f"  scan_log  : {DB_SCAN}")
+    w(f"  journal   : {DB_JOURNAL}")
     w(sep())
 
-    # ── conectar ──────────────────────────────────────────────────────────────
-    if not os.path.exists(DB_V7):
-        w(f"  ERRO: {DB_V7} não encontrado.")
+    # ── Conectar bancos ───────────────────────────────────────────────────────
+    if not os.path.exists(DB_SCAN):
+        w(f"  ERRO: {DB_SCAN} não encontrado.")
         _out(lines, args.out)
         return
 
-    conn = sqlite3.connect(DB_V7)
-    conn.row_factory = sqlite3.Row
+    conn_scan = sqlite3.connect(DB_SCAN)
+    conn_scan.row_factory = sqlite3.Row
+
+    conn_journal = None
+    if os.path.exists(DB_JOURNAL):
+        conn_journal = sqlite3.connect(DB_JOURNAL)
+        conn_journal.row_factory = sqlite3.Row
 
     # ══════════════════════════════════════════════════════════════════════════
     w(sep("SEÇÃO 1 — INTEGRIDADE DAS RODADAS"))
     # ══════════════════════════════════════════════════════════════════════════
-
-    rounds = conn.execute("""
-        SELECT ts, univ_count, gate_4h_long, gate_4h_short,
-               in_zona_long, in_zona_short, exec_secs, fgi, btc_4h
+    rounds = conn_scan.execute("""
+        SELECT round_id, ts, univ_count, gate_4h, scored_15m,
+               exec_secs, fgi, btc_4h
         FROM rounds WHERE ts >= ? ORDER BY ts
     """, (desde,)).fetchall()
 
-    total_rounds = conn.execute("SELECT COUNT(*) FROM rounds").fetchone()[0]
+    total_rounds = conn_scan.execute(
+        "SELECT COUNT(*) FROM rounds"
+    ).fetchone()[0]
 
     w(subsep("1a) Total de rodadas"))
     w(f"  Total no banco (all time) : {total_rounds}")
     w(f"  Na janela ({args.horas}h)          : {len(rounds)}")
-
     if rounds:
         w(f"  Primeira : {rounds[0]['ts'][:16]}")
         w(f"  Última   : {rounds[-1]['ts'][:16]}")
     else:
         w("  (sem rodadas no período)")
+        conn_scan.close()
+        if conn_journal:
+            conn_journal.close()
         _out(lines, args.out)
         return
 
     w(subsep("1b) Gaps entre rodadas > 40min"))
-    tss = [datetime.fromisoformat(r['ts']) for r in rounds]
+    tss  = [datetime.fromisoformat(r["ts"]) for r in rounds]
     gaps = [
         (tss[i-1].isoformat()[:16], tss[i].isoformat()[:16],
          int((tss[i] - tss[i-1]).total_seconds() // 60))
@@ -93,11 +123,10 @@ def main():
     # ══════════════════════════════════════════════════════════════════════════
     w(sep("SEÇÃO 2 — CONTEXTO DE MERCADO"))
     # ══════════════════════════════════════════════════════════════════════════
-
-    fgis = [r['fgi'] for r in rounds if r['fgi'] is not None]
+    fgis   = [r["fgi"] for r in rounds if r["fgi"] is not None]
     biases = {}
     for r in rounds:
-        b = r['btc_4h'] or '?'
+        b = r["btc_4h"] or "?"
         biases[b] = biases.get(b, 0) + 1
 
     w(subsep("2a) Fear & Greed Index"))
@@ -108,153 +137,214 @@ def main():
 
     w(subsep("2b) BTC 4H (contagem de rodadas)"))
     for b, c in sorted(biases.items(), key=lambda x: -x[1]):
-        w(f"  {b:<12}: {c} rodadas")
+        w(f"  {b:<14}: {c} rodadas")
 
     # ══════════════════════════════════════════════════════════════════════════
-    w(sep("SEÇÃO 3 — FUNIL v7"))
+    w(sep("SEÇÃO 3 — FUNIL v8"))
     # ══════════════════════════════════════════════════════════════════════════
+    # gate_1h existe no schema mas = gate_4h (legado) — não exibir
+    def _avg(key):
+        vals = [r[key] for r in rounds if r[key] is not None]
+        return sum(vals) / len(vals) if vals else 0.0
 
-    avg = lambda key: sum(r[key] for r in rounds if r[key] is not None) / len(rounds)
-    u  = avg('univ_count')
-    l4 = avg('gate_4h_long');  s4 = avg('gate_4h_short')
-    lz = avg('in_zona_long');  sz = avg('in_zona_short')
-    execs = [r['exec_secs'] for r in rounds if r['exec_secs']]
+    u     = _avg("univ_count")
+    g4    = _avg("gate_4h")
+    s15   = _avg("scored_15m")
+    execs = [r["exec_secs"] for r in rounds if r["exec_secs"]]
 
     w(subsep("3a) Médias por etapa"))
     w(f"  Universo              : {u:.1f}")
-    w(f"  Gate 4H LONG          : {l4:.1f}  ({l4/u*100:.0f}% do universo)")
-    w(f"  Gate 4H SHORT         : {s4:.1f}  ({s4/u*100:.0f}% do universo)")
-    w(f"  Em Zona LONG          : {lz:.1f}  ({lz/u*100:.0f}% do universo)")
-    w(f"  Em Zona SHORT         : {sz:.1f}  ({sz/u*100:.0f}% do universo)")
+    w(f"  Gate 4H               : {g4:.1f}  ({g4/u*100:.0f}% do universo)" if u else "  Gate 4H               : —")
+    w(f"  Score 15m             : {s15:.1f}  ({s15/u*100:.0f}% do universo)" if u else "  Score 15m             : —")
     if execs:
         w(f"  Exec: min={min(execs):.0f}s | avg={sum(execs)/len(execs):.0f}s | max={max(execs):.0f}s")
 
     w(subsep("3b) Detalhe por rodada (últimas 10)"))
-    w(f"  {'Rodada':<18} {'Univ':>5} {'4H L/S':>8} {'Zona L/S':>10} {'Exec':>7}")
+    w(f"  {'Rodada':<18} {'Univ':>5} {'Gate4H':>7} {'15m':>5} {'Exec':>7}")
     for r in rounds[-10:]:
-        w(f"  {r['ts'][:16]:<18} {r['univ_count']:>5} "
-          f"{r['gate_4h_long']:>3}/{r['gate_4h_short']:<3} "
-          f"  {r['in_zona_long']:>3}/{r['in_zona_short']:<4} "
-          f"  {r['exec_secs']:>6.0f}s")
+        w(f"  {r['ts'][:16]:<18} {(r['univ_count'] or 0):>5} "
+          f"{(r['gate_4h'] or 0):>7} {(r['scored_15m'] or 0):>5} "
+          f"{(r['exec_secs'] or 0):>6.0f}s")
 
     # ══════════════════════════════════════════════════════════════════════════
-    w(sep("SEÇÃO 4 — CHECK A / B / C"))
+    w(sep("SEÇÃO 4 — CHECKS A/B/C"))
     # ══════════════════════════════════════════════════════════════════════════
+    # Fonte: pillars_json do journal — único lugar onde checks A/B/C estão
+    # registrados na v8. token_scores tem colunas p1..p9 todas NULL (legado).
 
-    tokens = conn.execute("""
-        SELECT symbol, direction, zona_qualidade,
-               check_a, check_b, check_c_total, status
-        FROM token_scores WHERE ts >= ?
-    """, (desde,)).fetchall()
-
-    total_tok = len(tokens)
-
-    w(subsep("4a) Frequência de ativação (todos os tokens em zona)"))
-    if total_tok:
-        a1 = sum(1 for t in tokens if t['check_a'] == 1)
-        b1 = sum(1 for t in tokens if t['check_b'] == 1)
-        c1 = sum(1 for t in tokens if t['check_c_total'] and t['check_c_total'] > 0)
-        abc = sum(1 for t in tokens if t['check_a'] == 1 and t['check_b'] == 1
-                  and t['check_c_total'] and t['check_c_total'] > 0)
-        w(f"  Total de tokens avaliados : {total_tok}")
-        w(f"  Check A ativo             : {a1} ({a1/total_tok*100:.0f}%)")
-        w(f"  Check B ativo             : {b1} ({b1/total_tok*100:.0f}%)")
-        w(f"  Check C ativo             : {c1} ({c1/total_tok*100:.0f}%)")
-        w(f"  A + B + C todos ativos    : {abc} ({abc/total_tok*100:.1f}%)")
-
-        w(subsep("4b) Por direção"))
-        for direcao in ['LONG', 'SHORT']:
-            td = [t for t in tokens if t['direction'] == direcao]
-            if not td:
-                continue
-            a = sum(1 for t in td if t['check_a'] == 1)
-            b = sum(1 for t in td if t['check_b'] == 1)
-            c = sum(1 for t in td if t['check_c_total'] and t['check_c_total'] > 0)
-            w(f"  {direcao}: n={len(td)} | "
-              f"A={a}({a/len(td)*100:.0f}%) "
-              f"B={b}({b/len(td)*100:.0f}%) "
-              f"C={c}({c/len(td)*100:.0f}%)")
-
-        w(subsep("4c) Padrão de checks nos QUASEs"))
-        qtoks = [t for t in tokens if t['status'] == 'QUASE']
-        if qtoks:
-            patterns = {}
-            for t in qtoks:
-                p = f"A={t['check_a']} B={t['check_b']} C={t['check_c_total'] or 0}"
-                patterns[p] = patterns.get(p, 0) + 1
-            for p, c in sorted(patterns.items(), key=lambda x: -x[1]):
-                w(f"  {p}: {c}x")
-        else:
-            w("  (sem QUASEs no período)")
-
-        w(subsep("4d) Breakdown sub-checks do Check C (todos os tokens)"))
-        if total_tok:
-            for sub, label in [
-                ('check_c1_bb',  'C1 — Bollinger'),
-                ('check_c2_vol', 'C2 — Volume'),
-                ('check_c3_cvd', 'C3 — CVD'),
-                ('check_c4_oi',  'C4 — OI'),
-            ]:
-                # buscar do banco pois token_scores tem esses campos
-                rows_sub = conn.execute(f"""
-                    SELECT COUNT(*) FROM token_scores
-                    WHERE ts >= ? AND {sub} = 1
-                """, (desde,)).fetchone()[0]
-                w(f"  {label:<20}: {rows_sub} ({rows_sub/total_tok*100:.0f}%)")
+    if not conn_journal:
+        w("  ⚠️ atirador_journal.db não encontrado — seção indisponível")
     else:
-        w("  (sem tokens no período)")
+        jtrades = conn_journal.execute("""
+            SELECT direction, is_hypothetical, venue_quality,
+                   status, pillars_json, score
+            FROM trades WHERE timestamp >= ? ORDER BY timestamp
+        """, (desde,)).fetchall()
+
+        parsed = []
+        for row in jtrades:
+            try:
+                p = json.loads(row["pillars_json"] or "{}")
+            except Exception:
+                p = {}
+            parsed.append({
+                "direction":       row["direction"],
+                "is_hypo":         row["is_hypothetical"],
+                "venue_quality":   row["venue_quality"],
+                "status":          row["status"],
+                "score":           row["score"],
+                "check_a":         p.get("check_a",  False),
+                "check_b":         p.get("check_b",  False),
+                "c1_bb":           p.get("c1_bb",    False),
+                "c2_vol":          p.get("c2_vol",   False),
+                "c3_cvd":          p.get("c3_cvd",   False),
+                "c4_oi":           p.get("c4_oi",    False),
+                "check_a_reason":  p.get("check_a_reason", ""),
+                "check_b_reason":  p.get("check_b_reason", ""),
+                "c1_reason":       p.get("c1_reason", ""),
+                "c2_reason":       p.get("c2_reason", ""),
+                "c3_reason":       p.get("c3_reason", ""),
+                "c4_reason":       p.get("c4_reason", ""),
+                "has_pillars":     bool(p),
+            })
+
+        valid = [x for x in parsed if x["has_pillars"]]
+        n     = len(valid)
+
+        w(subsep("4a) Frequência de ativação (todos os registros com pillars_json)"))
+        if n:
+            def _pct(lst, key):
+                c = sum(1 for x in lst if x[key])
+                return c, f"{c/len(lst)*100:.0f}%"
+
+            w(f"  Total registros válidos   : {n}")
+            ca, ca_p = _pct(valid, "check_a")
+            cb, cb_p = _pct(valid, "check_b")
+            c1, c1_p = _pct(valid, "c1_bb")
+            c2, c2_p = _pct(valid, "c2_vol")
+            c3, c3_p = _pct(valid, "c3_cvd")
+            c4, c4_p = _pct(valid, "c4_oi")
+            w(f"  Check A ativo             : {ca} ({ca_p})")
+            w(f"  Check B ativo             : {cb} ({cb_p})")
+            w(f"  C1 BB  ativo              : {c1} ({c1_p})")
+            w(f"  C2 Vol ativo              : {c2} ({c2_p})")
+            w(f"  C3 CVD ativo              : {c3} ({c3_p})")
+            w(f"  C4 OI  ativo              : {c4} ({c4_p})")
+
+            w(subsep("4b) Por direção"))
+            for direcao in ["LONG", "SHORT"]:
+                td = [x for x in valid if x["direction"] == direcao]
+                if not td:
+                    continue
+                w(f"  {direcao} (n={len(td)})")
+                for key, label in [("check_a","A"),("check_b","B"),
+                                   ("c1_bb","C1"),("c2_vol","C2"),
+                                   ("c3_cvd","C3"),("c4_oi","C4")]:
+                    c = sum(1 for x in td if x[key])
+                    w(f"    {label}: {c} ({c/len(td)*100:.0f}%)")
+
+            w(subsep("4c) Padrão de checks nos QUASEs (is_hypothetical=1)"))
+            qtoks = [x for x in valid if x["is_hypo"] == 1]
+            if qtoks:
+                patterns = {}
+                for x in qtoks:
+                    p = (f"A={int(x['check_a'])} B={int(x['check_b'])} "
+                         f"C1={int(x['c1_bb'])} C2={int(x['c2_vol'])} "
+                         f"C3={int(x['c3_cvd'])} C4={int(x['c4_oi'])}")
+                    patterns[p] = patterns.get(p, 0) + 1
+                for p, c in sorted(patterns.items(), key=lambda x: -x[1]):
+                    w(f"  {p}: {c}x")
+            else:
+                w("  (sem QUASEs no período)")
+
+            w(subsep("4d) Breakdown sub-checks do Check C por direção"))
+            for direcao in ["LONG", "SHORT"]:
+                td = [x for x in valid if x["direction"] == direcao]
+                if not td:
+                    continue
+                w(f"  {direcao}:")
+                for key, label in [("c1_bb","C1 BB "),
+                                   ("c2_vol","C2 Vol"),
+                                   ("c3_cvd","C3 CVD"),
+                                   ("c4_oi", "C4 OI ")]:
+                    c = sum(1 for x in td if x[key])
+                    w(f"    {label}: {c}/{len(td)} ({c/len(td)*100:.0f}%)")
+        else:
+            w("  (sem registros com pillars_json no período)")
 
     # ══════════════════════════════════════════════════════════════════════════
     w(sep("SEÇÃO 5 — ZONAS DE DECISÃO"))
     # ══════════════════════════════════════════════════════════════════════════
+    # Nota: apenas tokens que geraram CALL ou QUASE aparecem aqui.
+    # Tokens descartados antes do 15m não são registrados no journal.
 
-    zonas = {}
-    zonas_qc = {}
-    for t in tokens:
-        z = t['zona_qualidade'] or '?'
-        zonas[z] = zonas.get(z, 0) + 1
-        if t['status'] in ('QUASE', 'CALL'):
-            zonas_qc[z] = zonas_qc.get(z, 0) + 1
+    if not conn_journal:
+        w("  ⚠️ atirador_journal.db não encontrado — seção indisponível")
+    else:
+        zonas     = {}
+        zonas_c   = {}  # calls reais
+        zonas_q   = {}  # quases hipotéticos
+        for row in jtrades:
+            z = row["venue_quality"] or "?"
+            zonas[z] = zonas.get(z, 0) + 1
+            if row["is_hypothetical"] == 0:
+                zonas_c[z] = zonas_c.get(z, 0) + 1
+            else:
+                zonas_q[z] = zonas_q.get(z, 0) + 1
 
-    w(subsep("5a) Distribuição e taxa de conversão"))
-    w(f"  {'Zona':<16} {'Total':>7} {'QUASE/CALL':>11} {'Conv%':>7}")
-    for z in sorted(zonas, key=lambda x: -zonas[x]):
-        tz = zonas[z]
-        qc = zonas_qc.get(z, 0)
-        pct = qc / tz * 100 if tz else 0
-        w(f"  {z:<16} {tz:>7} {qc:>11} {pct:>6.0f}%")
+        w(subsep("5a) Distribuição e taxa de conversão"))
+        w("  Nota: aparições = tokens que geraram CALL ou QUASE no período.")
+        w(f"  {'Zona':<16} {'Total':>6} {'CALLs':>7} {'QUASEs':>8} {'Conv%':>7}")
+        for z in sorted(zonas, key=lambda x: -zonas[x]):
+            tz = zonas[z]
+            nc = zonas_c.get(z, 0)
+            nq = zonas_q.get(z, 0)
+            pct = nc / tz * 100 if tz else 0
+            w(f"  {z:<16} {tz:>6} {nc:>7} {nq:>8} {pct:>6.0f}%")
 
     # ══════════════════════════════════════════════════════════════════════════
     w(sep("SEÇÃO 6 — TOP TOKENS"))
     # ══════════════════════════════════════════════════════════════════════════
+    # Nota: aparições = vezes que o token gerou CALL ou QUASE no período.
+    # Tokens descartados antes do 15m não aparecem.
 
-    tok_freq = {}
-    tok_qc = {}
-    for t in tokens:
-        s = t['symbol']
-        tok_freq[s] = tok_freq.get(s, 0) + 1
-        if t['status'] in ('QUASE', 'CALL'):
-            tok_qc[s] = tok_qc.get(s, 0) + 1
+    if not conn_journal:
+        w("  ⚠️ atirador_journal.db não encontrado — seção indisponível")
+    else:
+        tok_total = {}
+        tok_calls = {}
+        tok_quase = {}
+        tok_wins  = {}
+        for row in jtrades:
+            s = row["symbol"] or "?"
+            tok_total[s] = tok_total.get(s, 0) + 1
+            if row["is_hypothetical"] == 0:
+                tok_calls[s] = tok_calls.get(s, 0) + 1
+                if (row["status"] or "").startswith("WIN"):
+                    tok_wins[s] = tok_wins.get(s, 0) + 1
+            else:
+                tok_quase[s] = tok_quase.get(s, 0) + 1
 
-    w(subsep("6a) Por aparições em zona (top 15)"))
-    w(f"  {'Símbolo':<14} {'Aparições':>10} {'QUASE/CALL':>11} {'Conv%':>7}")
-    for s in sorted(tok_freq, key=lambda x: -tok_freq[x])[:15]:
-        ts_ = tok_freq[s]
-        qc = tok_qc.get(s, 0)
-        pct = qc / ts_ * 100 if ts_ else 0
-        w(f"  {s:<14} {ts_:>10} {qc:>11} {pct:>6.0f}%")
+        w(subsep("6a) Por aparições (top 15)"))
+        w("  Nota: aparições = vezes que o token gerou CALL ou QUASE no período.")
+        w(f"  {'Símbolo':<14} {'Apariç':>7} {'CALLs':>7} {'QUASEs':>8} {'WR%':>6}")
+        for s in sorted(tok_total, key=lambda x: -tok_total[x])[:15]:
+            nc  = tok_calls.get(s, 0)
+            nq  = tok_quase.get(s, 0)
+            nw  = tok_wins.get(s, 0)
+            wr  = nw / nc * 100 if nc else 0
+            w(f"  {s:<14} {tok_total[s]:>7} {nc:>7} {nq:>8} {wr:>5.0f}%")
 
     # ══════════════════════════════════════════════════════════════════════════
     w(sep("SEÇÃO 7 — EVENTOS EMITIDOS"))
     # ══════════════════════════════════════════════════════════════════════════
-
-    events = conn.execute("""
-        SELECT ts, type, symbol, direction, zona, check_c
+    events = conn_scan.execute("""
+        SELECT ts, type, symbol, direction, score, gap
         FROM round_events WHERE ts >= ? ORDER BY ts DESC
     """, (desde,)).fetchall()
 
-    calls  = [e for e in events if e['type'] == 'CALL']
-    quases = [e for e in events if e['type'] == 'QUASE']
+    calls  = [e for e in events if e["type"] == "CALL"]
+    quases = [e for e in events if e["type"] == "QUASE"]
 
     w(subsep("7a) Resumo"))
     w(f"  CALLs  : {len(calls)}")
@@ -263,8 +353,7 @@ def main():
     w(subsep("7b) CALLs (detalhado)"))
     if calls:
         for e in calls:
-            w(f"  {e['ts'][:16]} | {e['direction']} {e['symbol']} "
-              f"zona={e['zona']} check_c={e['check_c']}")
+            w(f"  {e['ts'][:16]} | {e['direction']:<5} {e['symbol']:<14} C={e['score']}")
     else:
         w("  (nenhum CALL no período)")
 
@@ -282,13 +371,14 @@ def main():
     # ══════════════════════════════════════════════════════════════════════════
     w(sep("SEÇÃO 8 — SAÚDE DO SISTEMA"))
     # ══════════════════════════════════════════════════════════════════════════
-
     w(subsep("8a) Erros recentes nos logs de rodada"))
-    log_files = sorted(glob.glob(f"{DIR_LOGS}/atirador_LOG_*.log"), reverse=True)[:10]
+    log_files = sorted(
+        glob.glob(f"{DIR_LOGS}/atirador_LOG_*.log"), reverse=True
+    )[:10]
     erros = []
     for lf in log_files:
         try:
-            for line in open(lf):
+            for line in open(lf, errors="replace"):
                 if any(k in line for k in ("ERROR", "Traceback", "TypeError",
                                            "Exception", "FATAL")):
                     erros.append(f"  {os.path.basename(lf)}: {line.rstrip()}")
@@ -301,16 +391,13 @@ def main():
         w("  (nenhum erro encontrado nos últimos 10 logs ✓)")
 
     w(subsep("8b) Tamanho dos arquivos críticos"))
-    arquivos = [
-        DB_V7,
-        "/home/ubuntu/Setup_Atirador/journal/atirador_journal.db",
-        "/home/ubuntu/Setup_Atirador/states/atirador_state.json",
-    ]
-    for arq in arquivos:
+    for arq in [DB_SCAN, DB_JOURNAL, STATE_FILE]:
         if os.path.exists(arq):
             sz_kb = os.path.getsize(arq) / 1024
-            mtime = datetime.fromtimestamp(os.path.getmtime(arq), tz=BRT).isoformat()
-            w(f"  {sz_kb:>8.1f} KB  {mtime}  {arq}")
+            mtime = datetime.fromtimestamp(
+                os.path.getmtime(arq), tz=BRT
+            ).strftime("%Y-%m-%d %H:%M BRT")
+            w(f"  {sz_kb:>8.1f} KB  {mtime}  {os.path.basename(arq)}")
         else:
             w(f"  (ausente) {arq}")
 
@@ -325,19 +412,12 @@ def main():
     else:
         w(f"  (watchdog ausente — {WATCHDOG})")
 
-    conn.close()
+    conn_scan.close()
+    if conn_journal:
+        conn_journal.close()
+
     w(sep())
     _out(lines, args.out)
-
-
-def _out(lines, path):
-    text = "\n".join(lines)
-    if path:
-        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-        with open(path, "w") as f:
-            f.write(text)
-    else:
-        print(text)
 
 
 if __name__ == "__main__":
