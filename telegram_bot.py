@@ -36,8 +36,10 @@ import os
 import re
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -49,12 +51,13 @@ TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID", "")
 GITHUB_TOKEN      = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY", "")
+BOT_VERSION       = "8.2.0"
 
 BOT_STATE_FILE    = "states/bot_state.json"
 STATE_FILE        = "states/atirador_state.json"
 LOG_DIR           = "logs"
 
-# [v6.6.5] Bancos de dados de observabilidade
+# Bancos de dados de observabilidade
 _SCAN_DB     = os.path.expanduser("~/Setup_Atirador/logs/scan_log.db")
 _SCAN_JSONL  = os.path.expanduser("~/Setup_Atirador/logs/scan_log.jsonl")
 _JOURNAL_DB  = os.path.expanduser("~/Setup_Atirador/journal/atirador_journal.db")
@@ -85,19 +88,19 @@ def _log(line: str):
 def _tg_register_commands():
     """Registra o menu de comandos visível no Telegram (setMyCommands)."""
     commands = [
-        {"command": "status",      "description": "Último scan e sizing de risco"},
-        {"command": "scan",        "description": "Disparar scan imediato"},
-        {"command": "analisar",    "description": "Análise completa de um token (ex: /analisar BTCUSDT)"},
-        {"command": "log_last",    "description": "Detalhes da última rodada"},
-        {"command": "log_token",   "description": "Histórico 48h de um token (ex: /log_token AVAX)"},
-        {"command": "log_quase",   "description": "Pilares dos QUASEs da última rodada"},
-        {"command": "log_calls",   "description": "CALLs recentes (ex: /log_calls 7d)"},
+        {"command": "status",        "description": "Saúde do sistema e última rodada"},
+        {"command": "scan",          "description": "Disparar scan imediato (GitHub Actions)"},
+        {"command": "analisar",      "description": "Análise individual de um token (ex: /analisar BTCUSDT)"},
+        {"command": "log_last",      "description": "Detalhes da última rodada"},
+        {"command": "log_token",     "description": "Histórico 48h de um token (ex: /log_token AVAX)"},
+        {"command": "log_quase",     "description": "Breakdown dos QUASEs da última rodada"},
+        {"command": "log_calls",     "description": "CALLs recentes (ex: /log_calls 7d)"},
         {"command": "log_export",    "description": "Exportar scan_log.jsonl"},
-        {"command": "health_export", "description": "Relatório de saúde + logs + state"},
-        {"command": "perf",          "description": "Performance das CALLs (30d)"},
-        {"command": "perf_quase",  "description": "Calibração do threshold via QUASEs"},
-        {"command": "trade",       "description": "Trade aberto para um símbolo (ex: /trade AVAX)"},
-        {"command": "ajuda",       "description": "Esta mensagem"},
+        {"command": "health_export", "description": "Relatório completo de saúde + debug"},
+        {"command": "perf",          "description": "Métricas das CALLs (30d)"},
+        {"command": "perf_quase",    "description": "Qualidade dos sinais QUASE (30d)"},
+        {"command": "trade",         "description": "Trade aberto para um símbolo (ex: /trade AVAX)"},
+        {"command": "ajuda",         "description": "Lista de comandos"},
     ]
     try:
         requests.post(
@@ -149,7 +152,7 @@ def _load_atirador_state() -> dict:
     return {}
 
 
-# ── DB helpers [v6.6.5] ──────────────────────────────────────────────────────
+# ── DB helpers ───────────────────────────────────────────────────────────────
 
 def _scan_db_conn():
     """Abre conexão read-only com scan_log.db. Retorna None se não existir."""
@@ -239,23 +242,41 @@ def _score_trend(hist: list, direction: str) -> str:
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
 def cmd_ajuda() -> str:
+    """
+    OBJETIVO:
+        Listar todos os comandos ativos com descrição de uma linha cada,
+        agrupados por categoria. Ser a referência rápida do operador.
+
+    FONTE DE DADOS:
+        Nenhuma — texto estático.
+
+    LIMITAÇÕES CONHECIDAS:
+        Não valida se os bancos estão ativos. Apenas lista comandos.
+
+    NÃO FAZER:
+        Não mencionar comandos removidos (/radar, /pilares).
+        Não hardcodar versão — usar BOT_VERSION.
+    """
     return (
-        "🤖 <b>ATIRADOR v6.6.5 — Comandos</b>\n"
+        f"🤖 <b>ATIRADOR v{BOT_VERSION} — Comandos</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "/status           — último scan e sizing de risco\n"
-        "/scan             — disparar scan imediato\n"
-        "/analisar SYMBOL  — análise completa de 1 token\n"
+        "⚙️ <b>Sistema</b>\n"
+        "/status           — saúde do sistema e última rodada\n"
+        "/scan             — disparar scan imediato (GitHub Actions)\n"
+        "/analisar SYMBOL  — análise individual de um token\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📋 <b>Observabilidade</b>\n"
         "/log_last         — detalhes da última rodada\n"
         "/log_token SYMBOL — histórico 48h de um token\n"
-        "/log_quase        — pilares dos QUASEs da última rodada\n"
-        "/log_calls [Nd]   — CALLs recentes (padrão: 7d)\n"
+        "/log_quase        — breakdown dos QUASEs da última rodada\n"
+        "/log_calls [Nd]   — CALLs recentes (ex: /log_calls 7d)\n"
         "/log_export       — exportar scan_log.jsonl\n"
-        "/health_export    — relatório de saúde + logs + state\n"
+        "/health_export    — relatório completo de saúde + debug\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "/perf             — performance das CALLs (30d)\n"
-        "/perf_quase       — calibração do threshold\n"
-        "/trade SYMBOL     — trade aberto para um símbolo\n"
+        "📊 <b>Performance</b>\n"
+        "/perf             — métricas das CALLs (30d)\n"
+        "/perf_quase       — qualidade dos sinais QUASE (30d)\n"
+        "/trade SYMBOL     — status de trade aberto\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/ajuda            — esta mensagem"
     )
@@ -263,33 +284,40 @@ def cmd_ajuda() -> str:
 
 
 def cmd_status() -> str:
+    """
+    OBJETIVO:
+        Snapshot operacional completo: quando rodou, se está rodando
+        no prazo, saúde do logging layer e recursos da VM. Permite
+        detectar rapidamente se o sistema está travado, com disco
+        cheio ou logging parado.
+
+    FONTE DE DADOS:
+        - scan_log.jsonl (último registro: exec_seconds, ts)
+        - scan_log.db tabela rounds (contagem, última escrita)
+        - atirador_journal.db tabela trades (trades abertos)
+        - /proc/meminfo (memória disponível)
+        - /proc/loadavg (carga CPU)
+        - shutil.disk_usage (disco livre)
+
+    LIMITAÇÕES CONHECIDAS:
+        Próximo scan é estimativa baseada no cron */30 — não lê
+        o cron real.
+        Não detecta se o processo Python travou mid-scan.
+
+    NÃO FAZER:
+        Não ler score_history do state.json — dado v6 congelado.
+        Não exibir gate_1h — campo legado sem significado na v8.
+        Não chamar subprocess.
+    """
     lines: list[str] = []
 
-    # ── Seção 1: Operacional ──────────────────────────────────────────────────
-
-    # Último scan (fonte: score_history do state JSON)
-    state = _load_atirador_state()
-    sh    = state.get("score_history", {})
-    ultimo_ts: str | None = None
-    for hist in sh.values():
-        if hist:
-            ts = hist[-1].get("ts", "")
-            if ultimo_ts is None or ts > ultimo_ts:
-                ultimo_ts = ts
-    ultimo_str = (_fmt_dt(ultimo_ts, "%d/%m %H:%M") + " BRT") if ultimo_ts else "—"
-
-    # Próximo scan (com data + delta em minutos)
-    now = datetime.now(BRT)
-    mins_to_add = SCAN_INTERVAL_MIN - (now.minute % SCAN_INTERVAL_MIN)
-    if mins_to_add == 0:
-        mins_to_add = SCAN_INTERVAL_MIN
-    nxt = (now + timedelta(minutes=mins_to_add)).replace(second=0, microsecond=0)
-    delta_min = max(1, int((nxt - now).total_seconds() / 60))
-    proximo_str = f"{nxt.strftime('%d/%m %H:%M')} BRT  (~{delta_min} min)"
-
-    # Duração da última rodada (fonte: scan_log.jsonl, campo exec_seconds)
+    # ── Seção 1: Operacional ─────────────────────────────────────────────────
+    # Último scan: fonte primária = scan_log.jsonl (tem exec_seconds)
+    ultimo_ts:   str | None = None
+    exec_secs:   float | None = None
     duracao_str  = "—"
     duracao_icon = ""
+
     try:
         if os.path.exists(_SCAN_JSONL):
             with open(_SCAN_JSONL, "rb") as fh:
@@ -302,29 +330,52 @@ def cmd_status() -> str:
                     raw_lines = [l for l in chunk.split("\n") if l.strip()]
                     if raw_lines:
                         last_obj = json.loads(raw_lines[-1])
-                        exec_s = last_obj.get("exec_seconds")
-                        if exec_s is not None:
-                            exec_s = float(exec_s)
-                            duracao_str = _fmt_exec(exec_s)
-                            if exec_s < 1200:
-                                duracao_icon = "✅"
-                            elif exec_s <= 1380:
-                                duracao_icon = "⚠️"
-                            else:
-                                duracao_icon = "🔴"
+                        ultimo_ts = last_obj.get("ts")
+                        exec_secs = last_obj.get("exec_seconds")
+                        if exec_secs is not None:
+                            exec_secs = float(exec_secs)
+                            duracao_str  = _fmt_exec(exec_secs)
+                            duracao_icon = ("✅" if exec_secs < 1200
+                                            else "⚠️" if exec_secs <= 1380
+                                            else "🔴")
     except Exception:
         pass
 
+    # Ícone do último scan
+    ultimo_str  = "—"
+    ultimo_icon = ""
+    if ultimo_ts:
+        ultimo_str = _fmt_dt(ultimo_ts, "%d/%m %H:%M") + " BRT"
+        try:
+            dt_last = datetime.fromisoformat(ultimo_ts)
+            if dt_last.tzinfo is None:
+                dt_last = dt_last.replace(tzinfo=BRT)
+            mins_since = (datetime.now(BRT) - dt_last).total_seconds() / 60
+            ultimo_icon = ("✅" if mins_since < 35
+                           else "⚠️" if mins_since <= 65
+                           else "🔴")
+        except Exception:
+            pass
+
+    # Próximo scan
+    now = datetime.now(BRT)
+    mins_to_add = SCAN_INTERVAL_MIN - (now.minute % SCAN_INTERVAL_MIN)
+    if mins_to_add == 0:
+        mins_to_add = SCAN_INTERVAL_MIN
+    nxt       = (now + timedelta(minutes=mins_to_add)).replace(second=0, microsecond=0)
+    delta_min = max(1, int((nxt - now).total_seconds() / 60))
+    proximo_str = f"{nxt.strftime('%d/%m %H:%M')} BRT  (~{delta_min} min)"
+
     duracao_display = f"{duracao_str}  {duracao_icon}" if duracao_icon else duracao_str
+    ultimo_display  = f"{ultimo_str}  {ultimo_icon}"   if ultimo_icon  else ultimo_str
 
-    lines.append("🤖 <b>ATIRADOR v6.6.5</b> | Status")
+    lines.append(f"🤖 <b>ATIRADOR v{BOT_VERSION}</b> | Status")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append(f"🕐 Último scan   {ultimo_str}")
-    lines.append(f"⏭️ Próximo       {proximo_str}")
-    lines.append(f"⏱️ Duração       {duracao_display}")
+    lines.append(f"🕐 Último scan    {ultimo_display}")
+    lines.append(f"⏭️  Próximo        {proximo_str}")
+    lines.append(f"⏱️  Duração        {duracao_display}")
 
-    # ── Seção 2: Logging ──────────────────────────────────────────────────────
-
+    # ── Seção 2: Logging ─────────────────────────────────────────────────────
     rodadas_str         = "—"
     ultima_escrita_str  = "—"
     ultima_escrita_icon = ""
@@ -335,11 +386,10 @@ def cmd_status() -> str:
     try:
         conn = _scan_db_conn()
         if conn:
-            cur = conn.cursor()
-            row = cur.execute("SELECT COUNT(*) FROM rounds").fetchone()
+            row = conn.execute("SELECT COUNT(*) FROM rounds").fetchone()
             if row:
                 rodadas_str = str(row[0])
-            row2 = cur.execute(
+            row2 = conn.execute(
                 "SELECT ts FROM rounds ORDER BY ts DESC LIMIT 1"
             ).fetchone()
             if row2 and row2[0]:
@@ -349,12 +399,9 @@ def cmd_status() -> str:
                     if dt_last.tzinfo is None:
                         dt_last = dt_last.replace(tzinfo=BRT)
                     mins_since = (datetime.now(BRT) - dt_last).total_seconds() / 60
-                    if mins_since <= 35:
-                        ultima_escrita_icon = "✅"
-                    elif mins_since <= 65:
-                        ultima_escrita_icon = "⚠️"
-                    else:
-                        ultima_escrita_icon = "🔴"
+                    ultima_escrita_icon = ("✅" if mins_since <= 35
+                                           else "⚠️" if mins_since <= 65
+                                           else "🔴")
                 except Exception:
                     pass
             conn.close()
@@ -364,29 +411,24 @@ def cmd_status() -> str:
     try:
         if os.path.exists(_SCAN_DB):
             sz = os.path.getsize(_SCAN_DB)
-            scan_db_size_str = (
-                f"{sz / (1024 * 1024):.1f} MB" if sz >= 1024 * 1024
-                else f"{sz // 1024} KB"
-            )
+            scan_db_size_str = (f"{sz/(1024*1024):.1f} MB"
+                                if sz >= 1024*1024 else f"{sz//1024} KB")
     except Exception:
         pass
 
     try:
         if os.path.exists(_JOURNAL_DB):
             sz = os.path.getsize(_JOURNAL_DB)
-            journal_size_str = (
-                f"{sz / (1024 * 1024):.1f} MB" if sz >= 1024 * 1024
-                else f"{sz // 1024} KB"
-            )
+            journal_size_str = (f"{sz/(1024*1024):.1f} MB"
+                                if sz >= 1024*1024 else f"{sz//1024} KB")
     except Exception:
         pass
 
     try:
         conn = _journal_db_conn()
         if conn:
-            cur = conn.cursor()
-            row = cur.execute(
-                "SELECT COUNT(*) FROM trades WHERE status = 'OPEN'"
+            row = conn.execute(
+                "SELECT COUNT(*) FROM trades WHERE status='OPEN'"
             ).fetchone()
             if row:
                 trades_abertos_str = str(row[0])
@@ -394,72 +436,59 @@ def cmd_status() -> str:
     except Exception:
         pass
 
-    ultima_escrita_display = (
-        f"{ultima_escrita_str} {ultima_escrita_icon}"
-        if ultima_escrita_icon else ultima_escrita_str
-    )
+    ue_display = (f"{ultima_escrita_str}  {ultima_escrita_icon}"
+                  if ultima_escrita_icon else ultima_escrita_str)
 
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("📋 Logging")
     lines.append(f"  Rodadas gravadas   {rodadas_str}")
-    lines.append(f"  Última escrita     {ultima_escrita_display}")
+    lines.append(f"  Última escrita     {ue_display}")
     lines.append(f"  scan_log.db        {scan_db_size_str}")
     lines.append(f"  journal.db         {journal_size_str}")
     lines.append(f"  Trades abertos     {trades_abertos_str}")
 
-    # ── Seção 3: VM ───────────────────────────────────────────────────────────
-
+    # ── Seção 3: VM ──────────────────────────────────────────────────────────
     disco_str  = "—"
     disco_icon = ""
     try:
-        usage     = shutil.disk_usage(os.path.expanduser("~"))
+        usage      = shutil.disk_usage(os.path.expanduser("~"))
         free_bytes = usage.free
-        if free_bytes >= 1024 ** 3:
-            disco_str = f"{free_bytes / (1024 ** 3):.1f} GB"
-        else:
-            disco_str = f"{free_bytes // (1024 ** 2)} MB"
-        if free_bytes > 5 * 1024 ** 3:
-            disco_icon = "✅"
-        elif free_bytes >= 2 * 1024 ** 3:
-            disco_icon = "⚠️"
-        else:
-            disco_icon = "🔴"
+        disco_str  = (f"{free_bytes/(1024**3):.1f} GB"
+                      if free_bytes >= 1024**3
+                      else f"{free_bytes//(1024**2)} MB")
+        disco_icon = ("✅" if free_bytes > 5*1024**3
+                      else "⚠️" if free_bytes >= 2*1024**3
+                      else "🔴")
     except Exception:
         pass
 
     mem_str  = "—"
     mem_icon = ""
     try:
-        with open("/proc/meminfo", "r") as fh:
+        with open("/proc/meminfo") as fh:
             for line in fh:
                 if line.startswith("MemAvailable:"):
-                    mem_kb = int(line.split()[1])
-                    mem_mb = mem_kb // 1024
-                    mem_str = f"{mem_mb} MB"
-                    if mem_mb > 300:
-                        mem_icon = "✅"
-                    elif mem_mb >= 150:
-                        mem_icon = "⚠️"
-                    else:
-                        mem_icon = "🔴"
+                    mem_kb   = int(line.split()[1])
+                    mem_mb   = mem_kb // 1024
+                    mem_str  = f"{mem_mb} MB"
+                    mem_icon = ("✅" if mem_mb > 300
+                                else "⚠️" if mem_mb >= 150
+                                else "🔴")
                     break
     except Exception:
         pass
 
     load_str = "—"
     try:
-        with open("/proc/loadavg", "r") as fh:
+        with open("/proc/loadavg") as fh:
             load_str = fh.read().split()[0]
     except Exception:
         pass
 
-    disco_display = f"{disco_str}  {disco_icon}" if disco_icon else disco_str
-    mem_display   = f"{mem_str}   {mem_icon}"   if mem_icon   else mem_str
-
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("💾 VM")
-    lines.append(f"  Disco livre        {disco_display}")
-    lines.append(f"  Memória livre      {mem_display}")
+    lines.append(f"  Disco livre        {disco_str}  {disco_icon}".rstrip())
+    lines.append(f"  Memória livre      {mem_str}  {mem_icon}".rstrip())
     lines.append(f"  CPU (1min avg)     {load_str}")
 
     return "\n".join(lines)
@@ -569,16 +598,36 @@ def cmd_analisar(symbol: str | None) -> str:
         return f"❌ Erro ao disparar análise de {sym}: {exc}"
 
 
-# ── Comandos de observabilidade [v6.6.5] ─────────────────────────────────────
+# ── Comandos de observabilidade ──────────────────────────────────────────────
 
 SEP = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 
 def cmd_log_last() -> str:
-    """Detalhes da última rodada registrada no scan_log.db."""
+    """
+    OBJETIVO:
+        Mostrar o que aconteceu na última rodada completa: contexto
+        de mercado, funil de filtragem (universo → gate 4H → 15m)
+        e eventos emitidos (CALLs e QUASEs) com direção, símbolo
+        e score do Check C.
+
+    FONTE DE DADOS:
+        scan_log.db — tabelas `rounds` e `round_events`.
+
+    LIMITAÇÕES CONHECIDAS:
+        Não mostra breakdown de checks por token.
+        Para breakdown de QUASE use /log_quase.
+
+    NÃO FAZER:
+        Não exibir gate_1h — campo legado, sempre igual a gate_4h na v8.
+        Não exibir thr_long/thr_short — thresholds do Check C são
+        contextuais por zona, não um valor único global.
+        Não exibir candle_locked — campo legado v6.
+    """
     conn = _scan_db_conn()
     if not conn:
-        return "📋 <b>log_last</b>\n" + SEP + "\n⚠️ scan_log.db não encontrado. Execute pelo menos um scan."
+        return ("📋 <b>log_last</b>\n" + SEP +
+                "\n⚠️ scan_log.db não encontrado.")
     try:
         row = conn.execute(
             "SELECT * FROM rounds ORDER BY round_id DESC LIMIT 1"
@@ -587,7 +636,9 @@ def cmd_log_last() -> str:
             conn.close()
             return "📋 Nenhuma rodada registrada ainda."
         evs = conn.execute(
-            "SELECT type, symbol, direction, score, gap FROM round_events WHERE round_id=?",
+            """SELECT type, symbol, direction, score
+               FROM round_events WHERE round_id=?
+               ORDER BY type DESC""",
             (row["round_id"],)
         ).fetchall()
         conn.close()
@@ -595,23 +646,18 @@ def cmd_log_last() -> str:
         return f"❌ Erro ao consultar scan_log.db: {e}"
 
     dt_str = _fmt_dt(row["ts"], "%d/%m %H:%M BRT")
-    exch   = (row["exchange"] or "—").capitalize()
-    cl_ico = "🔒" if row["candle_locked"] else "✅"
-    cl_lbl = "Candle OK"
+    exch   = (row["exchange"] or "—").upper()
 
     lines = [
         f"🕐 <b>Última Rodada</b>  {dt_str}",
         SEP,
-        f"📡 Exchange    {exch}  |  {cl_ico} {cl_lbl}",
-        f"⏱️ Execução   {_fmt_exec(row['exec_secs'])}",
-        "📊 Pipeline",
-        f"  Universo    {row['univ_count'] or '—'}",
-        f"  Gate 4H  →   {row['gate_4h'] or '—'}",
-        f"  Gate 1H  →   {row['gate_1h'] or '—'}",
-        f"  Score 15m →  {row['scored_15m'] or '—'}",
-        SEP,
+        f"📡 Exchange    {exch}  |  ⏱️ {_fmt_exec(row['exec_secs'])}",
         f"🌡️ FGI {row['fgi'] or '—'}  |  BTC 4H {row['btc_4h'] or '—'}",
-        f"📈 Thr LONG ≥{row['thr_long'] or '—'}  |  📉 Thr SHORT ≥{row['thr_short'] or '—'}",
+        SEP,
+        "📊 Funil",
+        f"  Universo    {row['univ_count'] or '—'}",
+        f"  Gate 4H  →  {row['gate_4h'] or '—'}",
+        f"  Score 15m → {row['scored_15m'] or '—'}",
         SEP,
         "📣 Eventos",
     ]
@@ -620,9 +666,9 @@ def cmd_log_last() -> str:
             ico = "🚀" if ev["direction"] == "LONG" else "📉"
             tag = "CALL" if ev["type"] == "CALL" else "⚠️ QUASE"
             sym = (ev["symbol"] or "").replace("USDT", "")
-            lines.append(f"  {ico} {tag} {ev['direction']}   {sym}  {ev['score']}/25")
+            lines.append(f"  {ico} {tag} {ev['direction']}  {sym}  C={ev['score']}")
     else:
-        lines.append("  📣 Nenhuma CALL ou QUASE nesta rodada")
+        lines.append("  Nenhuma CALL ou QUASE nesta rodada")
     return "\n".join(lines)
 
 
@@ -694,67 +740,99 @@ def cmd_log_token(symbol: str | None) -> str:
 
 
 def cmd_log_quase() -> str:
-    """Mostra breakdown dos QUASEs da última rodada. Uma msg por token."""
-    conn = _scan_db_conn()
-    if not conn:
+    """
+    OBJETIVO:
+        Mostrar o breakdown detalhado dos QUASEs da última rodada —
+        quais checks passaram e quais falharam, com motivo — para
+        o operador entender por que o sinal não se qualificou como CALL.
+
+    FONTE DE DADOS:
+        scan_log.db tabela round_events (última rodada, type='QUASE')
+        + atirador_journal.db tabela trades (pillars_json, venue_quality,
+        is_hypothetical=1) para os mesmos símbolos/direção.
+
+    LIMITAÇÕES CONHECIDAS:
+        Só mostra QUASEs registrados no journal (is_hypothetical=1).
+        Tokens que chegaram ao 15m mas não geraram QUASE não aparecem.
+        pillars_json pode ser None se houve falha de logging.
+
+    NÃO FAZER:
+        Não ler colunas p1..p9 de token_scores — são NULL na v8.
+        Não enviar uma mensagem separada por token.
+    """
+    conn_scan = _scan_db_conn()
+    if not conn_scan:
         return "⚠️ scan_log.db não encontrado."
+
     try:
-        last = conn.execute(
-            "SELECT round_id FROM rounds ORDER BY round_id DESC LIMIT 1"
+        last = conn_scan.execute(
+            "SELECT round_id, ts FROM rounds ORDER BY round_id DESC LIMIT 1"
         ).fetchone()
         if not last:
-            conn.close()
+            conn_scan.close()
             return "📋 Nenhuma rodada registrada."
-        quases = conn.execute(
-            """SELECT * FROM token_scores
-               WHERE round_id=? AND status='QUASE'
-               ORDER BY score_total DESC""",
+        quases = conn_scan.execute(
+            """SELECT symbol, direction, score, gap
+               FROM round_events
+               WHERE round_id=? AND type='QUASE'
+               ORDER BY score DESC""",
             (last["round_id"],)
         ).fetchall()
-        conn.close()
+        conn_scan.close()
     except Exception as e:
         return f"❌ Erro: {e}"
 
     if not quases:
         return "✅ Nenhum QUASE na última rodada."
 
-    _PILAR_NAMES = [
-        ("P1",  "Bollinger",    3), ("P2",  "Volume",       4),
-        ("P3",  "Funding",      2), ("P4",  "Liquidez 4H",  3),
-        ("P5",  "Figuras 4H",   2), ("P6",  "CHOCH/BOS 4H", 3),
-        ("P7",  "Pump/Dump",    0), ("P8",  "TV Recommend",  2),
-        ("P9",  "RSI/OI",       2), ("P1H", "Estrutura 1H", 4),
-    ]
+    conn_j = _journal_db_conn()
+    dt_str = _fmt_dt(last["ts"], "%d/%m %H:%M")
 
-    msgs = []
+    lines = [f"⚠️ <b>QUASEs — {dt_str}</b>", SEP]
+
     for q in quases:
-        q = dict(q)
         sym  = (q["symbol"] or "").replace("USDT", "")
-        thr  = q["threshold"] or 0
-        sc   = q["score_total"] or 0
-        gap  = thr - sc
-        dirc = "🚀 LONG" if q["direction"] == "LONG" else "📉 SHORT"
-        lines = [
-            f"⚠️ <b>QUASE {dirc} {sym}</b>  {sc}/25  (falta {gap})",
-            SEP,
-        ]
-        max_avail = 0
-        for key, name, max_pts in _PILAR_NAMES:
-            pts     = q.get(f"p{key.lower()}", None) or q.get(key.lower(), None)
-            # Try both naming conventions
-            col     = f"p{key.lower()}" if key != "P1H" else "p1h"
-            pts     = q.get(col)
-            reason  = q.get(f"{col}_reason") or ""
-            if pts is None:
-                continue
-            ico = "✅" if (pts or 0) > 0 else "⬜"
-            lines.append(f"  {ico} {key:<3} {name:<14} +{pts or 0}/{max_pts}  {reason}")
-            if (pts or 0) == 0 and max_pts > 0:
-                max_avail += max_pts
-        lines += [SEP, f"  → Potencial disponível: +{max_avail} pts"]
-        msgs.append("\n".join(lines))
+        ico  = "🚀" if q["direction"] == "LONG" else "📉"
+        p    = {}
 
-    return "\n\n".join(msgs)
+        if conn_j:
+            try:
+                row = conn_j.execute(
+                    """SELECT pillars_json, venue_quality FROM trades
+                       WHERE symbol=? AND direction=? AND is_hypothetical=1
+                       ORDER BY timestamp DESC LIMIT 1""",
+                    (q["symbol"], q["direction"])
+                ).fetchone()
+                if row and row["pillars_json"]:
+                    p = json.loads(row["pillars_json"])
+                zona = (row["venue_quality"] if row else None) or "—"
+            except Exception:
+                zona = "—"
+        else:
+            zona = "—"
+
+        lines.append(f"\n{ico} <b>{sym} {q['direction']}</b>  C={q['score']}  zona={zona}")
+
+        if not p:
+            lines.append("  ⚠️ breakdown não disponível (pillars_json ausente)")
+            continue
+
+        def _ico(val):
+            return "✅" if val else "❌"
+
+        lines.append(f"  Check A  {_ico(p.get('check_a'))}  {p.get('check_a_reason','')}")
+        lines.append(f"  Check B  {_ico(p.get('check_b'))}  {p.get('check_b_reason','')}")
+        lines.append(f"  ── Check C ──")
+        lines.append(f"  C1 BB   {_ico(p.get('c1_bb'))}  {p.get('c1_reason','')}")
+        lines.append(f"  C2 Vol  {_ico(p.get('c2_vol'))}  {p.get('c2_reason','')}")
+        lines.append(f"  C3 CVD  {_ico(p.get('c3_cvd'))}  {p.get('c3_reason','')}")
+        lines.append(f"  C4 OI   {_ico(p.get('c4_oi'))}   {p.get('c4_reason','')}")
+
+    if conn_j:
+        conn_j.close()
+
+    lines += [SEP, f"Total: {len(quases)} QUASEs"]
+    return "\n".join(lines)
 
 
 def cmd_log_calls(arg: str | None = None) -> str:
@@ -909,18 +987,43 @@ def cmd_perf() -> str:
 
 
 def cmd_perf_quase() -> str:
-    """Calibração do threshold via comparação CALL vs QUASE."""
+    """
+    OBJETIVO:
+        Avaliar a qualidade dos sinais QUASE como ferramenta de
+        calibração do threshold. Responde: "se eu tivesse executado
+        os QUASEs como CALLs, qual seria o win rate comparado com
+        as CALLs reais?" Permite decidir se o threshold está
+        conservador ou adequado.
+
+    FONTE DE DADOS:
+        atirador_journal.db tabela trades.
+        CALLs: is_hypothetical=0, status != 'OPEN', últimos 30d.
+        QUASEs: is_hypothetical=1, status != 'OPEN', últimos 30d.
+
+    LIMITAÇÕES CONHECIDAS:
+        QUASEs têm SL/TP hipotéticos — WR pode ser otimista.
+        Precisa de mínimo 5 QUASEs fechados para diagnóstico confiável.
+
+    NÃO FAZER:
+        Não ler campo 'threshold' dos rows — não existe no journal v8.
+        Não interpretar 'score' como score de pilares — é Check C (0–4).
+    """
     conn = _journal_db_conn()
     if not conn:
         return "⚠️ atirador_journal.db não encontrado."
+
     try:
-        calls  = conn.execute(
-            """SELECT status FROM trades WHERE is_hypothetical=0
-               AND timestamp >= datetime('now', '-30 days') AND status != 'OPEN'"""
+        calls = conn.execute(
+            """SELECT status FROM trades
+               WHERE is_hypothetical=0
+               AND timestamp >= datetime('now', '-30 days')
+               AND status != 'OPEN'"""
         ).fetchall()
         quases = conn.execute(
-            """SELECT status, score FROM trades WHERE is_hypothetical=1
-               AND timestamp >= datetime('now', '-30 days') AND status != 'OPEN'"""
+            """SELECT status, direction FROM trades
+               WHERE is_hypothetical=1
+               AND timestamp >= datetime('now', '-30 days')
+               AND status != 'OPEN'"""
         ).fetchall()
         conn.close()
     except Exception as e:
@@ -936,32 +1039,31 @@ def cmd_perf_quase() -> str:
     wr_c, n_c = _wr(calls)
     wr_q, n_q = _wr(quases)
 
-    # Diagnóstico
     if n_q < 5:
-        diag = "⚠️ Dados insuficientes para diagnóstico confiável"
+        diag = f"⚠️ Dados insuficientes ({n_q} QUASEs fechados)"
     elif wr_q >= wr_c:
-        diag = "→ Threshold pode estar conservador ⚠️"
-    elif wr_q >= wr_c * 0.8:
-        diag = "→ Threshold atual calibrado ✅"
+        diag = "→ Threshold pode estar conservador demais ⚠️"
+    elif wr_q >= wr_c * 0.80:
+        diag = "→ Threshold calibrado ✅"
     else:
-        diag = "→ Threshold adequado — QUASEs são mais fracas ✅"
+        diag = "→ Threshold adequado — QUASEs são mais fracos ✅"
 
-    # Gap médio e estimativa de sinais extras
-    gaps = [((r.get("threshold") or 0) - (r.get("score") or 0)) for r in quases if r.get("threshold")]
-    avg_gap    = round(sum(gaps) / len(gaps), 1) if gaps else 0.0
-    extra_mo   = round(n_q * 30 / 30) if n_q else 0   # n_q é em 30d
+    longs  = [r for r in quases if r["direction"] == "LONG"]
+    shorts = [r for r in quases if r["direction"] == "SHORT"]
+    wr_ql, n_ql = _wr(longs)
+    wr_qs, n_qs = _wr(shorts)
 
     lines = [
-        "🔍 <b>Calibração — QUASEs</b>", SEP,
-        f"  Total QUASEs  {n_q}",
-        f"  Win Rate      {wr_q}%  ({round(wr_q*n_q/100) if n_q else 0}/{n_q})",
+        "🔍 <b>Calibração — QUASEs (30d)</b>", SEP,
+        f"  CALLs fechadas    {n_c:>4}   WR {wr_c}%",
+        f"  QUASEs fechados   {n_q:>4}   WR {wr_q}%",
         SEP,
-        f"  Win Rate CALLs   {wr_c}%",
-        f"  Win Rate QUASEs  {wr_q}%",
+        f"  LONG  — QUASEs {n_ql}  WR {wr_ql}%",
+        f"  SHORT — QUASEs {n_qs}  WR {wr_qs}%",
+        SEP,
         f"  {diag}",
         SEP,
-        f"  Gap médio até threshold  {avg_gap} pts",
-        f"  Se threshold −2: +{extra_mo} sinais/mês (est.)",
+        "⚠️ WR hipotético — QUASEs não foram executados",
     ]
     return "\n".join(lines)
 
@@ -1112,45 +1214,62 @@ def cmd_log_export() -> str:
 
 
 def cmd_health_export() -> str:
-    """Gera health_report.py e envia 4 arquivos via Telegram."""
-    import glob
-    import subprocess as _sp
+    """
+    OBJETIVO:
+        Disparar o health_report.py (relatório analítico completo)
+        e enviar o arquivo gerado via Telegram, junto com logs e state.
+        Usado para debug e análise de performance do sistema.
 
-    now = _now_brt()
+    FONTE DE DADOS:
+        Chama externamente: python3 health_report.py --out {arquivo}
+        Complementa com: log de rodada mais recente, log do bot do dia,
+        states/atirador_state.json.
+
+    LIMITAÇÕES CONHECIDAS:
+        health_report.py pode demorar até 30s — roda em thread separada.
+        Se health_report.py falhar, reporta o erro mas ainda envia os
+        demais arquivos disponíveis.
+
+    NÃO FAZER:
+        Não usar subprocess.run() bloqueante — usar threading.Thread.
+        Não travar o loop do daemon em hipótese alguma.
+    """
+    import glob
+
+    now   = _now_brt()
     stamp = now.strftime("%Y%m%d_%H%M")
     saude_path = os.path.join(LOG_DIR, f"saude_{stamp}.txt")
+    script     = os.path.expanduser("~/Setup_Atirador/health_report.py")
 
-    # Gera o relatório
-    script = os.path.expanduser("~/Setup_Atirador/health_report.py")
-    try:
-        result = _sp.run(
-            ["python3", script, "--out", saude_path],
-            capture_output=True, text=True, timeout=120,
-        )
-        if result.returncode != 0:
-            return f"❌ health_report.py falhou:\n{result.stderr[-500:]}"
-    except Exception as e:
-        return f"❌ Erro ao rodar health_report.py: {e}"
+    result_holder = {"returncode": None, "stderr": ""}
 
-    # Localiza log de rodada mais recente
+    def _run():
+        try:
+            r = subprocess.run(
+                ["python3", script, "--out", saude_path],
+                capture_output=True, text=True, timeout=55,
+            )
+            result_holder["returncode"] = r.returncode
+            result_holder["stderr"]     = r.stderr
+        except Exception as e:
+            result_holder["returncode"] = -1
+            result_holder["stderr"]     = str(e)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=60)
+
     scan_logs = sorted(
         glob.glob(os.path.join(LOG_DIR, "atirador_LOG_*.log")),
         key=os.path.getmtime,
     )
-    latest_scan_log = scan_logs[-1] if scan_logs else None
-
-    # Localiza log do bot do dia atual
     bot_logs = sorted(
         glob.glob(os.path.join(LOG_DIR, "bot_*.log")),
         key=os.path.getmtime,
     )
-    latest_bot_log = bot_logs[-1] if bot_logs else None
 
-    state_path = STATE_FILE  # states/atirador_state.json
-
-    # Monta lista de arquivos a enviar, pulando os que não existem
     files_to_send = []
-    missing = []
+    missing       = []
 
     def _add(path, label):
         if path and os.path.exists(path):
@@ -1158,28 +1277,33 @@ def cmd_health_export() -> str:
         else:
             missing.append(label)
 
-    _add(saude_path,       "saúde")
-    _add(latest_scan_log,  "log rodada")
-    _add(latest_bot_log,   "log bot")
-    _add(state_path,       "state")
+    _add(saude_path,                           "health report")
+    _add(scan_logs[-1] if scan_logs else None, "log rodada")
+    _add(bot_logs[-1]  if bot_logs  else None, "log bot")
+    _add(STATE_FILE,                           "state")
 
-    # Mensagem de cabeçalho
+    status_report = ""
+    if result_holder["returncode"] is None:
+        status_report = "⚠️ health_report.py timeout (>60s)"
+    elif result_holder["returncode"] != 0:
+        status_report = f"⚠️ health_report.py erro: {result_holder['stderr'][-200:]}"
+
     header = (
         f"🔍 Health Export — {now.strftime('%Y-%m-%d %H:%M')}\n"
         f"Arquivos: {' | '.join(l for _, l in files_to_send)}"
     )
+    if status_report:
+        header += f"\n{status_report}"
     if missing:
         header += f"\n⚠️ Não encontrados: {', '.join(missing)}"
     _tg_send(header)
 
-    # Envia cada arquivo
     errors = []
     for path, label in files_to_send:
         try:
             with open(path, "rb") as fh:
                 content = fh.read()
-            fname = os.path.basename(path)
-            ok = _tg_send_document(fname, content, caption=label)
+            ok = _tg_send_document(os.path.basename(path), content, caption=label)
             if not ok:
                 errors.append(label)
         except Exception as e:
@@ -1187,7 +1311,7 @@ def cmd_health_export() -> str:
 
     if errors:
         return f"❌ Falha ao enviar: {', '.join(errors)}"
-    return ""  # vazio = tudo enviado via sendDocument
+    return ""
 
 
 # ── Polling principal ─────────────────────────────────────────────────────────
