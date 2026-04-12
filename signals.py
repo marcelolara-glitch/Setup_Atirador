@@ -396,6 +396,7 @@ async def analisar_token_async(
         "rec_1h_raw"     : rec_1h,
         "exchange"       : exchange,
         "zona_rich"      : zona_rich,
+        "candle_ref"     : candles_15m[-1] if candles_15m else {},
     }
 
 
