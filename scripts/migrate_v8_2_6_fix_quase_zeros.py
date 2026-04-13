@@ -37,7 +37,7 @@ def run_migration() -> None:
 
         # Listar os trades afetados antes de alterar (para o relatório)
         cur.execute("""
-            SELECT id, symbol, direction, type, entry_time
+            SELECT id, symbol, direction, type, exit_time
             FROM trades
             WHERE entry_price = 0.0
               AND status = 'OPEN'
@@ -69,7 +69,7 @@ def run_migration() -> None:
             print(
                 f"  id={row['id']:>5}  {row['symbol']:<18}  "
                 f"{row['direction']:<5}  {row['type']:<5}  "
-                f"entry_time={row['entry_time']}"
+                f"exit_time={row['exit_time']}"
             )
 
     finally:
