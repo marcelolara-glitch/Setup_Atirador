@@ -1,4 +1,4 @@
-# main.py — Orquestrador principal do Setup Atirador v8.1.0
+# main.py — Orquestrador principal do Setup Atirador v8.2.6
 # Entry point para cron e execução manual.
 # Contém apenas lógica de orquestração — toda lógica de negócio vive nos módulos.
 
@@ -90,7 +90,7 @@ def log_section(title: str) -> None:
 
 async def run_scan_async() -> None:
     """
-    Pipeline principal v8.1.0:
+    Pipeline principal v8.2.6:
     1. Fetch perpetuals (universo)
     2. TV batch 4H (Gate 4H strict — LONG/SHORT, NEUTRAL → drop)
     3. TV batch 1H (contexto)
@@ -329,6 +329,12 @@ async def run_scan_async() -> None:
                 if r["status"] == "CALL" and not r.get("params"):
                     continue
                 p = r.get("params") or {}
+                if not p or p.get("entry", 0) == 0:
+                    LOG.warning(
+                        f"[v8] TradeJournal: params ausente ou entry=0 para "
+                        f"{r['symbol']} {r['direction']} {r['status']} — não gravando"
+                    )
+                    continue
                 pillars = {
                     # Checks — resultados booleanos
                     "check_a_ok":     r.get("check_a_ok"),
