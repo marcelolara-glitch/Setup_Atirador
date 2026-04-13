@@ -186,25 +186,32 @@ def check_forca_movimento(
         detalhes["c2_reason"] = "Vol erro"
         detalhes["c2_vol_ratio"] = None
 
-    # C3 — CVD proxy: ≥3/4 últimas velas direcionais
+    # C3 — CVD ponderado por volume: ratio direcional >= 0.65
     try:
         ult4 = candles_15m[-4:]
-        if direction == "SHORT":
-            count = sum(1 for c in ult4 if float(c["close"]) < float(c["open"]))
+        vol_total = sum(float(c["volume"]) for c in ult4)
+        if vol_total > 0:
+            if direction == "SHORT":
+                vol_dir = sum(float(c["volume"]) for c in ult4
+                              if float(c["close"]) < float(c["open"]))
+            else:
+                vol_dir = sum(float(c["volume"]) for c in ult4
+                              if float(c["close"]) > float(c["open"]))
+            ratio = vol_dir / vol_total
         else:
-            count = sum(1 for c in ult4 if float(c["close"]) > float(c["open"]))
-        detalhes["c3_cvd_count"] = count
-        if count >= 3:
+            ratio = 0.0
+        detalhes["c3_cvd_ratio"] = round(ratio, 2)
+        if ratio >= 0.65:
             total += 1
             detalhes["c3_cvd"] = True
-            detalhes["c3_reason"] = f"CVD {count}/4 direcionais"
+            detalhes["c3_reason"] = f"CVD ratio {ratio:.0%}"
         else:
             detalhes["c3_cvd"] = False
-            detalhes["c3_reason"] = f"CVD {count}/4 direcionais"
+            detalhes["c3_reason"] = f"CVD ratio {ratio:.0%}"
     except Exception:
         detalhes["c3_cvd"] = False
         detalhes["c3_reason"] = "CVD erro"
-        detalhes["c3_cvd_count"] = None
+        detalhes["c3_cvd_ratio"] = None
 
     # C4 — OI trend
     try:
