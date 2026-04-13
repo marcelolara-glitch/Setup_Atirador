@@ -32,13 +32,13 @@ jobs:
       - name: Instalar dependências
         run: pip install -r requirements.txt
 
-      - name: Restaurar estado diário
+      - name: Restaurar estado
         run: |
           if [ -f states/atirador_state.json ]; then
             cp states/atirador_state.json /tmp/atirador_state.json
-            echo "Estado diário restaurado — score_history disponível para setas de tendência."
+            echo "Estado restaurado."
           else
-            echo "Sem estado anterior — primeira rodada, todas as setas serão 🆕."
+            echo "Sem estado anterior — primeira rodada."
           fi
 
       - name: Executar scan
@@ -46,7 +46,7 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python setup_atirador.py
+        run: python main.py
 
       - name: Diagnóstico pós-rodada
         if: always()
@@ -66,7 +66,6 @@ jobs:
           done
           find logs/ -type f -name "*.log" -mtime +7 -delete 2>/dev/null || true
 
-          # Estado diário — persiste score_history e OI entre runs (necessário para setas ↑↓)
           mkdir -p states
           [ -f /tmp/atirador_state.json ] && cp /tmp/atirador_state.json states/atirador_state.json
 
