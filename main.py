@@ -370,6 +370,17 @@ async def run_scan_async() -> None:
         except Exception:
             LOG.warning("[v8] TradeJournal falhou", exc_info=True)
 
+    # ── TradeJournal: tracking de trades abertos ──────────────────────────────
+    if trade_journal is not None:
+        try:
+            from journal import _fetch_klines_sync
+            updated = trade_journal.check_open_trades(
+                fetch_klines_fn=_fetch_klines_sync
+            )
+            LOG.info(f"[v8] TradeJournal tracker: {updated} trade(s) atualizados")
+        except Exception:
+            LOG.warning("[v8] TradeJournal tracker falhou", exc_info=True)
+
     # ── Watchdog ──────────────────────────────────────────────────────────────
     try:
         import json as _json
