@@ -7,7 +7,7 @@ import logging
 import math
 import os
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from config import (
     TELEGRAM_CONFIG_FILE,
@@ -17,6 +17,7 @@ from config import (
 )
 
 LOG = logging.getLogger("atirador")
+_BRT = timezone(timedelta(hours=-3))
 
 # ---------------------------------------------------------------------------
 # Estado privado do módulo — não exportar
@@ -204,8 +205,8 @@ def _tg_call_v7(r: dict, direction: str, fg_val: int) -> str:
     _cr_str  = ""
     if _cr_ts:
         try:
-            _cr_dt  = datetime.fromtimestamp(_cr_ts / 1000, tz=timezone.utc)
-            _cr_str = f"  [candle: {_cr_dt.strftime('%d/%m %H:%M')}]"
+            _cr_dt  = datetime.fromtimestamp(_cr_ts / 1000, tz=_BRT)
+            _cr_str = f"  [candle: {_cr_dt.strftime('%d/%m %H:%M')} BRT]"
         except Exception:
             pass
 
@@ -278,8 +279,8 @@ def _tg_quase_v7(r: dict, direction: str, fg_val: int) -> str:
     _cr_str  = ""
     if _cr_ts:
         try:
-            _cr_dt  = datetime.fromtimestamp(_cr_ts / 1000, tz=timezone.utc)
-            _cr_str = f"  [candle: {_cr_dt.strftime('%d/%m %H:%M')}]"
+            _cr_dt  = datetime.fromtimestamp(_cr_ts / 1000, tz=_BRT)
+            _cr_str = f"  [candle: {_cr_dt.strftime('%d/%m %H:%M')} BRT]"
         except Exception:
             pass
 

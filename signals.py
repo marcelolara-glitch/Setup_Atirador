@@ -359,9 +359,9 @@ async def analisar_token_async(
     else:
         status = "QUASE" if check_c_total >= 1 else "RADAR"
 
-    # Trade params (apenas para CALL)
+    # Trade params (CALL e QUASE)
     params = None
-    if status == "CALL":
+    if status in ("CALL", "QUASE"):
         if direction == "LONG":
             params = calc_trade_params(
                 symbol, current_price, zona_qualidade, check_c_total,
