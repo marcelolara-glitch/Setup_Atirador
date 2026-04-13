@@ -199,6 +199,16 @@ def _tg_call_v7(r: dict, direction: str, fg_val: int) -> str:
     cc_total = r.get("check_c_total", 0)
     det      = r.get("check_c_detalhes", {})
 
+    _cr      = r.get("candle_ref") or {}
+    _cr_ts   = _cr.get("ts") if isinstance(_cr, dict) else None
+    _cr_str  = ""
+    if _cr_ts:
+        try:
+            _cr_dt  = datetime.fromtimestamp(_cr_ts / 1000, tz=timezone.utc)
+            _cr_str = f"  [candle: {_cr_dt.strftime('%d/%m %H:%M')}]"
+        except Exception:
+            pass
+
     ico = "🔴" if direction == "SHORT" else "🟢"
 
     t = r.get("trade") or r.get("trade_short")
@@ -230,7 +240,7 @@ def _tg_call_v7(r: dict, direction: str, fg_val: int) -> str:
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 Zona: {html.escape(zona_d)} [{zona_q}]\n"
         f"{_fmt_zona_ev(r.get('zona_rich'))}"
-        f"\n⚡ Confirmação 15m\n"
+        f"\n⚡ Confirmação 15m{_cr_str}\n"
         f"   A — Rejeição: {_chk(True)} {html.escape(ca_razao)}\n"
         f"   B — Estrutura: {_chk(True)} {html.escape(cb_razao)}\n"
         f"   C — Força: {cc_total}/4\n"
@@ -263,6 +273,16 @@ def _tg_quase_v7(r: dict, direction: str, fg_val: int) -> str:
     cc_total = r.get("check_c_total", 0) or 0
     det      = r.get("check_c_det", {}) or {}
 
+    _cr      = r.get("candle_ref") or {}
+    _cr_ts   = _cr.get("ts") if isinstance(_cr, dict) else None
+    _cr_str  = ""
+    if _cr_ts:
+        try:
+            _cr_dt  = datetime.fromtimestamp(_cr_ts / 1000, tz=timezone.utc)
+            _cr_str = f"  [candle: {_cr_dt.strftime('%d/%m %H:%M')}]"
+        except Exception:
+            pass
+
     ico = "🟡"
     link_15m, link_4h = _tv_links(r["symbol"])
 
@@ -277,7 +297,7 @@ def _tg_quase_v7(r: dict, direction: str, fg_val: int) -> str:
         f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 Zona: {html.escape(zona_d)} [{zona_q}]\n"
         f"{_fmt_zona_ev(r.get('zona_rich'))}"
-        f"\n⚡ Confirmação 15m\n"
+        f"\n⚡ Confirmação 15m{_cr_str}\n"
         f"   A — Rejeição: {_chk(ca)} {html.escape(ca_razao)}\n"
         f"{cb_line}\n"
         f"   C — Força: {cc_total}/4\n"

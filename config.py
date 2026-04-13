@@ -1,4 +1,4 @@
-# config.py — Constantes centralizadas do Setup Atirador v8.1.2
+# config.py — Constantes centralizadas do Setup Atirador v8.2.5
 # Este arquivo é a fonte da verdade para todas as constantes do sistema.
 # NÃO contém lógica de negócio — apenas valores configuráveis.
 
@@ -12,7 +12,7 @@ BRT = timezone(timedelta(hours=-3))
 # ---------------------------------------------------------------------------
 # Bloco 2 — Versão
 # ---------------------------------------------------------------------------
-VERSION = "8.2.4"
+VERSION = "8.2.5"
 
 # ---------------------------------------------------------------------------
 # Bloco 3 — Paths
