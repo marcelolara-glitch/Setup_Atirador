@@ -390,6 +390,7 @@ async def analisar_token_async(
         "check_b_ev"     : check_b_ev,
         "check_c_total"  : check_c_total,
         "check_c_det"    : check_c_det,
+        **(check_c_det or {}),
         "check_c_thr"    : thr_c,
         "price"          : current_price,
         "params"         : params,
@@ -513,6 +514,7 @@ async def run_scan_async() -> None:
                                 candles_15m_recheck, d15m, state, r["direction"])
                             r["check_c_total"] = c_total
                             r["check_c_det"]   = c_det
+                            r.update(c_det or {})
                             thr_c = r["check_c_thr"]
                             # Re-decide
                             if r["check_a_ok"] and r["check_b_ok"]:
