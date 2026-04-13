@@ -397,6 +397,116 @@ async def run_scan_async() -> None:
 
 
 # ===========================================================================
+# Modo --analisar: análise individual de token
+# ===========================================================================
+
+def _tg_send_simple(text: str) -> None:
+    """Envia mensagem simples via Telegram. Usado pelo modo --analisar."""
+    import os
+    import requests as _req
+    token   = os.getenv("TELEGRAM_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return
+    try:
+        _req.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
+async def run_analisar_async(symbol: str) -> None:
+    """
+    Pipeline de análise individual de um token.
+    Ignora o gate de universo — analisa o símbolo diretamente.
+    Não alimenta bancos SQLite (scan_log.db, journal).
+    Usado pelo modo --analisar via GitHub Actions.
+    """
+    import aiohttp
+    from state import load_daily_state
+
+    # Normaliza símbolo
+    sym = symbol.upper().strip()
+    if not sym.endswith("USDT"):
+        sym += "USDT"
+
+    LOG.info(f"[analisar] Iniciando análise de {sym}")
+
+    state = load_daily_state()
+
+    async with aiohttp.ClientSession() as session:
+        # ── Preço atual via OKX ───────────────────────────────────────────
+        perps, exchange = await fetch_perpetuals()
+        prices = {p["symbol"]: p["price"] for p in perps}
+        price  = prices.get(sym)
+
+        if not price:
+            # Tenta buscar via klines se não estiver no universo
+            candles = await fetch_klines_cached_async(session, sym, "15m", 5)
+            if candles:
+                price = candles[-1]["close"]
+            else:
+                msg = f"❌ Não foi possível obter preço para {sym}."
+                LOG.error(f"[analisar] {msg}")
+                _tg_send_simple(msg)
+                return
+
+        LOG.info(f"[analisar] {sym} preço={price} exchange={exchange}")
+
+        # ── TV 4H e 1H ───────────────────────────────────────────────────
+        tv4h, _ = await fetch_tv_batch_async(session, [sym], COLS_4H)
+        tv1h, _ = await fetch_tv_batch_async(session, [sym], COLS_1H)
+        d_4h = tv4h.get(sym, {})
+        d_1h = tv1h.get(sym, {})
+
+        # ── Fear & Greed (para contexto na mensagem) ──────────────────────
+        fg     = await fetch_fear_greed_async(session)
+        fg_val = fg.get("value") or 50
+
+        # ── BTC 4H (para contexto) ────────────────────────────────────────
+        btc_tv, _ = await fetch_tv_batch_async(session, ["BTCUSDT"], COLS_4H)
+        btc_4h = recommendation_from_value(
+            btc_tv.get("BTCUSDT", {}).get("Recommend.All|240", 0)
+        )
+
+        # ── Pipeline de análise ───────────────────────────────────────────
+        result = await analisar_token_async(
+            session, sym, d_4h, d_1h, price, state, exchange
+        )
+
+        if result is None:
+            # Token descartado (NEUTRAL no gate 4H ou sem zona)
+            rec_4h = recommendation_from_value(d_4h.get("Recommend.All|240", 0))
+            msg = (
+                f"🔍 <b>Análise: {sym.replace('USDT','')}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⛔ Descartado no pipeline\n"
+                f"Gate 4H: {rec_4h}\n"
+                f"(NEUTRAL ou sem zona válida)"
+            )
+            _tg_send_simple(msg)
+            return
+
+        # ── Envia resultado via Telegram ──────────────────────────────────
+        tg_notify_v7(
+            results      = [result],
+            fg_val       = fg_val,
+            n_univ       = 1,
+            n_gate_short = 1 if result["direction"] == "SHORT" else 0,
+            n_gate_long  = 1 if result["direction"] == "LONG"  else 0,
+            n_zona_short = 1 if result["direction"] == "SHORT" else 0,
+            n_zona_long  = 1 if result["direction"] == "LONG"  else 0,
+            elapsed      = 0.0,
+            exchange     = exchange,
+            btc_4h       = btc_4h,
+        )
+        LOG.info(f"[analisar] {sym} → {result['status']} enviado")
+
+
+# ===========================================================================
 # Entry point
 # ===========================================================================
 
@@ -407,11 +517,23 @@ def main() -> None:
                         help="Executa uma rodada e sai (modo cron)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Não envia Telegram, apenas loga")
+    parser.add_argument(
+        "--analisar",
+        type=str,
+        default=None,
+        metavar="SYMBOL",
+        help="Analisar um token individual (ex: BTCUSDT)",
+    )
     args = parser.parse_args()
 
     global LOG
     LOG, _, _ = setup_logger()
 
+    if args.analisar:
+        asyncio.run(run_analisar_async(args.analisar))
+        return
+
+    # modos existentes permanecem abaixo sem alteração
     if args.dry_run:
         import os as _os
         _os.environ["DRY_RUN"] = "1"
