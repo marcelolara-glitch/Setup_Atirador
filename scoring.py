@@ -147,7 +147,7 @@ def check_forca_movimento(
     try:
         high  = float(d.get("high|15") or 0)
         low   = float(d.get("low|15") or 0)
-        close = float(d.get("close") or 0)
+        close = float(d.get("close|15") or d.get("close") or 0)
         bb_up = float(d.get("BB.upper|15") or 0)
         bb_lo = float(d.get("BB.lower|15") or 0)
         bb_rng = bb_up - bb_lo
