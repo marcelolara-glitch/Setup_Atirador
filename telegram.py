@@ -330,7 +330,7 @@ def _tg_heartbeat_v7(
     exchange: str,
 ) -> str:
     return (
-        f"💓 <b>Atirador v{VERSION}</b> — rodada concluída\n"
+        f"💓 <b>Atirador v{VERSION}</b> — {datetime.now(_BRT).strftime('%d/%m %H:%M')} BRT\n"
         f"━━━━━━━━━━━━━━━━━━━\n"
         f"🌍 Universo  : {n_univ} tokens\n"
         f"🔽 Gate 4H   : {n_gate_short} SHORT | {n_gate_long} LONG\n"
