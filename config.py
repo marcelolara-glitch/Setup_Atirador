@@ -99,7 +99,7 @@ def get_alav_max_por_score(score: int) -> float:
 # ---------------------------------------------------------------------------
 COLS_4H     = ["Recommend.All|240", "RSI|240"]
 COLS_1H     = ["Recommend.All|60"]
-COLS_15M_TECH = ["BB.upper|15", "BB.lower|15", "ATR|15", "high|15", "low|15"]
+COLS_15M_TECH = ["BB.upper|15", "BB.lower|15", "ATR|15", "high|15", "low|15", "close|15"]
 
 # ---------------------------------------------------------------------------
 # Bloco 10 — URLs de API
