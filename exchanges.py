@@ -154,7 +154,7 @@ async def fetch_klines_async(
             raw = data_okx["data"]
             result = [{"ts": int(c[0]), "open": float(c[1]), "high": float(c[2]),
                        "low": float(c[3]), "close": float(c[4]), "volume": float(c[5])}
-                      for c in raw]
+                      for c in raw if len(c) <= 8 or c[8] != "0"]
             result.reverse()  # OKX: decrescente → crescente
             return result, "okx"
     except Exception as e:
@@ -198,7 +198,8 @@ async def fetch_klines_cached_async(
         try:
             with open(cache_file) as f:
                 cached = json.load(f)
-            if cached and age_h < KLINE_CACHE_TTL_H and len(cached) >= 20:
+            ttl = 0 if granularity == "15m" else KLINE_CACHE_TTL_H
+            if cached and ttl > 0 and age_h < ttl and len(cached) >= 20:
                 return cached
         except Exception:
             pass
