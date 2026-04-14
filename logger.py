@@ -170,6 +170,13 @@ class RoundLogger:
         check_c_thr    : int,
         check_c_det    : dict,
         zona_rich      : dict | None = None,
+        # Novos campos de debug:
+        candle_ref     : dict | None = None,
+        price          : float | None = None,
+        oi_usd         : float | None = None,
+        rec_4h         : str | None = None,
+        rec_1h         : str | None = None,
+        gate_1h_ok     : bool | None = None,
     ) -> None:
         self._tokens.append({
             "symbol"         : symbol,
@@ -187,6 +194,12 @@ class RoundLogger:
             "check_c_thr"    : check_c_thr,
             "check_c_det"    : check_c_det or {},
             "zona_rich"      : zona_rich or {},
+            "candle_ref"     : candle_ref or {},
+            "price"          : price,
+            "oi_usd"         : oi_usd,
+            "rec_4h"         : rec_4h,
+            "rec_1h"         : rec_1h,
+            "gate_1h_ok"     : gate_1h_ok,
         })
 
     def add_event(

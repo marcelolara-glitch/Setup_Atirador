@@ -314,6 +314,13 @@ async def run_scan_async() -> None:
                     check_c_thr    = r.get("check_c_thr", 0),
                     check_c_det    = r.get("check_c_det", {}),
                     zona_rich      = r.get("zona_rich"),
+                    # Novos campos de debug:
+                    candle_ref     = r.get("candle_ref"),
+                    price          = r.get("price"),
+                    oi_usd         = r.get("oi_usd"),
+                    rec_4h         = r.get("rec_4h"),
+                    rec_1h         = r.get("rec_1h"),
+                    gate_1h_ok     = r.get("gate_1h_ok"),
                 )
             for r in results:
                 if r["status"] in ("CALL", "QUASE"):
