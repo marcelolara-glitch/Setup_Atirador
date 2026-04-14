@@ -123,7 +123,7 @@ def check_forca_movimento(
 ) -> tuple[int, dict]:
     """
     Check C: 4 sub-checks amplificadores (0–4 pts).
-    C1: BB position (>75% do range BB para SHORT, <25% para LONG)
+    C1: BB touch + return (high ≥ BB.upper para SHORT, low ≤ BB.lower para LONG; close retorna para dentro)
     C2: Volume ≥ 1.5× média 8 velas
     C3: CVD proxy — ≥3/4 últimas velas direcionais
     C4: OI trend via score_oi_trend
@@ -134,26 +134,38 @@ def check_forca_movimento(
     detalhes: dict = {}
     total = 0
 
-    # C1 — Bollinger Band position
+    # C1 — BB touch + return (price action real na banda)
     try:
-        close = float(d.get("close", 0))
-        bb_up = float(d.get("BB.upper|15", 0))
-        bb_lo = float(d.get("BB.lower|15", 0))
+        high  = float(d.get("high|15") or 0)
+        low   = float(d.get("low|15") or 0)
+        close = float(d.get("close") or 0)
+        bb_up = float(d.get("BB.upper|15") or 0)
+        bb_lo = float(d.get("BB.lower|15") or 0)
         bb_rng = bb_up - bb_lo
-        if bb_rng > 0:
-            pos = (close - bb_lo) / bb_rng  # 0=low, 1=high
+
+        if bb_rng > 0 and bb_up > 0 and bb_lo > 0 and high > 0 and low > 0:
+            if direction == "SHORT":
+                touched  = high >= bb_up
+                returned = close < bb_up
+            else:  # LONG
+                touched  = low <= bb_lo
+                returned = close > bb_lo
+
+            pos = (close - bb_lo) / bb_rng
             detalhes["c1_bb_pos"] = round(pos, 4)
-            if direction == "SHORT" and pos > 0.75:
+
+            if touched and returned:
                 total += 1
                 detalhes["c1_bb"] = True
-                detalhes["c1_reason"] = f"BB pos {pos:.0%} > 75%"
-            elif direction == "LONG" and pos < 0.25:
-                total += 1
-                detalhes["c1_bb"] = True
-                detalhes["c1_reason"] = f"BB pos {pos:.0%} < 25%"
+                ref = "high" if direction == "SHORT" else "low"
+                op  = "≥" if direction == "SHORT" else "≤"
+                detalhes["c1_reason"] = f"BB toque+retorno ({ref} {op} banda)"
+            elif touched and not returned:
+                detalhes["c1_bb"] = False
+                detalhes["c1_reason"] = "BB toque sem retorno"
             else:
                 detalhes["c1_bb"] = False
-                detalhes["c1_reason"] = f"BB pos {pos:.0%}"
+                detalhes["c1_reason"] = "BB sem toque"
         else:
             detalhes["c1_bb"] = False
             detalhes["c1_reason"] = "BB sem range"
