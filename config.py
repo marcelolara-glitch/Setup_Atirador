@@ -99,7 +99,7 @@ def get_alav_max_por_score(score: int) -> float:
 # ---------------------------------------------------------------------------
 COLS_4H     = ["Recommend.All|240", "RSI|240"]
 COLS_1H     = ["Recommend.All|60"]
-COLS_15M_TECH = ["BB.upper|15", "BB.lower|15", "ATR|15"]
+COLS_15M_TECH = ["BB.upper|15", "BB.lower|15", "ATR|15", "high|15", "low|15"]
 
 # ---------------------------------------------------------------------------
 # Bloco 10 — URLs de API
@@ -131,3 +131,11 @@ TELEGRAM_HEARTBEAT = True
 # Bloco 13 — Zona order
 # ---------------------------------------------------------------------------
 ZONA_ORDER = ["MAXIMA", "ALTA_OB4H", "ALTA_OB1H", "MEDIA", "BASE"]
+
+# ---------------------------------------------------------------------------
+# Changelog
+# ---------------------------------------------------------------------------
+# v8.4.0 (13/04/2026): c1_bb reescrito — lógica toque+retorno na banda BB
+#                       (high≥BB.upper+close<BB.upper para SHORT;
+#                        low≤BB.lower+close>BB.lower para LONG).
+#                       Adicionado high|15 e low|15 em COLS_15M_TECH.
