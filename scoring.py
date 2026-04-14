@@ -69,22 +69,31 @@ def check_estrutura_direcional(
     janela: int = 8,
 ) -> tuple[bool, str, dict]:
     """
-    Check B: nas últimas `janela` velas fechadas, ≥ 5 devem ser direcionais.
-    Direcional = vela na direção esperada (close > open para LONG,
-                                           close < open para SHORT).
+    Check B: nas últimas `janela` velas fechadas, verifica estrutura direcional.
+    LONG:  ≥ 5 de (janela-1) intervalos com Higher Lows (low[i] > low[i-1])
+    SHORT: ≥ 5 de (janela-1) intervalos com Lower Highs (high[i] < high[i-1])
 
     Returns (passed: bool, reason: str, evidencias: dict)
     """
     if len(candles_15m) < janela:
         return False, f"Apenas {len(candles_15m)} velas (mín {janela})", {}
+
     recentes = candles_15m[-janela:]
+
     if direction == "SHORT":
-        count = sum(1 for c in recentes if float(c["close"]) < float(c["open"]))
-    else:
-        count = sum(1 for c in recentes if float(c["close"]) > float(c["open"]))
-    passed = count >= 6
-    ev = {"direcionais": count, "janela": janela, "ratio": round(count / janela, 4)}
-    return passed, f"{count}/{janela} velas direcionais", ev
+        highs = [float(c["high"]) for c in recentes]
+        count = sum(1 for i in range(1, len(highs)) if highs[i] < highs[i-1])
+        label = "LH"
+    else:  # LONG
+        lows = [float(c["low"]) for c in recentes]
+        count = sum(1 for i in range(1, len(lows)) if lows[i] > lows[i-1])
+        label = "HL"
+
+    intervalos = janela - 1  # 7 intervalos entre 8 velas
+    passed = count >= 5
+    ev = {"direcionais": count, "janela": janela, "intervalos": intervalos,
+          "ratio": round(count / intervalos, 4), "tipo": label}
+    return passed, f"{count}/{intervalos} {label}", ev
 
 
 # ---------------------------------------------------------------------------

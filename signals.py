@@ -276,6 +276,7 @@ async def analisar_token_async(
     d_4h: dict,
     d_1h: dict,
     current_price: float,
+    oi_usd: float,
     state: dict,
     exchange: str,
     candle_lock: dict | None = None,
@@ -393,6 +394,7 @@ async def analisar_token_async(
         **(check_c_det or {}),
         "check_c_thr"    : thr_c,
         "price"          : current_price,
+        "oi_usd"         : oi_usd,
         "params"         : params,
         "rec_1h_raw"     : rec_1h,
         "exchange"       : exchange,
@@ -486,6 +488,8 @@ async def run_scan_async() -> None:
     n_zona_short = 0
 
     async with aiohttp.ClientSession() as session:
+        oi_lookup = {p["symbol"]: p.get("oi_usd", 0) for p in perps}
+
         tasks = []
         for sym in gate_syms:
             d4    = tv4h.get(sym, {})
@@ -497,41 +501,47 @@ async def run_scan_async() -> None:
 
         for sym, d4, d1, price in tasks:
             try:
-                r = await analisar_token_async(session, sym, d4, d1, price, state, exchange, candle_lock)
+                r = await analisar_token_async(
+                    session, sym, d4, d1, price, oi_lookup.get(sym, 0),
+                    state, exchange, candle_lock)
                 if r is None:
                     continue
 
-                # Injecao de dados 15m para re-avaliacao do Check C (C1 BB)
-                if "check_c_det" not in r:
-                    d15m = tv15m.get(sym, {})
-                    if d15m:
-                        candles_15m_recheck = await fetch_klines_cached_async(
-                            session, sym, "15m", 20)
-                        if candles_15m_recheck:
-                            candles_15m_recheck = apply_candle_lock(candles_15m_recheck, candle_lock)
-                        if candles_15m_recheck:
-                            c_total, c_det = check_forca_movimento(
-                                candles_15m_recheck, d15m, state, r["direction"])
-                            r["check_c_total"] = c_total
-                            r["check_c_det"]   = c_det
-                            r.update(c_det or {})
-                            thr_c = r["check_c_thr"]
-                            # Re-decide
-                            if r["check_a_ok"] and r["check_b_ok"]:
-                                r["status"] = "CALL" if c_total >= thr_c else "QUASE"
-                                if r["status"] == "CALL" and not r.get("params"):
-                                    candles_4h = await fetch_klines_cached_async(
-                                        session, sym, "4H", 50)
-                                    candles_1h = await fetch_klines_cached_async(
-                                        session, sym, "1H", 50)
-                                    if r["direction"] == "LONG":
-                                        r["params"] = calc_trade_params(
-                                            sym, price, r["zona_qualidade"],
-                                            c_total, candles_4h, candles_1h)
-                                    else:
-                                        r["params"] = calc_trade_params_short(
-                                            sym, price, r["zona_qualidade"],
-                                            c_total, candles_4h, candles_1h)
+                # Re-avaliacao do Check C com dados TV 15m (C1 BB)
+                d15m = tv15m.get(sym, {})
+                if d15m and r.get("check_a_ok"):
+                    candles_15m_recheck = await fetch_klines_cached_async(
+                        session, sym, "15m", 20)
+                    if candles_15m_recheck:
+                        candles_15m_recheck = apply_candle_lock(candles_15m_recheck, candle_lock)
+                    if candles_15m_recheck:
+                        c_total, c_det = check_forca_movimento(
+                            candles_15m_recheck, d15m, state, r["direction"])
+                        r["check_c_total"] = c_total
+                        r["check_c_det"]   = c_det
+                        r.update(c_det or {})
+                        thr_c = r["check_c_thr"]
+                        # Re-decide status
+                        if r["check_b_ok"]:
+                            r["status"] = "CALL" if c_total >= thr_c else "QUASE"
+                        elif c_total >= 1:
+                            r["status"] = "QUASE"
+                        else:
+                            r["status"] = "RADAR"
+                        # Recalcular trade params se virou CALL
+                        if r["status"] == "CALL" and not r.get("params"):
+                            candles_4h = await fetch_klines_cached_async(
+                                session, sym, "4H", 50)
+                            candles_1h = await fetch_klines_cached_async(
+                                session, sym, "1H", 50)
+                            if r["direction"] == "LONG":
+                                r["params"] = calc_trade_params(
+                                    sym, r["price"], r["zona_qualidade"],
+                                    c_total, candles_4h, candles_1h)
+                            else:
+                                r["params"] = calc_trade_params_short(
+                                    sym, r["price"], r["zona_qualidade"],
+                                    c_total, candles_4h, candles_1h)
 
                 if r["direction"] == "LONG":
                     n_zona_long += 1
