@@ -237,7 +237,7 @@ def _tg_call_v7(r: dict, direction: str, fg_val: int) -> str:
         )
 
     msg = (
-        f"{ico} {direction} CALL — {sym}USDT\n"
+        f"{ico} {direction} CALL — {sym}USDT — {datetime.now(_BRT).strftime('%d/%m %H:%M')} BRT\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 Zona: {html.escape(zona_d)} [{zona_q}]\n"
         f"{_fmt_zona_ev(r.get('zona_rich'))}"
@@ -294,7 +294,7 @@ def _tg_quase_v7(r: dict, direction: str, fg_val: int) -> str:
     )
 
     msg = (
-        f"{ico} {direction} QUASE — {sym}USDT\n"
+        f"{ico} {direction} QUASE — {sym}USDT — {datetime.now(_BRT).strftime('%d/%m %H:%M')} BRT\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 Zona: {html.escape(zona_d)} [{zona_q}]\n"
         f"{_fmt_zona_ev(r.get('zona_rich'))}"
