@@ -154,12 +154,14 @@ def _derive_structure_bias(
     """Combina ordem de swings e relação EMA21/EMA50.
 
     Regra:
-        - Sinal de swings: último swing mais recente é high → bullish;
-          se é low → bearish; se nenhum swing → neutral.
-        - Sinal de EMAs: ema21 > ema50 → bullish; ema21 < ema50 → bearish;
+        - swing_bias: último swing mais recente é high → bullish;
+          se é low → bearish; se nenhum swing ou simultâneos → neutral.
+        - ema_bias: ema21 > ema50 → bullish; ema21 < ema50 → bearish;
           igualdade → neutral.
-        - Retorno: "bullish" ou "bearish" apenas quando ambos concordam.
-          Caso contrário, "neutral".
+        - Resultado:
+            * Ambos direcionais e concordam → retorna a direção
+            * Um direcional e o outro neutro → retorna a direção
+            * Direcionais contraditórios ou ambos neutros → "neutral"
     """
     if last_sh_idx is None and last_sl_idx is None:
         swing_bias = "neutral"
@@ -181,9 +183,15 @@ def _derive_structure_bias(
     else:
         ema_bias = "neutral"
 
-    if swing_bias == ema_bias and swing_bias != "neutral":
+    if swing_bias == "neutral" and ema_bias == "neutral":
+        return "neutral"
+    if swing_bias == "neutral":
+        return ema_bias
+    if ema_bias == "neutral":
         return swing_bias
-    return "neutral"
+    if swing_bias == ema_bias:
+        return swing_bias
+    return "neutral"  # contradição direcional
 
 
 def _last_swing_prices(

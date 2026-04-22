@@ -251,6 +251,46 @@ def test_structure_bias_bearish():
 
 
 # ---------------------------------------------------------------------------
+# 7b. Matriz de decisão flexível de _derive_structure_bias
+# ---------------------------------------------------------------------------
+
+
+def test_structure_bias_emas_decide_when_swings_neutral():
+    """EMAs direcionais + ausência de swings → EMAs decidem."""
+    from indicators import _derive_structure_bias
+    assert _derive_structure_bias(None, None, ema21=110.0, ema50=100.0) == "bullish"
+    assert _derive_structure_bias(None, None, ema21=90.0, ema50=100.0) == "bearish"
+
+
+def test_structure_bias_neutral_on_contradiction():
+    """Swings e EMAs em direções opostas → neutral."""
+    from indicators import _derive_structure_bias
+    assert _derive_structure_bias(
+        last_sh_idx=50, last_sl_idx=20, ema21=90.0, ema50=100.0
+    ) == "neutral"
+    assert _derive_structure_bias(
+        last_sh_idx=20, last_sl_idx=50, ema21=110.0, ema50=100.0
+    ) == "neutral"
+
+
+def test_structure_bias_swings_decide_when_emas_neutral():
+    """EMAs iguais + swings direcionais → swings decidem."""
+    from indicators import _derive_structure_bias
+    assert _derive_structure_bias(
+        last_sh_idx=50, last_sl_idx=20, ema21=100.0, ema50=100.0
+    ) == "bullish"
+    assert _derive_structure_bias(
+        last_sh_idx=20, last_sl_idx=50, ema21=100.0, ema50=100.0
+    ) == "bearish"
+
+
+def test_structure_bias_fully_neutral():
+    """Swings ausentes + EMAs iguais → neutral."""
+    from indicators import _derive_structure_bias
+    assert _derive_structure_bias(None, None, ema21=100.0, ema50=100.0) == "neutral"
+
+
+# ---------------------------------------------------------------------------
 # 8. MultiTF retorna 3 TFs
 # ---------------------------------------------------------------------------
 
