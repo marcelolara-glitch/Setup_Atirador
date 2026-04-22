@@ -1,0 +1,531 @@
+"""risk.py — Sistema de gestão de risco/saídas para trades v9.
+
+Calcula entry, SL, TP1/TP2/TP3 baseados em ATR e estrutura local. Implementa
+saídas parciais e stop dinâmico (derisking V2 adaptado).
+
+Terceiro módulo da fundação v9 — sucessor de smc_lib.py e regime.py.
+
+Regras de pureza (absolutas):
+    - Zero I/O (sem rede, arquivo, banco, logging persistente)
+    - Zero estado global — todas as funções são puras
+    - Input padrão: DataFrame pandas com colunas OHLCV em lowercase, além de
+      dataclasses tipadas para os contratos de saída
+    - Dependências mínimas: pandas, numpy, dataclasses, typing
+
+Integração com ATR:
+    O ATR usado aqui é Wilder's RMA (Running Moving Average) do True Range,
+    calculado internamente. Equivale numericamente a
+    ``pandas_ta.atr(high, low, close, length=period, mamode='rma')`` — mesma
+    convenção adotada por ``smc_lib.py``. Manter a implementação interna evita
+    dependência transitiva pesada para um cálculo trivial.
+
+Colunas obrigatórias do DataFrame:
+    open, high, low, close, volume   (indexado por timestamp)
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+
+
+# ---------------------------------------------------------------------------
+# Constantes (defaults)
+# ---------------------------------------------------------------------------
+
+DEFAULT_ATR_PERIOD: int = 14
+DEFAULT_ATR_MULT_SL: float = 1.5
+DEFAULT_ATR_MULT_TP1: float = 1.0
+DEFAULT_ATR_MULT_TP2: float = 2.0
+DEFAULT_ATR_MULT_TP3: float = 3.5
+DEFAULT_SWING_LOOKBACK: int = 20
+DEFAULT_SWING_BUFFER_ATR: float = 0.3
+POSITION_SPLIT: tuple[float, float, float] = (0.50, 0.30, 0.20)
+MIN_LEVERAGE: float = 3.0
+MAX_LEVERAGE: float = 15.0
+DEFAULT_MIN_RR_TP1: float = 0.8
+MAX_SL_DISTANCE_PCT: float = 10.0
+
+_REQUIRED_COLUMNS: tuple[str, ...] = ("open", "high", "low", "close")
+
+
+# ---------------------------------------------------------------------------
+# Dataclasses de saída
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TradePlan:
+    """Plano completo de um trade — preços, risco e alavancagem."""
+
+    direction: str
+    entry_price: float
+    sl_price: float
+    sl_distance_pct: float
+    tp1_price: float
+    tp2_price: float
+    tp3_price: float
+    tp1_distance_pct: float
+    tp2_distance_pct: float
+    tp3_distance_pct: float
+    risk_reward_tp1: float
+    risk_reward_tp2: float
+    risk_reward_tp3: float
+    atr_value: float
+    position_split: tuple = field(default_factory=lambda: POSITION_SPLIT)
+    leverage: float = MIN_LEVERAGE
+
+
+@dataclass
+class TradeState:
+    """Estado dinâmico de um trade em andamento."""
+
+    trade_plan: TradePlan
+    current_sl: float
+    tp1_hit: bool = False
+    tp2_hit: bool = False
+    tp3_hit: bool = False
+    position_remaining: float = 1.0
+    status: str = "OPEN"
+
+
+# ---------------------------------------------------------------------------
+# Helpers privados
+# ---------------------------------------------------------------------------
+
+
+def _validate_df(df: pd.DataFrame) -> None:
+    missing = [c for c in _REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"DataFrame ausente colunas obrigatórias: {missing}")
+
+
+def _atr_series(df: pd.DataFrame, period: int) -> pd.Series:
+    """ATR interno — Wilder's RMA do True Range.
+
+    Equivale a ``pandas_ta.atr(..., mamode='rma')``. Alpha = 1/period
+    (diferente da EMA padrão que usa 2/(span+1)).
+    """
+    high = df["high"]
+    low = df["low"]
+    prev_close = df["close"].shift(1)
+
+    tr = pd.concat(
+        [
+            (high - low).abs(),
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    return tr.ewm(alpha=1 / period, adjust=False).mean()
+
+
+def _last_swing_low(df: pd.DataFrame, lookback: int) -> float:
+    """Retorna o menor low nas últimas `lookback` velas (estrutural)."""
+    window = df["low"].iloc[-lookback:]
+    return float(window.min())
+
+
+def _last_swing_high(df: pd.DataFrame, lookback: int) -> float:
+    """Retorna o maior high nas últimas `lookback` velas (estrutural)."""
+    window = df["high"].iloc[-lookback:]
+    return float(window.max())
+
+
+# ---------------------------------------------------------------------------
+# Leverage — 3 fatores ponderados (40/30/30)
+# ---------------------------------------------------------------------------
+
+
+def calculate_leverage(
+    setup_confidence: float,
+    regime: str,
+    atr_value: float,
+    entry_price: float,
+    direction: str,
+) -> float:
+    """Calcula alavancagem recomendada entre 3x e 15x.
+
+    Composta por três fatores ponderados:
+        - Setup confidence (40%) — já 0-100
+        - Alinhamento com regime (30%) — LONG em TREND_UP ou SHORT em
+          TREND_DOWN pontua 100; RANGE = 60; SQUEEZE = 40; contra-tendência = 30
+        - Volatilidade inversa (30%) — ATR/entry baixo pontua alto
+
+    O score final mapeia linearmente para ``[MIN_LEVERAGE, MAX_LEVERAGE]``.
+
+    Parâmetros:
+        setup_confidence: 0-100, confidence do setup que disparou.
+        regime: "TREND_UP" | "TREND_DOWN" | "RANGE" | "SQUEEZE".
+        atr_value: ATR absoluto do ativo.
+        entry_price: preço de entrada.
+        direction: "LONG" | "SHORT".
+
+    Retorno:
+        Alavancagem em x, arredondada a 1 casa decimal.
+    """
+    confidence_score = float(setup_confidence)
+
+    if direction == "LONG" and regime == "TREND_UP":
+        regime_score = 100.0
+    elif direction == "SHORT" and regime == "TREND_DOWN":
+        regime_score = 100.0
+    elif regime == "RANGE":
+        regime_score = 60.0
+    elif regime == "SQUEEZE":
+        regime_score = 40.0
+    else:
+        regime_score = 30.0
+
+    atr_pct = (atr_value / entry_price) * 100.0 if entry_price > 0 else 0.0
+    if atr_pct < 0.5:
+        vol_score = 100.0
+    elif atr_pct < 1.0:
+        vol_score = 75.0
+    elif atr_pct < 2.0:
+        vol_score = 50.0
+    elif atr_pct < 3.0:
+        vol_score = 30.0
+    else:
+        vol_score = 15.0
+
+    final_score = confidence_score * 0.4 + regime_score * 0.3 + vol_score * 0.3
+    leverage = MIN_LEVERAGE + (final_score / 100.0) * (MAX_LEVERAGE - MIN_LEVERAGE)
+    return round(leverage, 1)
+
+
+# ---------------------------------------------------------------------------
+# 1. Trade plan — cálculo completo de preços, distâncias e alavancagem
+# ---------------------------------------------------------------------------
+
+
+def calculate_trade_plan(
+    df: pd.DataFrame,
+    direction: str,
+    entry_price: float,
+    setup_confidence: float,
+    regime: str,
+    atr_period: int = DEFAULT_ATR_PERIOD,
+    atr_multiplier_sl: float = DEFAULT_ATR_MULT_SL,
+    atr_multiplier_tp1: float = DEFAULT_ATR_MULT_TP1,
+    atr_multiplier_tp2: float = DEFAULT_ATR_MULT_TP2,
+    atr_multiplier_tp3: float = DEFAULT_ATR_MULT_TP3,
+    swing_lookback: int = DEFAULT_SWING_LOOKBACK,
+    swing_buffer_atr: float = DEFAULT_SWING_BUFFER_ATR,
+) -> TradePlan:
+    """Calcula TradePlan completo baseado em ATR e estrutura local.
+
+    SL estrutural:
+        LONG  → min(entry - atr_mult_sl * ATR, swing_low - buffer * ATR)
+        SHORT → max(entry + atr_mult_sl * ATR, swing_high + buffer * ATR)
+
+    TPs são múltiplos fixos de ATR na direção da operação.
+
+    Parâmetros:
+        df: DataFrame com OHLCV (>= atr_period + 1 velas recomendadas).
+        direction: "LONG" | "SHORT".
+        entry_price: preço de entrada (usado como referência para TPs).
+        setup_confidence: 0-100, usado no cálculo de alavancagem.
+        regime: regime corrente para ponderar alavancagem.
+        atr_period: período do ATR.
+        atr_multiplier_sl: múltiplo de ATR para SL baseado em volatilidade.
+        atr_multiplier_tp1/tp2/tp3: múltiplos de ATR para os alvos.
+        swing_lookback: janela de velas para swing low/high estrutural.
+        swing_buffer_atr: buffer em ATR adicionado ao swing estrutural.
+
+    Retorno:
+        TradePlan populado.
+    """
+    _validate_df(df)
+    if direction not in ("LONG", "SHORT"):
+        raise ValueError(f"direction inválido: {direction!r}")
+    if entry_price <= 0:
+        raise ValueError(f"entry_price deve ser > 0, got {entry_price}")
+
+    atr_series = _atr_series(df, period=atr_period)
+    atr_value = float(atr_series.iloc[-1])
+    if np.isnan(atr_value) or atr_value <= 0:
+        raise ValueError("ATR inválido — DataFrame muito curto ou sem variação")
+
+    # SL — menor entre ATR-based e swing estrutural (LONG) ou maior (SHORT)
+    if direction == "LONG":
+        sl_atr = entry_price - atr_multiplier_sl * atr_value
+        swing_low = _last_swing_low(df, lookback=swing_lookback)
+        sl_struct = swing_low - swing_buffer_atr * atr_value
+        sl_price = min(sl_atr, sl_struct)
+
+        tp1_price = entry_price + atr_multiplier_tp1 * atr_value
+        tp2_price = entry_price + atr_multiplier_tp2 * atr_value
+        tp3_price = entry_price + atr_multiplier_tp3 * atr_value
+    else:  # SHORT
+        sl_atr = entry_price + atr_multiplier_sl * atr_value
+        swing_high = _last_swing_high(df, lookback=swing_lookback)
+        sl_struct = swing_high + swing_buffer_atr * atr_value
+        sl_price = max(sl_atr, sl_struct)
+
+        tp1_price = entry_price - atr_multiplier_tp1 * atr_value
+        tp2_price = entry_price - atr_multiplier_tp2 * atr_value
+        tp3_price = entry_price - atr_multiplier_tp3 * atr_value
+
+    sl_distance_pct = abs(entry_price - sl_price) / entry_price * 100.0
+    tp1_distance_pct = abs(tp1_price - entry_price) / entry_price * 100.0
+    tp2_distance_pct = abs(tp2_price - entry_price) / entry_price * 100.0
+    tp3_distance_pct = abs(tp3_price - entry_price) / entry_price * 100.0
+
+    risk = abs(entry_price - sl_price)
+    if direction == "LONG":
+        rr1 = (tp1_price - entry_price) / risk if risk > 0 else 0.0
+        rr2 = (tp2_price - entry_price) / risk if risk > 0 else 0.0
+        rr3 = (tp3_price - entry_price) / risk if risk > 0 else 0.0
+    else:
+        rr1 = (entry_price - tp1_price) / risk if risk > 0 else 0.0
+        rr2 = (entry_price - tp2_price) / risk if risk > 0 else 0.0
+        rr3 = (entry_price - tp3_price) / risk if risk > 0 else 0.0
+
+    leverage = calculate_leverage(
+        setup_confidence=setup_confidence,
+        regime=regime,
+        atr_value=atr_value,
+        entry_price=entry_price,
+        direction=direction,
+    )
+
+    return TradePlan(
+        direction=direction,
+        entry_price=float(entry_price),
+        sl_price=float(sl_price),
+        sl_distance_pct=float(sl_distance_pct),
+        tp1_price=float(tp1_price),
+        tp2_price=float(tp2_price),
+        tp3_price=float(tp3_price),
+        tp1_distance_pct=float(tp1_distance_pct),
+        tp2_distance_pct=float(tp2_distance_pct),
+        tp3_distance_pct=float(tp3_distance_pct),
+        risk_reward_tp1=float(rr1),
+        risk_reward_tp2=float(rr2),
+        risk_reward_tp3=float(rr3),
+        atr_value=float(atr_value),
+        position_split=POSITION_SPLIT,
+        leverage=float(leverage),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 2. Stop dinâmico — derisking V2
+# ---------------------------------------------------------------------------
+
+
+def update_trade_state(
+    trade_state: TradeState,
+    current_candle: dict,
+) -> TradeState:
+    """Atualiza o estado de um trade com base no candle mais recente.
+
+    Implementa o derisking V2:
+        LONG
+            - low <= current_sl → SL batido (LOSS_SL se nenhum TP hit;
+              WIN parcial se TP1 já hit)
+            - high >= tp1 → TP1 hit, 50% da posição realizada, SL = entry
+            - high >= tp2 → TP2 hit, +30%, SL = tp1 (só após TP1)
+            - high >= tp3 → TP3 hit, +20%, status WIN_TP3
+        SHORT: espelho invertido.
+
+    Precedência por candle:
+        - SL batido antes de qualquer TP tem precedência (stop primeiro)
+        - Se SL não bateu, avaliamos TPs em ordem (TP1 → TP2 → TP3).
+          Um único candle pode disparar múltiplos níveis em sequência.
+
+    Parâmetros:
+        trade_state: estado atual (não mutado).
+        current_candle: dict com keys open, high, low, close.
+
+    Retorno:
+        Novo TradeState com campos atualizados.
+    """
+    if trade_state.status in ("LOSS_SL", "WIN_TP1", "WIN_TP2", "WIN_TP3", "CLOSED"):
+        return trade_state
+
+    high = float(current_candle["high"])
+    low = float(current_candle["low"])
+
+    plan = trade_state.trade_plan
+    direction = plan.direction
+
+    current_sl = trade_state.current_sl
+    tp1_hit = trade_state.tp1_hit
+    tp2_hit = trade_state.tp2_hit
+    tp3_hit = trade_state.tp3_hit
+    position_remaining = trade_state.position_remaining
+    status = trade_state.status
+
+    if direction == "LONG":
+        # Stop primeiro — protege contra reversões intra-candle
+        if low <= current_sl:
+            if tp2_hit:
+                status = "WIN_TP2"
+            elif tp1_hit:
+                status = "WIN_TP1"
+            else:
+                status = "LOSS_SL"
+            position_remaining = 0.0
+            return TradeState(
+                trade_plan=plan,
+                current_sl=current_sl,
+                tp1_hit=tp1_hit,
+                tp2_hit=tp2_hit,
+                tp3_hit=tp3_hit,
+                position_remaining=position_remaining,
+                status=status,
+            )
+
+        # TP1
+        if not tp1_hit and high >= plan.tp1_price:
+            tp1_hit = True
+            position_remaining -= POSITION_SPLIT[0]
+            current_sl = plan.entry_price
+
+        # TP2 (só após TP1)
+        if tp1_hit and not tp2_hit and high >= plan.tp2_price:
+            tp2_hit = True
+            position_remaining -= POSITION_SPLIT[1]
+            current_sl = plan.tp1_price
+
+        # TP3 — runner fecha
+        if tp2_hit and not tp3_hit and high >= plan.tp3_price:
+            tp3_hit = True
+            position_remaining -= POSITION_SPLIT[2]
+            status = "WIN_TP3"
+
+    else:  # SHORT
+        if high >= current_sl:
+            if tp2_hit:
+                status = "WIN_TP2"
+            elif tp1_hit:
+                status = "WIN_TP1"
+            else:
+                status = "LOSS_SL"
+            position_remaining = 0.0
+            return TradeState(
+                trade_plan=plan,
+                current_sl=current_sl,
+                tp1_hit=tp1_hit,
+                tp2_hit=tp2_hit,
+                tp3_hit=tp3_hit,
+                position_remaining=position_remaining,
+                status=status,
+            )
+
+        if not tp1_hit and low <= plan.tp1_price:
+            tp1_hit = True
+            position_remaining -= POSITION_SPLIT[0]
+            current_sl = plan.entry_price
+
+        if tp1_hit and not tp2_hit and low <= plan.tp2_price:
+            tp2_hit = True
+            position_remaining -= POSITION_SPLIT[1]
+            current_sl = plan.tp1_price
+
+        if tp2_hit and not tp3_hit and low <= plan.tp3_price:
+            tp3_hit = True
+            position_remaining -= POSITION_SPLIT[2]
+            status = "WIN_TP3"
+
+    # Garante não-negatividade por floating point
+    if position_remaining < 1e-9:
+        position_remaining = 0.0
+
+    return TradeState(
+        trade_plan=plan,
+        current_sl=float(current_sl),
+        tp1_hit=tp1_hit,
+        tp2_hit=tp2_hit,
+        tp3_hit=tp3_hit,
+        position_remaining=float(position_remaining),
+        status=status,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 3. Risk/Reward
+# ---------------------------------------------------------------------------
+
+
+def estimate_risk_reward(trade_plan: TradePlan) -> tuple[float, float, float]:
+    """Calcula R:R para cada TP relativo ao SL.
+
+    Retorna (r1, r2, r3). Se risk for zero retorna (0, 0, 0).
+    """
+    risk = abs(trade_plan.entry_price - trade_plan.sl_price)
+    if risk <= 0:
+        return (0.0, 0.0, 0.0)
+
+    if trade_plan.direction == "LONG":
+        r1 = (trade_plan.tp1_price - trade_plan.entry_price) / risk
+        r2 = (trade_plan.tp2_price - trade_plan.entry_price) / risk
+        r3 = (trade_plan.tp3_price - trade_plan.entry_price) / risk
+    else:
+        r1 = (trade_plan.entry_price - trade_plan.tp1_price) / risk
+        r2 = (trade_plan.entry_price - trade_plan.tp2_price) / risk
+        r3 = (trade_plan.entry_price - trade_plan.tp3_price) / risk
+
+    return (float(r1), float(r2), float(r3))
+
+
+# ---------------------------------------------------------------------------
+# 4. Validação do plano
+# ---------------------------------------------------------------------------
+
+
+def validate_trade_plan(
+    trade_plan: TradePlan,
+    min_rr_tp1: float = DEFAULT_MIN_RR_TP1,
+) -> tuple[bool, str]:
+    """Verifica se o TradePlan é operacional.
+
+    Validações:
+        1. Direção coerente: TPs e SL no lado correto do entry.
+        2. R:R TP1 >= min_rr_tp1 (trade com retorno insuficiente para o risco).
+        3. SL distance <= MAX_SL_DISTANCE_PCT (stop gigante = alavancagem
+           destrutiva).
+        4. Leverage dentro do range [MIN_LEVERAGE, MAX_LEVERAGE].
+
+    Retorno:
+        (is_valid, reason) — reason = "" se válido.
+    """
+    d = trade_plan.direction
+    entry = trade_plan.entry_price
+
+    if d == "LONG":
+        if not (trade_plan.sl_price < entry < trade_plan.tp1_price
+                <= trade_plan.tp2_price <= trade_plan.tp3_price):
+            return False, "Preços incoerentes para LONG (SL < entry < TP1 <= TP2 <= TP3)"
+    elif d == "SHORT":
+        if not (trade_plan.sl_price > entry > trade_plan.tp1_price
+                >= trade_plan.tp2_price >= trade_plan.tp3_price):
+            return False, "Preços incoerentes para SHORT (SL > entry > TP1 >= TP2 >= TP3)"
+    else:
+        return False, f"Direção inválida: {d!r}"
+
+    if trade_plan.risk_reward_tp1 < min_rr_tp1:
+        return False, (
+            f"R:R TP1 abaixo do mínimo ({trade_plan.risk_reward_tp1:.2f} < {min_rr_tp1})"
+        )
+
+    if trade_plan.sl_distance_pct > MAX_SL_DISTANCE_PCT:
+        return False, (
+            f"SL distance excessiva "
+            f"({trade_plan.sl_distance_pct:.2f}% > {MAX_SL_DISTANCE_PCT}%)"
+        )
+
+    if not (MIN_LEVERAGE <= trade_plan.leverage <= MAX_LEVERAGE):
+        return False, (
+            f"Leverage fora do range [{MIN_LEVERAGE}, {MAX_LEVERAGE}]: "
+            f"{trade_plan.leverage}"
+        )
+
+    return True, ""
