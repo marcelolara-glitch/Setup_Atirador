@@ -1,684 +1,457 @@
-# indicators.py — Funções de análise técnica puras
-# Extraído de setup_atirador_v7_0_0.py — PR 5 modular-v8
-#
-# Regras de pureza:
-#   - Zero leitura/escrita de estado global
-#   - Zero I/O (sem rede, arquivo ou banco)
-#   - LOG.debug apenas — o chamador decide o que logar
-#   - Determinístico: mesmos inputs → mesmo output
-import logging
-import math
-import time
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any
+"""indicators.py — MarketContext unificado (v9).
+
+Wrapper fino sobre ``pandas_ta`` que consolida todos os indicadores técnicos
+consumidos pelos setups e pelo módulo ``risk``. A interface central é o
+dataclass :class:`MarketContext`, um snapshot completo de um token em um
+timestamp que é calculado uma única vez por rodada e reutilizado.
+
+Regras de pureza (absolutas):
+    - Zero I/O (sem rede, arquivo, banco, logging persistente)
+    - Zero estado global — funções puras
+    - Dependências: pandas, numpy, pandas_ta, smc_lib
+
+Colunas obrigatórias do DataFrame de entrada:
+    open, high, low, close, volume   (indexado por timestamp)
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
+import pandas as pd
+import pandas_ta as pta
 
-from config import (
-    BRT,
-    CANDLE_15M_SECONDS,
-    CANDLE_CLOSED_GRACE_S,
-    OB_IMPULSE_N,
-    OB_IMPULSE_PCT,
-    OB_PROXIMITY_PCT,
-    SR_PROXIMITY_PCT,
-    SWING_WINDOW,
-    ZONE_PROXIMITY_PCT,
-    ZONA_ORDER,
-)
+from smc_lib import detect_swing_points
 
-LOG = logging.getLogger("atirador")
+# ---------------------------------------------------------------------------
+# Constantes
+# ---------------------------------------------------------------------------
+
+MIN_CANDLES: int = 100
+DEFAULT_SWING_LEFT: int = 3
+DEFAULT_SWING_RIGHT: int = 3
+DEFAULT_LOOKBACK_SWING: int = 50
+
+_REQUIRED_COLUMNS: tuple[str, ...] = ("open", "high", "low", "close", "volume")
 
 
 # ---------------------------------------------------------------------------
-# IndicatorParams — objeto de configuração injetável
+# Dataclasses
 # ---------------------------------------------------------------------------
+
 
 @dataclass
-class IndicatorParams:
-    """Parâmetros de análise técnica injetáveis.
+class MarketContext:
+    """Snapshot completo de indicadores para um token em um timestamp.
 
-    Uso em produção: não passar — usa defaults de config.py.
-    Uso em backtest/sensitivity: instanciar com valores customizados.
-
-    Exemplo:
-        params = IndicatorParams(zone_proximity_pct=2.0)
-        resultado = identify_zona(c4h, c1h, price, direction, params=params)
+    Calculado uma vez por token por rodada; reutilizado por todos os setups.
     """
-    zone_proximity_pct: float = field(default_factory=lambda: ZONE_PROXIMITY_PCT)
-    sr_proximity_pct: float = field(default_factory=lambda: SR_PROXIMITY_PCT)
-    ob_impulse_n: int = field(default_factory=lambda: OB_IMPULSE_N)
-    ob_impulse_pct: float = field(default_factory=lambda: OB_IMPULSE_PCT)
-    ob_proximity_pct: float = field(default_factory=lambda: OB_PROXIMITY_PCT)
-    swing_window: int = field(default_factory=lambda: SWING_WINDOW)
+
+    # Metadata
+    symbol: str
+    timestamp: pd.Timestamp
+    timeframe: str
+
+    # Preços da última vela
+    close: float
+    open: float
+    high: float
+    low: float
+    volume: float
+
+    # Trend / momentum
+    ema9: float
+    ema21: float
+    ema50: float
+    ema_slope_21: float
+    adx: float
+    rsi_3: float
+    rsi_14: float
+    williams_r_14: float
+
+    # Volatilidade / bandas
+    atr: float
+    bb_upper: float
+    bb_middle: float
+    bb_lower: float
+    bb_width: float
+    bb_position: float
+
+    # Volume
+    volume_median_20: float
+    volume_ratio: float
+    obv: float
+    cmf: float
+
+    # Structure
+    last_swing_high: Optional[float]
+    last_swing_low: Optional[float]
+    last_swing_high_idx: Optional[int]
+    last_swing_low_idx: Optional[int]
+    structure_bias: str
+
+    # Channels
+    donchian_upper_20: float
+    donchian_lower_20: float
+    donchian_mid_20: float
+
+    # Candle atual
+    wick_top_pct: float
+    wick_bottom_pct: float
+    body_pct: float
+    is_bullish: bool
+
+
+@dataclass
+class MultiTFContext:
+    """Contexto multi-timeframe: 15m completo + 1h/4h leves."""
+
+    primary: MarketContext
+    htf_1h: dict
+    htf_4h: dict
 
 
 # ---------------------------------------------------------------------------
 # Helpers privados
 # ---------------------------------------------------------------------------
 
-def _fmt_price(p: float) -> str:
-    if p == 0:
-        return "0"
-    mag = -math.floor(math.log10(abs(p)))
-    decimals = max(4, mag + 2)
-    return f"{p:.{decimals}f}"
+
+def _validate_df(df: pd.DataFrame, *, min_candles: int = MIN_CANDLES) -> None:
+    missing = [c for c in _REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"DataFrame ausente colunas obrigatórias: {missing}")
+    if len(df) < min_candles:
+        raise ValueError(
+            f"DataFrame com {len(df)} candles; mínimo exigido: {min_candles}"
+        )
 
 
-# ---------------------------------------------------------------------------
-# Funções de análise técnica
-# ---------------------------------------------------------------------------
+def _safe_float(value: float, default: float = 0.0) -> float:
+    """Converte para float retornando ``default`` em NaN/None."""
+    if value is None:
+        return default
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return default
+    if np.isnan(f):
+        return default
+    return f
 
-def find_swing_points(
-    candles: list[dict],
-    window: int | None = None,
-    params: IndicatorParams | None = None,
-) -> tuple[list[dict], list[dict]]:
-    """Detecta swing highs e swing lows.
 
-    window tem precedência sobre params.swing_window quando fornecido.
+def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, value))
+
+
+def _derive_structure_bias(
+    last_sh_idx: Optional[int],
+    last_sl_idx: Optional[int],
+    ema21: float,
+    ema50: float,
+) -> str:
+    """Combina ordem de swings e relação EMA21/EMA50.
+
+    Regra:
+        - swing_bias: último swing mais recente é high → bullish;
+          se é low → bearish; se nenhum swing ou simultâneos → neutral.
+        - ema_bias: ema21 > ema50 → bullish; ema21 < ema50 → bearish;
+          igualdade → neutral.
+        - Resultado:
+            * Ambos direcionais e concordam → retorna a direção
+            * Um direcional e o outro neutro → retorna a direção
+            * Direcionais contraditórios ou ambos neutros → "neutral"
     """
-    p = params if params is not None else IndicatorParams()
-    if window is None:
-        window = p.swing_window
-
-    def _detect(candles, w):
-        if len(candles) < w * 2 + 1:
-            return [], []
-        highs = np.array([c["high"] for c in candles])
-        lows  = np.array([c["low"]  for c in candles])
-        sh, sl = [], []
-        for i in range(w, len(candles) - w):
-            if highs[i] == np.max(highs[i - w:i + w + 1]):
-                sh.append({"index": i, "price": highs[i]})
-            if lows[i]  == np.min(lows[i  - w:i + w + 1]):
-                sl.append({"index": i, "price": lows[i]})
-        return sh, sl
-
-    sh, sl = _detect(candles, window)
-    if (len(sh) < 3 or len(sl) < 3) and window > 3:
-        sh_fb, sl_fb = _detect(candles, 3)
-        if len(sh_fb) >= len(sh): sh = sh_fb
-        if len(sl_fb) >= len(sl): sl = sl_fb
-    return sh, sl
-
-
-def detect_order_blocks(
-    candles: list[dict],
-    params: IndicatorParams | None = None,
-) -> list[dict]:
-    """OBs bullish: último candle bearish antes de impulso ≥ OB_IMPULSE_PCT."""
-    p = params if params is not None else IndicatorParams()
-    obs = []
-    n = p.ob_impulse_n
-    for i in range(len(candles) - n - 1):
-        c = candles[i]
-        if c["close"] >= c["open"]: continue
-        ref = c["close"]
-        if ref <= 0: continue
-        max_close   = max(candles[j]["close"] for j in range(i + 1, i + n + 1))
-        impulse_pct = (max_close - ref) / ref * 100
-        if impulse_pct >= p.ob_impulse_pct:
-            obs.append({
-                "high"       : max(c["open"], c["close"]),
-                "low"        : min(c["open"], c["close"]),
-                "index"      : i,
-                "impulso_pct": round(impulse_pct, 2),
-            })
-    return obs
-
-
-def detect_order_blocks_bearish(
-    candles: list[dict],
-    params: IndicatorParams | None = None,
-) -> list[dict]:
-    """OBs bearish: último candle bullish antes de impulso de queda ≥ OB_IMPULSE_PCT."""
-    p = params if params is not None else IndicatorParams()
-    obs = []
-    n = p.ob_impulse_n
-    for i in range(len(candles) - n - 1):
-        c = candles[i]
-        if c["close"] <= c["open"]: continue
-        ref = c["close"]
-        if ref <= 0: continue
-        min_close   = min(candles[j]["close"] for j in range(i + 1, i + n + 1))
-        impulse_pct = (ref - min_close) / ref * 100
-        if impulse_pct >= p.ob_impulse_pct:
-            obs.append({
-                "high"       : max(c["open"], c["close"]),
-                "low"        : min(c["open"], c["close"]),
-                "index"      : i,
-                "impulso_pct": round(impulse_pct, 2),
-            })
-    return obs
-
-
-def analyze_support_1h(
-    candles_1h: list[dict],
-    current_price: float,
-    params: IndicatorParams | None = None,
-) -> tuple[int, str]:
-    """Detecta suporte (swing low + OB bullish) no 1H para LONG."""
-    p = params if params is not None else IndicatorParams()
-    if not candles_1h:
-        return 0, "Klines 1H indisponíveis"
-    sh, sl = find_swing_points(candles_1h, params=p)
-    score, details = 0, []
-    if sl:
-        for s in reversed(sl):
-            dist_pct = (current_price - s["price"]) / current_price * 100
-            if 0 < dist_pct <= p.sr_proximity_pct:
-                score += 2
-                details.append(f"Suporte 1H em {s['price']:.4f} ({dist_pct:.2f}% abaixo)")
-                break
-    obs = detect_order_blocks(candles_1h, params=p)
-    if obs:
-        for ob in reversed(obs[-10:]):
-            ob_mid   = (ob["high"] + ob["low"]) / 2
-            dist_pct = (current_price - ob_mid) / current_price * 100
-            if -p.ob_proximity_pct <= dist_pct <= p.ob_proximity_pct:
-                score += 2
-                details.append(f"Order Block 1H ({ob['low']:.4f}-{ob['high']:.4f})")
-                break
-    if not details:
-        return 0, "Preço longe de suportes no 1H"
-    return min(score, 4), " | ".join(details)
-
-
-def analyze_resistance_1h(
-    candles_1h: list[dict],
-    current_price: float,
-    params: IndicatorParams | None = None,
-) -> tuple[int, str]:
-    """Detecta resistência (swing high + OB bearish) no 1H para SHORT."""
-    p = params if params is not None else IndicatorParams()
-    if not candles_1h:
-        return 0, "Klines 1H indisponíveis"
-    sh, sl = find_swing_points(candles_1h, params=p)
-    score, details = 0, []
-    if sh:
-        for s in reversed(sh):
-            dist_pct = (s["price"] - current_price) / current_price * 100
-            if 0 < dist_pct <= p.sr_proximity_pct:
-                score += 2
-                details.append(f"Resistência 1H em {_fmt_price(s['price'])} ({dist_pct:.2f}% acima)")
-                break
-    obs = detect_order_blocks_bearish(candles_1h, params=p)
-    if obs:
-        for ob in reversed(obs[-10:]):
-            ob_mid   = (ob["high"] + ob["low"]) / 2
-            dist_pct = abs(current_price - ob_mid) / current_price * 100
-            if dist_pct <= p.ob_proximity_pct:
-                score += 2
-                details.append(f"OB Bearish 1H ({ob['low']:.4f}-{ob['high']:.4f})")
-                break
-    if not details:
-        return 0, "Preço longe de resistências no 1H"
-    return min(score, 4), " | ".join(details)
-
-
-def analyze_liquidity_zones_4h(
-    candles_4h: list[dict],
-    current_price: float,
-    direction: str = "LONG",
-    params: IndicatorParams | None = None,
-) -> tuple[int, str]:
-    """Detecta zonas de liquidez 4H (suportes/resistências + OBs)."""
-    p = params if params is not None else IndicatorParams()
-    sh, sl = find_swing_points(candles_4h, params=p)
-    score, details = 0, []
-    if direction == "SHORT":
-        sr_hit = False
-        if sh:
-            for s in reversed(sh):
-                dist_pct = (s["price"] - current_price) / current_price * 100
-                if 0 < dist_pct <= p.sr_proximity_pct:
-                    score += 1; sr_hit = True
-                    details.append(f"Resistência 4H {_fmt_price(s['price'])} ({dist_pct:.2f}% acima)")
-                    break
-        ob_hit = False
-        obs = detect_order_blocks_bearish(candles_4h, params=p)
-        if obs:
-            for ob in reversed(obs[-10:]):
-                ob_mid   = (ob["high"] + ob["low"]) / 2
-                dist_pct = abs(current_price - ob_mid) / current_price * 100
-                if dist_pct <= p.ob_proximity_pct:
-                    score += 1; ob_hit = True
-                    details.append(f"OB Bearish 4H ({ob['low']:.4f}-{ob['high']:.4f})")
-                    break
-        if sr_hit and ob_hit:
-            score += 1; details.append("Confluência Res+OB Bearish")
+    if last_sh_idx is None and last_sl_idx is None:
+        swing_bias = "neutral"
+    elif last_sh_idx is None:
+        swing_bias = "bearish"
+    elif last_sl_idx is None:
+        swing_bias = "bullish"
+    elif last_sh_idx > last_sl_idx:
+        swing_bias = "bullish"
+    elif last_sl_idx > last_sh_idx:
+        swing_bias = "bearish"
     else:
-        sr_hit = False
-        if sl:
-            for s in reversed(sl):
-                dist_pct = (current_price - s["price"]) / current_price * 100
-                if 0 < dist_pct <= p.sr_proximity_pct:
-                    score += 1; sr_hit = True
-                    details.append(f"Suporte 4H {s['price']:.4f} ({dist_pct:.2f}%)")
-                    break
-        ob_hit = False
-        obs = detect_order_blocks(candles_4h, params=p)
-        if obs:
-            for ob in reversed(obs[-10:]):
-                ob_mid   = (ob["high"] + ob["low"]) / 2
-                dist_pct = (current_price - ob_mid) / current_price * 100
-                if -p.ob_proximity_pct <= dist_pct <= p.ob_proximity_pct:
-                    score += 1; ob_hit = True
-                    details.append(f"OB 4H ({ob['low']:.4f}-{ob['high']:.4f})")
-                    break
-        if sr_hit and ob_hit:
-            score += 1; details.append("Confluência S/R+OB")
-    if not details:
-        label = "resistências" if direction == "SHORT" else "zonas de liquidez"
-        return 0, f"Longe de {label} 4H"
-    return min(score, 3), " | ".join(details)
+        swing_bias = "neutral"
+
+    if ema21 > ema50:
+        ema_bias = "bullish"
+    elif ema21 < ema50:
+        ema_bias = "bearish"
+    else:
+        ema_bias = "neutral"
+
+    if swing_bias == "neutral" and ema_bias == "neutral":
+        return "neutral"
+    if swing_bias == "neutral":
+        return ema_bias
+    if ema_bias == "neutral":
+        return swing_bias
+    if swing_bias == ema_bias:
+        return swing_bias
+    return "neutral"  # contradição direcional
 
 
-def identify_zona(
-    candles_4h: list[dict],
-    candles_1h: list[dict],
-    current_price: float,
-    direction: str,
-    params: IndicatorParams | None = None,
-) -> tuple[str, str]:
-    """Identifica a zona de decisão onde o preço se encontra.
+def _last_swing_prices(
+    df: pd.DataFrame, left: int, right: int
+) -> tuple[Optional[float], Optional[float], Optional[int], Optional[int]]:
+    """Extrai preço e índice (posicional) das últimas swing high e swing low.
 
-    Retorna (zona_qualidade, zona_descricao).
-
-    Hierarquia SHORT (bearish zones):
-      MAXIMA    — preço dentro de OB Bearish 4H E dentro de ZONE_PROXIMITY_PCT% de resistência 4H
-      ALTA_OB4H — preço dentro de OB Bearish 4H
-      ALTA_OB1H — preço dentro de OB Bearish 1H
-      MEDIA     — preço dentro de ZONE_PROXIMITY_PCT% acima de resistência 4H
-      BASE      — preço dentro de ZONE_PROXIMITY_PCT% acima de resistência 1H
-      NENHUMA   — fora de qualquer zona
-
-    Hierarquia LONG (bullish zones) — espelho simétrico com suportes.
+    Os índices retornados são posicionais dentro de ``df`` (0..len(df)-1),
+    não labels do ``DatetimeIndex`` — callers que precisem de timestamp podem
+    acessar ``df.index[idx]``.
     """
-    p = params if params is not None else IndicatorParams()
-    if not candles_4h or not candles_1h:
-        return "NENHUMA", "Klines insuficientes"
+    swings = detect_swing_points(df, left=left, right=right)
+    sh_mask = swings["swing_high"].to_numpy()
+    sl_mask = swings["swing_low"].to_numpy()
 
-    sh4, sl4 = find_swing_points(candles_4h, params=p)
-    sh1, sl1 = find_swing_points(candles_1h, params=p)
+    high = df["high"].to_numpy(dtype=float)
+    low = df["low"].to_numpy(dtype=float)
 
-    if direction == "SHORT":
-        # Verifica OB Bearish 4H (preço dentro do corpo do OB)
-        obs_4h_b   = detect_order_blocks_bearish(candles_4h, params=p)
-        in_ob_4h   = False
-        ob_4h_desc = ""
-        for ob in reversed(obs_4h_b[-10:]):
-            if ob["low"] <= current_price <= ob["high"]:
-                in_ob_4h   = True
-                ob_4h_desc = f"OB Bearish 4H: {_fmt_price(ob['low'])}–{_fmt_price(ob['high'])}"
-                break
+    sh_positions = np.flatnonzero(sh_mask)
+    sl_positions = np.flatnonzero(sl_mask)
 
-        # Verifica resistência 4H (swing high dentro de zone_proximity_pct% acima)
-        near_res_4h  = False
-        res_4h_price = 0.0
-        if sh4:
-            for s in reversed(sh4):
-                if s["price"] >= current_price:
-                    dist_pct = (s["price"] - current_price) / current_price * 100
-                    if dist_pct <= p.zone_proximity_pct:
-                        near_res_4h  = True
-                        res_4h_price = s["price"]
-                        break
+    last_sh_price = float(high[sh_positions[-1]]) if sh_positions.size else None
+    last_sh_idx = int(sh_positions[-1]) if sh_positions.size else None
+    last_sl_price = float(low[sl_positions[-1]]) if sl_positions.size else None
+    last_sl_idx = int(sl_positions[-1]) if sl_positions.size else None
 
-        # Verifica OB Bearish 1H
-        obs_1h_b   = detect_order_blocks_bearish(candles_1h, params=p)
-        in_ob_1h   = False
-        ob_1h_desc = ""
-        for ob in reversed(obs_1h_b[-10:]):
-            if ob["low"] <= current_price <= ob["high"]:
-                in_ob_1h   = True
-                ob_1h_desc = f"OB Bearish 1H: {_fmt_price(ob['low'])}–{_fmt_price(ob['high'])}"
-                break
-
-        # Verifica resistência 1H
-        near_res_1h  = False
-        res_1h_price = 0.0
-        if sh1:
-            for s in reversed(sh1):
-                if s["price"] >= current_price:
-                    dist_pct = (s["price"] - current_price) / current_price * 100
-                    if dist_pct <= p.zone_proximity_pct:
-                        near_res_1h  = True
-                        res_1h_price = s["price"]
-                        break
-
-        # Hierarquia
-        if in_ob_4h and near_res_4h:
-            return "MAXIMA", f"{ob_4h_desc} + Res 4H: {_fmt_price(res_4h_price)}"
-        if in_ob_4h:
-            return "ALTA_OB4H", ob_4h_desc
-        if in_ob_1h:
-            return "ALTA_OB1H", ob_1h_desc
-        if near_res_4h:
-            return "MEDIA", f"Resistência 4H: {_fmt_price(res_4h_price)}"
-        if near_res_1h:
-            return "BASE", f"Resistência 1H: {_fmt_price(res_1h_price)}"
-        return "NENHUMA", "Fora de zona"
-
-    else:  # LONG
-        # OB Bullish 4H
-        obs_4h_b   = detect_order_blocks(candles_4h, params=p)
-        in_ob_4h   = False
-        ob_4h_desc = ""
-        for ob in reversed(obs_4h_b[-10:]):
-            if ob["low"] <= current_price <= ob["high"]:
-                in_ob_4h   = True
-                ob_4h_desc = f"OB Bullish 4H: {_fmt_price(ob['low'])}–{_fmt_price(ob['high'])}"
-                break
-
-        # Suporte 4H
-        near_sup_4h  = False
-        sup_4h_price = 0.0
-        if sl4:
-            for s in reversed(sl4):
-                if s["price"] <= current_price:
-                    dist_pct = (current_price - s["price"]) / current_price * 100
-                    if dist_pct <= p.zone_proximity_pct:
-                        near_sup_4h  = True
-                        sup_4h_price = s["price"]
-                        break
-
-        # OB Bullish 1H
-        obs_1h_b   = detect_order_blocks(candles_1h, params=p)
-        in_ob_1h   = False
-        ob_1h_desc = ""
-        for ob in reversed(obs_1h_b[-10:]):
-            if ob["low"] <= current_price <= ob["high"]:
-                in_ob_1h   = True
-                ob_1h_desc = f"OB Bullish 1H: {_fmt_price(ob['low'])}–{_fmt_price(ob['high'])}"
-                break
-
-        # Suporte 1H
-        near_sup_1h  = False
-        sup_1h_price = 0.0
-        if sl1:
-            for s in reversed(sl1):
-                if s["price"] <= current_price:
-                    dist_pct = (current_price - s["price"]) / current_price * 100
-                    if dist_pct <= p.zone_proximity_pct:
-                        near_sup_1h  = True
-                        sup_1h_price = s["price"]
-                        break
-
-        # Hierarquia
-        if in_ob_4h and near_sup_4h:
-            return "MAXIMA", f"{ob_4h_desc} + Sup 4H: {_fmt_price(sup_4h_price)}"
-        if in_ob_4h:
-            return "ALTA_OB4H", ob_4h_desc
-        if in_ob_1h:
-            return "ALTA_OB1H", ob_1h_desc
-        if near_sup_4h:
-            return "MEDIA", f"Suporte 4H: {_fmt_price(sup_4h_price)}"
-        if near_sup_1h:
-            return "BASE", f"Suporte 1H: {_fmt_price(sup_1h_price)}"
-        return "NENHUMA", "Fora de zona"
+    return last_sh_price, last_sl_price, last_sh_idx, last_sl_idx
 
 
-_ZONA_SCORE_RICH: dict[str, int] = {
-    "MAXIMA": 4, "ALTA_OB4H": 3, "ALTA_OB1H": 3,
-    "MEDIA": 2, "BASE": 1, "NENHUMA": 0,
-}
+def _build_htf_dict(df: pd.DataFrame) -> dict:
+    """Resumo leve de um timeframe superior.
 
-
-def identify_zona_rich(
-    candles_4h: list[dict],
-    candles_1h: list[dict],
-    current_price: float,
-    direction: str,
-    params: IndicatorParams | None = None,
-) -> dict:
-    """Versão rica de identify_zona() — mesma lógica, retorna evidências detalhadas.
-
-    identify_zona() original não é alterada — continua sendo a fonte de
-    zona_qualidade e zona_descricao para o pipeline de decisão.
-
-    Retorna dict com zona, descricao, score_contribuicao e evidencias.
+    Campos:
+        ema21_above_ema50 : bool
+        rsi_14            : float
+        adx               : float
     """
-    p = params if params is not None else IndicatorParams()
+    ema21 = _safe_float(pta.ema(df["close"], length=21).iloc[-1])
+    ema50 = _safe_float(pta.ema(df["close"], length=50).iloc[-1])
+    rsi_14 = _safe_float(pta.rsi(df["close"], length=14).iloc[-1], default=50.0)
 
-    def _build(zona: str, descricao: str, ev: dict) -> dict:
-        return {
-            "zona"              : zona,
-            "descricao"         : descricao,
-            "score_contribuicao": _ZONA_SCORE_RICH.get(zona, 0),
-            "evidencias"        : ev,
-        }
+    adx_df = pta.adx(df["high"], df["low"], df["close"], length=14)
+    adx_val = 0.0
+    if adx_df is not None and "ADX_14" in adx_df.columns:
+        adx_val = _safe_float(adx_df["ADX_14"].iloc[-1])
 
-    _empty_ev: dict = {"ob_4h": None, "ob_1h": None, "sr_4h": None, "sr_1h": None}
-
-    if not candles_4h or not candles_1h:
-        return _build("NENHUMA", "Klines insuficientes", _empty_ev)
-
-    sh4, sl4 = find_swing_points(candles_4h, params=p)
-    sh1, sl1 = find_swing_points(candles_1h, params=p)
-
-    ev_ob_4h: dict | None = None
-    ev_ob_1h: dict | None = None
-    ev_sr_4h: dict | None = None
-    ev_sr_1h: dict | None = None
-
-    if direction == "SHORT":
-        # OB Bearish 4H
-        obs_4h_b    = detect_order_blocks_bearish(candles_4h, params=p)
-        in_ob_4h    = False
-        ob_4h_desc  = ""
-        found_ob_4h = None
-        for ob in reversed(obs_4h_b[-10:]):
-            if ob["low"] <= current_price <= ob["high"]:
-                in_ob_4h    = True
-                ob_4h_desc  = f"OB Bearish 4H: {_fmt_price(ob['low'])}–{_fmt_price(ob['high'])}"
-                found_ob_4h = ob
-                break
-        if found_ob_4h is not None:
-            ob_mid   = (found_ob_4h["high"] + found_ob_4h["low"]) / 2
-            ev_ob_4h = {
-                "low"          : found_ob_4h["low"],
-                "high"         : found_ob_4h["high"],
-                "impulso_pct"  : found_ob_4h.get("impulso_pct", 0.0),
-                "distancia_pct": round(abs(current_price - ob_mid) / current_price * 100, 4),
-                "preco_dentro" : found_ob_4h["low"] <= current_price <= found_ob_4h["high"],
-            }
-
-        # Resistência 4H
-        near_res_4h  = False
-        res_4h_price = 0.0
-        if sh4:
-            for s in reversed(sh4):
-                if s["price"] >= current_price:
-                    dist_pct = (s["price"] - current_price) / current_price * 100
-                    if dist_pct <= p.zone_proximity_pct:
-                        near_res_4h  = True
-                        res_4h_price = s["price"]
-                        break
-        if near_res_4h:
-            ev_sr_4h = {
-                "price"        : res_4h_price,
-                "distancia_pct": round(abs(current_price - res_4h_price) / current_price * 100, 4),
-                "dentro_zona"  : True,
-            }
-
-        # OB Bearish 1H
-        obs_1h_b    = detect_order_blocks_bearish(candles_1h, params=p)
-        in_ob_1h    = False
-        ob_1h_desc  = ""
-        found_ob_1h = None
-        for ob in reversed(obs_1h_b[-10:]):
-            if ob["low"] <= current_price <= ob["high"]:
-                in_ob_1h    = True
-                ob_1h_desc  = f"OB Bearish 1H: {_fmt_price(ob['low'])}–{_fmt_price(ob['high'])}"
-                found_ob_1h = ob
-                break
-        if found_ob_1h is not None:
-            ob_mid   = (found_ob_1h["high"] + found_ob_1h["low"]) / 2
-            ev_ob_1h = {
-                "low"          : found_ob_1h["low"],
-                "high"         : found_ob_1h["high"],
-                "impulso_pct"  : found_ob_1h.get("impulso_pct", 0.0),
-                "distancia_pct": round(abs(current_price - ob_mid) / current_price * 100, 4),
-                "preco_dentro" : found_ob_1h["low"] <= current_price <= found_ob_1h["high"],
-            }
-
-        # Resistência 1H
-        near_res_1h  = False
-        res_1h_price = 0.0
-        if sh1:
-            for s in reversed(sh1):
-                if s["price"] >= current_price:
-                    dist_pct = (s["price"] - current_price) / current_price * 100
-                    if dist_pct <= p.zone_proximity_pct:
-                        near_res_1h  = True
-                        res_1h_price = s["price"]
-                        break
-        if near_res_1h:
-            ev_sr_1h = {
-                "price"        : res_1h_price,
-                "distancia_pct": round(abs(current_price - res_1h_price) / current_price * 100, 4),
-                "dentro_zona"  : True,
-            }
-
-        ev = {"ob_4h": ev_ob_4h, "ob_1h": ev_ob_1h, "sr_4h": ev_sr_4h, "sr_1h": ev_sr_1h}
-        if in_ob_4h and near_res_4h:
-            return _build("MAXIMA",    f"{ob_4h_desc} + Res 4H: {_fmt_price(res_4h_price)}", ev)
-        if in_ob_4h:
-            return _build("ALTA_OB4H", ob_4h_desc, ev)
-        if in_ob_1h:
-            return _build("ALTA_OB1H", ob_1h_desc, ev)
-        if near_res_4h:
-            return _build("MEDIA",     f"Resistência 4H: {_fmt_price(res_4h_price)}", ev)
-        if near_res_1h:
-            return _build("BASE",      f"Resistência 1H: {_fmt_price(res_1h_price)}", ev)
-        return _build("NENHUMA", "Fora de zona", ev)
-
-    else:  # LONG
-        # OB Bullish 4H
-        obs_4h_b    = detect_order_blocks(candles_4h, params=p)
-        in_ob_4h    = False
-        ob_4h_desc  = ""
-        found_ob_4h = None
-        for ob in reversed(obs_4h_b[-10:]):
-            if ob["low"] <= current_price <= ob["high"]:
-                in_ob_4h    = True
-                ob_4h_desc  = f"OB Bullish 4H: {_fmt_price(ob['low'])}–{_fmt_price(ob['high'])}"
-                found_ob_4h = ob
-                break
-        if found_ob_4h is not None:
-            ob_mid   = (found_ob_4h["high"] + found_ob_4h["low"]) / 2
-            ev_ob_4h = {
-                "low"          : found_ob_4h["low"],
-                "high"         : found_ob_4h["high"],
-                "impulso_pct"  : found_ob_4h.get("impulso_pct", 0.0),
-                "distancia_pct": round(abs(current_price - ob_mid) / current_price * 100, 4),
-                "preco_dentro" : found_ob_4h["low"] <= current_price <= found_ob_4h["high"],
-            }
-
-        # Suporte 4H
-        near_sup_4h  = False
-        sup_4h_price = 0.0
-        if sl4:
-            for s in reversed(sl4):
-                if s["price"] <= current_price:
-                    dist_pct = (current_price - s["price"]) / current_price * 100
-                    if dist_pct <= p.zone_proximity_pct:
-                        near_sup_4h  = True
-                        sup_4h_price = s["price"]
-                        break
-        if near_sup_4h:
-            ev_sr_4h = {
-                "price"        : sup_4h_price,
-                "distancia_pct": round(abs(current_price - sup_4h_price) / current_price * 100, 4),
-                "dentro_zona"  : True,
-            }
-
-        # OB Bullish 1H
-        obs_1h_b    = detect_order_blocks(candles_1h, params=p)
-        in_ob_1h    = False
-        ob_1h_desc  = ""
-        found_ob_1h = None
-        for ob in reversed(obs_1h_b[-10:]):
-            if ob["low"] <= current_price <= ob["high"]:
-                in_ob_1h    = True
-                ob_1h_desc  = f"OB Bullish 1H: {_fmt_price(ob['low'])}–{_fmt_price(ob['high'])}"
-                found_ob_1h = ob
-                break
-        if found_ob_1h is not None:
-            ob_mid   = (found_ob_1h["high"] + found_ob_1h["low"]) / 2
-            ev_ob_1h = {
-                "low"          : found_ob_1h["low"],
-                "high"         : found_ob_1h["high"],
-                "impulso_pct"  : found_ob_1h.get("impulso_pct", 0.0),
-                "distancia_pct": round(abs(current_price - ob_mid) / current_price * 100, 4),
-                "preco_dentro" : found_ob_1h["low"] <= current_price <= found_ob_1h["high"],
-            }
-
-        # Suporte 1H
-        near_sup_1h  = False
-        sup_1h_price = 0.0
-        if sl1:
-            for s in reversed(sl1):
-                if s["price"] <= current_price:
-                    dist_pct = (current_price - s["price"]) / current_price * 100
-                    if dist_pct <= p.zone_proximity_pct:
-                        near_sup_1h  = True
-                        sup_1h_price = s["price"]
-                        break
-        if near_sup_1h:
-            ev_sr_1h = {
-                "price"        : sup_1h_price,
-                "distancia_pct": round(abs(current_price - sup_1h_price) / current_price * 100, 4),
-                "dentro_zona"  : True,
-            }
-
-        ev = {"ob_4h": ev_ob_4h, "ob_1h": ev_ob_1h, "sr_4h": ev_sr_4h, "sr_1h": ev_sr_1h}
-        if in_ob_4h and near_sup_4h:
-            return _build("MAXIMA",    f"{ob_4h_desc} + Sup 4H: {_fmt_price(sup_4h_price)}", ev)
-        if in_ob_4h:
-            return _build("ALTA_OB4H", ob_4h_desc, ev)
-        if in_ob_1h:
-            return _build("ALTA_OB1H", ob_1h_desc, ev)
-        if near_sup_4h:
-            return _build("MEDIA",     f"Suporte 4H: {_fmt_price(sup_4h_price)}", ev)
-        if near_sup_1h:
-            return _build("BASE",      f"Suporte 1H: {_fmt_price(sup_1h_price)}", ev)
-        return _build("NENHUMA", "Fora de zona", ev)
-
-
-def get_candle_lock_status() -> dict:
-    """[v6.3.0 A4] Verifica se o candle 15m atual está fechado e propagado."""
-    now_ts              = time.time()
-    seconds_in_period   = now_ts % CANDLE_15M_SECONDS
-    seconds_since_close = seconds_in_period
-    closed              = seconds_since_close >= CANDLE_CLOSED_GRACE_S
-    use_prev            = not closed
-    next_close          = CANDLE_15M_SECONDS - seconds_since_close
-    ts_last = datetime.fromtimestamp(now_ts - seconds_since_close, BRT).strftime("%H:%M:%S BRT")
     return {
-        "closed"       : closed,
-        "use_prev"     : use_prev,
-        "seconds_open" : seconds_since_close,
-        "seconds_ago"  : seconds_since_close,
-        "next_close"   : next_close,
-        "ts_last_close": ts_last,
+        "ema21_above_ema50": bool(ema21 > ema50),
+        "rsi_14": rsi_14,
+        "adx": adx_val,
     }
 
 
-def apply_candle_lock(
-    candles_15m: list[dict],
-    lock: dict,
-) -> list[dict]:
-    """[v8.1.0] Descarta candle aberto baseado no timestamp real do kline."""
-    if not candles_15m or len(candles_15m) < 2:
-        return candles_15m
-    now_ts_ms = int(time.time() * 1000)
-    period_ms = CANDLE_15M_SECONDS * 1000
-    current_period_open_ms = (now_ts_ms // period_ms) * period_ms
-    last_ts = candles_15m[-1]["ts"]
-    if last_ts >= current_period_open_ms:
-        return candles_15m[:-1]  # descarta candle aberto
-    return candles_15m
+# ---------------------------------------------------------------------------
+# API pública
+# ---------------------------------------------------------------------------
+
+
+def build_market_context(
+    df: pd.DataFrame,
+    symbol: str,
+    timeframe: str = "15m",
+) -> MarketContext:
+    """Calcula todos os indicadores e retorna um :class:`MarketContext`.
+
+    Parâmetros:
+        df: DataFrame OHLCV com no mínimo ``MIN_CANDLES`` (100) candles,
+            indexado por timestamp (ordem cronológica crescente).
+        symbol: identificador do token (ex.: ``"BTCUSDT"``).
+        timeframe: timeframe dos candles (padrão ``"15m"``).
+
+    Retorno:
+        :class:`MarketContext` com valores extraídos da última vela de ``df``.
+
+    Exceções:
+        ValueError se colunas obrigatórias estão ausentes ou
+        ``len(df) < MIN_CANDLES``.
+    """
+    _validate_df(df)
+
+    close = df["close"]
+    high = df["high"]
+    low = df["low"]
+    open_ = df["open"]
+    volume = df["volume"]
+
+    # --- Trend / momentum --------------------------------------------------
+    ema9_series = pta.ema(close, length=9)
+    ema21_series = pta.ema(close, length=21)
+    ema50_series = pta.ema(close, length=50)
+    ema9 = _safe_float(ema9_series.iloc[-1])
+    ema21 = _safe_float(ema21_series.iloc[-1])
+    ema50 = _safe_float(ema50_series.iloc[-1])
+
+    ema21_prev = (
+        _safe_float(ema21_series.iloc[-6]) if len(ema21_series) >= 6 else 0.0
+    )
+    if ema21_prev > 0:
+        ema_slope_21 = (ema21 - ema21_prev) / ema21_prev * 100.0
+    else:
+        ema_slope_21 = 0.0
+
+    adx_df = pta.adx(high, low, close, length=14)
+    adx = 0.0
+    if adx_df is not None and "ADX_14" in adx_df.columns:
+        adx = _safe_float(adx_df["ADX_14"].iloc[-1])
+
+    rsi_3 = _safe_float(pta.rsi(close, length=3).iloc[-1], default=50.0)
+    rsi_14 = _safe_float(pta.rsi(close, length=14).iloc[-1], default=50.0)
+    williams_r_14 = _safe_float(
+        pta.willr(high, low, close, length=14).iloc[-1], default=-50.0
+    )
+
+    # --- Volatilidade / bandas --------------------------------------------
+    atr = _safe_float(pta.atr(high, low, close, length=14).iloc[-1])
+
+    bb = pta.bbands(close, length=20, std=2)
+    bb_upper = _safe_float(bb["BBU_20_2.0"].iloc[-1])
+    bb_middle = _safe_float(bb["BBM_20_2.0"].iloc[-1])
+    bb_lower = _safe_float(bb["BBL_20_2.0"].iloc[-1])
+    bb_range = bb_upper - bb_lower
+    bb_width = bb_range / bb_middle if bb_middle > 0 else 0.0
+    last_close = _safe_float(close.iloc[-1])
+    bb_position = (
+        _clamp((last_close - bb_lower) / bb_range) if bb_range > 0 else 0.5
+    )
+
+    # --- Volume ------------------------------------------------------------
+    volume_median_20 = _safe_float(volume.rolling(20).median().iloc[-1])
+    last_volume = _safe_float(volume.iloc[-1])
+    volume_ratio = (
+        last_volume / volume_median_20 if volume_median_20 > 0 else 0.0
+    )
+    obv = _safe_float(pta.obv(close, volume).iloc[-1])
+    cmf = _safe_float(pta.cmf(high, low, close, volume, length=20).iloc[-1])
+
+    # --- Structure ---------------------------------------------------------
+    last_sh_price, last_sl_price, last_sh_idx, last_sl_idx = _last_swing_prices(
+        df, left=DEFAULT_SWING_LEFT, right=DEFAULT_SWING_RIGHT
+    )
+    structure_bias = _derive_structure_bias(
+        last_sh_idx, last_sl_idx, ema21, ema50
+    )
+
+    # --- Channels ----------------------------------------------------------
+    donchian_upper_20 = _safe_float(high.rolling(20).max().iloc[-1])
+    donchian_lower_20 = _safe_float(low.rolling(20).min().iloc[-1])
+    donchian_mid_20 = (donchian_upper_20 + donchian_lower_20) / 2.0
+
+    # --- Candle atual ------------------------------------------------------
+    last_open = _safe_float(open_.iloc[-1])
+    last_high = _safe_float(high.iloc[-1])
+    last_low = _safe_float(low.iloc[-1])
+    rng = last_high - last_low
+    if rng > 0:
+        wick_top_pct = (last_high - max(last_open, last_close)) / rng
+        wick_bottom_pct = (min(last_open, last_close) - last_low) / rng
+        body_pct = abs(last_close - last_open) / rng
+    else:
+        wick_top_pct = 0.0
+        wick_bottom_pct = 0.0
+        body_pct = 0.0
+    is_bullish = last_close > last_open
+
+    return MarketContext(
+        symbol=symbol,
+        timestamp=df.index[-1],
+        timeframe=timeframe,
+        close=last_close,
+        open=last_open,
+        high=last_high,
+        low=last_low,
+        volume=last_volume,
+        ema9=ema9,
+        ema21=ema21,
+        ema50=ema50,
+        ema_slope_21=ema_slope_21,
+        adx=adx,
+        rsi_3=rsi_3,
+        rsi_14=rsi_14,
+        williams_r_14=williams_r_14,
+        atr=atr,
+        bb_upper=bb_upper,
+        bb_middle=bb_middle,
+        bb_lower=bb_lower,
+        bb_width=bb_width,
+        bb_position=bb_position,
+        volume_median_20=volume_median_20,
+        volume_ratio=volume_ratio,
+        obv=obv,
+        cmf=cmf,
+        last_swing_high=last_sh_price,
+        last_swing_low=last_sl_price,
+        last_swing_high_idx=last_sh_idx,
+        last_swing_low_idx=last_sl_idx,
+        structure_bias=structure_bias,
+        donchian_upper_20=donchian_upper_20,
+        donchian_lower_20=donchian_lower_20,
+        donchian_mid_20=donchian_mid_20,
+        wick_top_pct=wick_top_pct,
+        wick_bottom_pct=wick_bottom_pct,
+        body_pct=body_pct,
+        is_bullish=is_bullish,
+    )
+
+
+def build_multi_timeframe_context(
+    df_15m: pd.DataFrame,
+    df_1h: pd.DataFrame,
+    df_4h: pd.DataFrame,
+    symbol: str,
+) -> MultiTFContext:
+    """Contexto multi-timeframe: :class:`MarketContext` em 15m + resumos HTF.
+
+    Parâmetros:
+        df_15m, df_1h, df_4h: DataFrames OHLCV por timeframe.
+        symbol: identificador do token.
+
+    Retorno:
+        :class:`MultiTFContext` com ``primary`` em 15m e dicts leves
+        ``{"ema21_above_ema50", "rsi_14", "adx"}`` para 1h e 4h.
+    """
+    primary = build_market_context(df_15m, symbol, timeframe="15m")
+    return MultiTFContext(
+        primary=primary,
+        htf_1h=_build_htf_dict(df_1h),
+        htf_4h=_build_htf_dict(df_4h),
+    )
+
+
+def get_last_swing_levels(
+    df: pd.DataFrame,
+    lookback: int = DEFAULT_LOOKBACK_SWING,
+) -> tuple[Optional[float], Optional[float], Optional[int], Optional[int]]:
+    """Últimas swing high e swing low válidas na janela recente.
+
+    Útil para SL estrutural sem precisar calcular o :class:`MarketContext`
+    completo.
+
+    Parâmetros:
+        df: DataFrame OHLCV.
+        lookback: número de candles finais a considerar (padrão 50).
+
+    Retorno:
+        Tupla ``(last_sh_price, last_sl_price, last_sh_idx, last_sl_idx)``.
+        Os índices são posicionais dentro de ``df`` (0..len(df)-1).
+        ``None`` nos campos onde nenhum swing foi encontrado na janela.
+    """
+    n = len(df)
+    if n == 0:
+        return None, None, None, None
+
+    lookback = min(lookback, n)
+    start = n - lookback
+    recent = df.iloc[start:]
+
+    sh_price, sl_price, sh_rel, sl_rel = _last_swing_prices(
+        recent, left=DEFAULT_SWING_LEFT, right=DEFAULT_SWING_RIGHT
+    )
+
+    sh_idx = sh_rel + start if sh_rel is not None else None
+    sl_idx = sl_rel + start if sl_rel is not None else None
+    return sh_price, sl_price, sh_idx, sl_idx
