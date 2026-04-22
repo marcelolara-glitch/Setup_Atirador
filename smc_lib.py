@@ -106,13 +106,18 @@ def _validate_df(df: pd.DataFrame, need_volume: bool = True) -> None:
 
 
 def _atr(df: pd.DataFrame, period: int = DEFAULT_ATR_PERIOD) -> pd.Series:
-    """ATR interno — EMA do True Range.
+    """ATR interno — Wilder's RMA (Running Moving Average) do True Range.
+
+    Wilder's RMA é o ATR canônico usado em Pine Script e na maioria dos
+    sistemas de TA. Equivale a uma EMA com alpha=1/period (em vez do
+    alpha=2/(span+1) da EMA padrão). Garante compatibilidade numérica com
+    indicadores de referência (LuxAlgo, Flux Charts, pandas_ta).
 
     Usado apenas para normalização de forças/gaps. Não exportado publicamente.
 
     Parâmetros:
         df: DataFrame com colunas high, low, close.
-        period: período da EMA (padrão 14).
+        period: período do RMA (padrão 14).
 
     Retorno:
         pd.Series de ATR indexada como df. Primeiros valores podem ser NaN.
@@ -130,7 +135,7 @@ def _atr(df: pd.DataFrame, period: int = DEFAULT_ATR_PERIOD) -> pd.Series:
         axis=1,
     ).max(axis=1)
 
-    return tr.ewm(span=period, adjust=False).mean()
+    return tr.ewm(alpha=1 / period, adjust=False).mean()
 
 
 # ---------------------------------------------------------------------------
