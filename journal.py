@@ -391,16 +391,191 @@ class TradeJournalV9:
     # ── métodos públicos — stubs (implementados em 12c.B/C/D) ───────────────
 
     def open_trade(self, decision: Any, fgi: int = 0) -> Optional[str]:
-        """Registra novo trade a partir de SignalDecision. [12c.B]"""
-        raise NotImplementedError("open_trade: será implementado em 12c.B")
+        """Registra novo trade a partir de um ``SignalDecision`` com action=CALL.
+
+        Parâmetros:
+            decision: Duck-typed SignalDecision. Precisa ter atributos
+                symbol, direction, action, signal_tag, confluent_setups,
+                confidence, regime, trade_plan e all_setup_results.
+            fgi: Fear & Greed index opcional para contexto (default 0).
+
+        Retorno:
+            trade_id no formato ``"{symbol}_{direction}_{YYYYMMDD_HHMM}"``.
+            None se:
+                - decision.action != "CALL"
+                - decision.trade_plan é None
+                - erro de I/O ao persistir
+
+        Dedupe: se já existir trade OPEN para (symbol, direction), retorna
+        o id existente sem criar nova linha. Log em nível DEBUG.
+        """
+        # Validações iniciais
+        action = getattr(decision, "action", None)
+        if action != "CALL":
+            return None
+
+        trade_plan = getattr(decision, "trade_plan", None)
+        if trade_plan is None:
+            return None
+
+        symbol = getattr(decision, "symbol", None)
+        direction = getattr(decision, "direction", None)
+        if not symbol or direction not in ("LONG", "SHORT"):
+            return None
+
+        # Dedupe por (symbol, direction, OPEN)
+        try:
+            existing = self.get_open_trade(symbol, direction)
+        except Exception as e:
+            LOG.warning(f"[TradeJournalV9] Falha no dedupe de {symbol} {direction}: {e}")
+            existing = None
+
+        if existing:
+            LOG.debug(
+                f"[TradeJournalV9] Trade já aberto para {symbol} {direction} "
+                f"— dedupe (id existente: {existing['id']})"
+            )
+            return existing["id"]
+
+        # Monta trade_id e timestamp
+        now = datetime.now(BRT)
+        round_suffix = now.strftime("%Y%m%d_%H%M")
+        trade_id = f"{symbol}_{direction}_{round_suffix}"
+        ts = now.isoformat()
+
+        # Extrai campos do trade_plan (duck-typed)
+        try:
+            entry_price = float(getattr(trade_plan, "entry_price"))
+            sl_price = float(getattr(trade_plan, "sl_price"))
+            tp1_price = float(getattr(trade_plan, "tp1_price"))
+            tp2_price = float(getattr(trade_plan, "tp2_price"))
+            tp3_price = float(getattr(trade_plan, "tp3_price"))
+            leverage = float(getattr(trade_plan, "leverage"))
+            atr_value = float(getattr(trade_plan, "atr_value", 0.0) or 0.0)
+            position_split = list(getattr(trade_plan, "position_split", (0.5, 0.3, 0.2)))
+        except Exception as e:
+            LOG.warning(f"[TradeJournalV9] trade_plan inválido para {symbol}: {e}")
+            return None
+
+        # Extrai campos do decision
+        signal_tag = getattr(decision, "signal_tag", None) or "unknown"
+        confluent_setups = list(getattr(decision, "confluent_setups", []) or [])
+        confidence = float(getattr(decision, "confidence", 0.0) or 0.0)
+        regime = getattr(decision, "regime", "UNKNOWN") or "UNKNOWN"
+
+        # Monta evidence a partir dos setups que triggered
+        try:
+            all_results = list(getattr(decision, "all_setup_results", []) or [])
+            evidence = [
+                {
+                    "setup_name": getattr(r, "setup_name", None),
+                    "evidence": getattr(r, "evidence", {}) or {},
+                }
+                for r in all_results
+                if getattr(r, "triggered", False)
+            ]
+        except Exception:
+            evidence = []
+
+        # Persiste
+        try:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """INSERT INTO trades (
+                           id, timestamp, symbol, direction, setup_name,
+                           confluent_setups, confidence, regime_at_entry,
+                           entry_price, sl_price, current_sl,
+                           tp1_price, tp2_price, tp3_price,
+                           leverage, atr_value, position_split,
+                           tp1_hit, tp2_hit, tp3_hit, position_remaining,
+                           context_fgi, context_btc_regime,
+                           status, timeout_hours, evidence_json,
+                           max_runup, max_drawdown
+                       ) VALUES (
+                           ?, ?, ?, ?, ?,
+                           ?, ?, ?,
+                           ?, ?, ?,
+                           ?, ?, ?,
+                           ?, ?, ?,
+                           0, 0, 0, 1.0,
+                           ?, ?,
+                           'OPEN', ?, ?,
+                           0, 0
+                       )""",
+                    (
+                        trade_id, ts, symbol, direction, signal_tag,
+                        json.dumps(confluent_setups, default=str),
+                        confidence,
+                        regime,
+                        entry_price, sl_price, sl_price,  # current_sl = sl_price no open
+                        tp1_price, tp2_price, tp3_price,
+                        leverage, atr_value,
+                        json.dumps(position_split, default=str),
+                        int(fgi),
+                        regime,  # context_btc_regime: usa regime do decision como proxy
+                        int(TRADE_TIMEOUT_HOURS),
+                        json.dumps(evidence, default=str),
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            LOG.warning(f"[TradeJournalV9] Falha ao abrir trade {trade_id}: {e}")
+            return None
+
+        LOG.debug(
+            f"[TradeJournalV9] Aberto: {trade_id} | setup={signal_tag} "
+            f"| entry={entry_price:.6f} | conf={confidence:.1f}"
+        )
+        return trade_id
 
     def get_open_trade(
         self,
         symbol: str,
         direction: Optional[str] = None,
     ) -> Optional[dict]:
-        """Retorna trade OPEN para (symbol, direction) ou None. [12c.B]"""
-        raise NotImplementedError("get_open_trade: será implementado em 12c.B")
+        """Retorna trade OPEN para (symbol, direction), ou None.
+
+        Parâmetros:
+            symbol: ex. ``"BTC"`` ou ``"BTCUSDT"``; normalizado para
+                terminar em ``"USDT"`` se necessário.
+            direction: ``"LONG"``/``"SHORT"`` para filtrar; None retorna
+                qualquer trade OPEN do símbolo (primeiro encontrado).
+
+        Retorno:
+            dict com todos os campos da linha (via ``sqlite3.Row`` → dict),
+            ou None se não houver trade OPEN ou em caso de erro de I/O.
+        """
+        try:
+            sym = (symbol or "").upper()
+            if not sym:
+                return None
+            if not sym.endswith("USDT"):
+                sym = sym + "USDT"
+
+            conn = self._connect()
+            try:
+                if direction in ("LONG", "SHORT"):
+                    row = conn.execute(
+                        "SELECT * FROM trades WHERE symbol=? AND direction=? "
+                        "AND status='OPEN' LIMIT 1",
+                        (sym, direction),
+                    ).fetchone()
+                else:
+                    row = conn.execute(
+                        "SELECT * FROM trades WHERE symbol=? AND status='OPEN' "
+                        "LIMIT 1",
+                        (sym,),
+                    ).fetchone()
+            finally:
+                conn.close()
+
+            return dict(row) if row else None
+        except Exception as e:
+            LOG.warning(f"[TradeJournalV9] Falha em get_open_trade({symbol}): {e}")
+            return None
 
     def check_open_trades(self, fetch_klines_fn=None) -> int:
         """Avalia trades OPEN via klines, atualiza estado. [12c.C]"""
@@ -418,3 +593,112 @@ class TradeJournalV9:
     def get_performance_by_setup(self, days: int = 30) -> dict:
         """Performance por setup individual (splits confluências). [12c.D]"""
         raise NotImplementedError("get_performance_by_setup: será implementado em 12c.D")
+
+    # ── helpers privados de UPDATE (usados em 12c.C) ────────────────────────
+
+    def _close_trade(
+        self,
+        trade_id: str,
+        status: str,
+        exit_price: float,
+        exit_time: str,
+        pnl_pct: float,
+        current_sl: Optional[float] = None,
+        tp1_hit: Optional[bool] = None,
+        tp2_hit: Optional[bool] = None,
+        tp3_hit: Optional[bool] = None,
+        position_remaining: Optional[float] = None,
+        max_runup: Optional[float] = None,
+        max_drawdown: Optional[float] = None,
+    ) -> bool:
+        """Fecha um trade atualizando status + campos de saída.
+
+        Campos opcionais (current_sl, tp*_hit, position_remaining,
+        max_runup, max_drawdown) são atualizados apenas se fornecidos —
+        build dinâmico do UPDATE evita sobrescrever com None.
+
+        Retorna True se UPDATE executou, False se falhou.
+        """
+        fields = [
+            ("status", status),
+            ("exit_price", float(exit_price)),
+            ("exit_time", exit_time),
+            ("pnl_pct", round(float(pnl_pct), 4)),
+        ]
+        if current_sl is not None:
+            fields.append(("current_sl", float(current_sl)))
+        if tp1_hit is not None:
+            fields.append(("tp1_hit", 1 if tp1_hit else 0))
+        if tp2_hit is not None:
+            fields.append(("tp2_hit", 1 if tp2_hit else 0))
+        if tp3_hit is not None:
+            fields.append(("tp3_hit", 1 if tp3_hit else 0))
+        if position_remaining is not None:
+            fields.append(("position_remaining", float(position_remaining)))
+        if max_runup is not None:
+            fields.append(("max_runup", round(float(max_runup), 4)))
+        if max_drawdown is not None:
+            fields.append(("max_drawdown", round(float(max_drawdown), 4)))
+
+        set_clause = ", ".join(f"{name}=?" for name, _ in fields)
+        params = tuple(value for _, value in fields) + (trade_id,)
+
+        try:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    f"UPDATE trades SET {set_clause} WHERE id=?",
+                    params,
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            return True
+        except Exception as e:
+            LOG.warning(f"[TradeJournalV9] Falha em _close_trade({trade_id}): {e}")
+            return False
+
+    def _update_partial(
+        self,
+        trade_id: str,
+        current_sl: float,
+        tp1_hit: bool,
+        tp2_hit: bool,
+        tp3_hit: bool,
+        position_remaining: float,
+        max_runup: float,
+        max_drawdown: float,
+    ) -> bool:
+        """Atualiza campos intermediários (trade continua OPEN).
+
+        Usado após TP1/TP2 hit quando o trade ainda não fechou. Não muda
+        status nem grava exit_price/exit_time/pnl_pct.
+
+        Retorna True se UPDATE executou, False se falhou.
+        """
+        try:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """UPDATE trades
+                       SET current_sl=?, tp1_hit=?, tp2_hit=?, tp3_hit=?,
+                           position_remaining=?, max_runup=?, max_drawdown=?
+                       WHERE id=?""",
+                    (
+                        float(current_sl),
+                        1 if tp1_hit else 0,
+                        1 if tp2_hit else 0,
+                        1 if tp3_hit else 0,
+                        float(position_remaining),
+                        round(float(max_runup), 4),
+                        round(float(max_drawdown), 4),
+                        trade_id,
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            return True
+        except Exception as e:
+            LOG.warning(f"[TradeJournalV9] Falha em _update_partial({trade_id}): {e}")
+            return False
