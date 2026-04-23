@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Optional
 
 import pytest
 
+from config import BRT
 from journal import (
     TradeJournalV9,
     _calc_metrics_v9,
@@ -343,3 +345,203 @@ def test_get_open_trade_found_and_not_found_and_normalization(tmp_journal):
 
     # Símbolo que não existe
     assert j.get_open_trade("NONEXISTENTUSDT") is None
+
+
+# ---------------------------------------------------------------------------
+# Helpers de klines para testes de check_open_trades
+# ---------------------------------------------------------------------------
+
+
+def _make_candle(ts_ms: int, o: float, h: float, l: float, c: float, v: float = 1000.0) -> dict:
+    """Factory de candle no formato v9 (dict com keys: ts, open, high, low, close, volume)."""
+    return {"ts": ts_ms, "open": o, "high": h, "low": l, "close": c, "volume": v}
+
+
+def _klines_sequence(start_ts_ms: int, candles: list[dict], step_ms: int = 15 * 60 * 1000) -> list[dict]:
+    """Atribui timestamps crescentes (a partir de start_ts_ms) a uma sequência de candles."""
+    result = []
+    for i, c in enumerate(candles):
+        c2 = dict(c)
+        c2["ts"] = start_ts_ms + (i + 1) * step_ms  # +1 para ser > timestamp de abertura
+        result.append(c2)
+    return result
+
+
+def _open_trade_and_get_ts_ms(j: TradeJournalV9, decision) -> tuple[str, int]:
+    """Abre um trade e retorna (trade_id, timestamp em ms da abertura)."""
+    trade_id = j.open_trade(decision)
+    assert trade_id is not None
+    conn = sqlite3.connect(j.db_path)
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT timestamp FROM trades WHERE id=?", (trade_id,)).fetchone()
+        ts_iso = row["timestamp"]
+    finally:
+        conn.close()
+    from datetime import datetime as _dt
+    ts_ms = int(_dt.fromisoformat(ts_iso).timestamp() * 1000)
+    return trade_id, ts_ms
+
+
+# ---------------------------------------------------------------------------
+# 8. check_open_trades — end-to-end WIN_TP3 LONG
+# ---------------------------------------------------------------------------
+
+
+def test_check_open_trades_win_tp3_long_end_to_end(tmp_journal):
+    """LONG abre em 100, candles subindo até TP3=107 → WIN_TP3.
+
+    Plan: entry=100, sl=98, tp1=102, tp2=104, tp3=107, split (0.5, 0.3, 0.2).
+    Esperado: pnl = 0.5*2 + 0.3*4 + 0.2*7 = 3.6%, exit_price = 107.
+    """
+    j = TradeJournalV9(tmp_journal["db_path"])
+    decision = FakeSignalDecision()  # LONG 100/98/102/104/107 default
+    trade_id, ts_ms = _open_trade_and_get_ts_ms(j, decision)
+
+    # Sequência de candles: cada um atinge um TP progressivamente
+    candles = [
+        _make_candle(0, 100, 102.5, 99.5, 101.5),   # atinge TP1 (high=102.5 >= 102)
+        _make_candle(0, 101, 104.5, 100.5, 103.5),  # atinge TP2 (high=104.5 >= 104)
+        _make_candle(0, 103, 108.0, 102.5, 107.5),  # atinge TP3 (high=108 >= 107)
+    ]
+    klines = _klines_sequence(ts_ms, candles)
+    fetcher = lambda symbol: klines  # noqa: E731 — lambda é suficiente aqui
+
+    closed = j.check_open_trades(fetch_klines_fn=fetcher)
+    assert closed == 1
+
+    # Verifica estado final
+    conn = sqlite3.connect(tmp_journal["db_path"])
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM trades WHERE id=?", (trade_id,)).fetchone()
+        assert row["status"] == "WIN_TP3"
+        assert row["tp1_hit"] == 1
+        assert row["tp2_hit"] == 1
+        assert row["tp3_hit"] == 1
+        assert row["position_remaining"] == pytest.approx(0.0, abs=1e-6)
+        assert row["exit_price"] == pytest.approx(107.0)
+        assert row["pnl_pct"] == pytest.approx(3.6, abs=0.01)
+        # max_runup >= pnl positivo
+        assert row["max_runup"] >= 3.0
+        # max_drawdown moderado (caiu até 99.5 no primeiro candle)
+        assert row["max_drawdown"] >= 0.4
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 9. check_open_trades — LOSS_SL direto
+# ---------------------------------------------------------------------------
+
+
+def test_check_open_trades_loss_sl_long(tmp_journal):
+    """LONG entry=100, candle com low=97.5 < SL=98 → LOSS_SL.
+
+    Esperado: exit_price = 98 (SL), pnl ≈ -2% (pct do SL).
+    """
+    j = TradeJournalV9(tmp_journal["db_path"])
+    decision = FakeSignalDecision()
+    trade_id, ts_ms = _open_trade_and_get_ts_ms(j, decision)
+
+    candles = [_make_candle(0, 100, 100.5, 97.5, 97.8)]
+    klines = _klines_sequence(ts_ms, candles)
+    fetcher = lambda symbol: klines  # noqa: E731
+    closed = j.check_open_trades(fetch_klines_fn=fetcher)
+    assert closed == 1
+
+    conn = sqlite3.connect(tmp_journal["db_path"])
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM trades WHERE id=?", (trade_id,)).fetchone()
+        assert row["status"] == "LOSS_SL"
+        assert row["tp1_hit"] == 0
+        assert row["tp2_hit"] == 0
+        assert row["tp3_hit"] == 0
+        assert row["exit_price"] == pytest.approx(98.0)
+        # pnl = pct_long(98, 100) = -2%
+        assert row["pnl_pct"] == pytest.approx(-2.0, abs=0.01)
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 10. check_open_trades — TP1 hit mas trade ainda OPEN (saída parcial)
+# ---------------------------------------------------------------------------
+
+
+def test_check_open_trades_tp1_hit_stays_open(tmp_journal):
+    """LONG entry=100, candle atinge TP1=102 mas não TP2.
+    → tp1_hit=1, current_sl=entry (breakeven), ainda OPEN, retorna 0.
+    """
+    j = TradeJournalV9(tmp_journal["db_path"])
+    decision = FakeSignalDecision()
+    trade_id, ts_ms = _open_trade_and_get_ts_ms(j, decision)
+
+    # Candle atinge TP1 (102) mas high não chega a TP2 (104)
+    candles = [_make_candle(0, 100, 102.5, 99.8, 102.3)]
+    klines = _klines_sequence(ts_ms, candles)
+    fetcher = lambda symbol: klines  # noqa: E731
+    closed = j.check_open_trades(fetch_klines_fn=fetcher)
+    assert closed == 0  # trade não fechou
+
+    conn = sqlite3.connect(tmp_journal["db_path"])
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM trades WHERE id=?", (trade_id,)).fetchone()
+        assert row["status"] == "OPEN"
+        assert row["tp1_hit"] == 1
+        assert row["tp2_hit"] == 0
+        assert row["tp3_hit"] == 0
+        # SL moveu para breakeven (entry=100)
+        assert row["current_sl"] == pytest.approx(100.0)
+        # 50% da posição saiu
+        assert row["position_remaining"] == pytest.approx(0.5, abs=1e-6)
+        # exit_price ainda None
+        assert row["exit_price"] is None
+        assert row["pnl_pct"] is None
+        # max_runup preservado
+        assert row["max_runup"] >= 2.0
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 11. check_open_trades — EXPIRED após timeout de 48h
+# ---------------------------------------------------------------------------
+
+
+def test_check_open_trades_expired_after_timeout(tmp_journal):
+    """Trade aberto há >48h → EXPIRED, pnl=0, exit_price=entry."""
+    j = TradeJournalV9(tmp_journal["db_path"])
+    decision = FakeSignalDecision()
+    trade_id = j.open_trade(decision)
+    assert trade_id is not None
+
+    # Força timestamp do trade para 49h atrás
+    from datetime import timedelta
+    old_ts = (datetime.now(BRT) - timedelta(hours=49)).isoformat()
+    conn = sqlite3.connect(tmp_journal["db_path"])
+    try:
+        conn.execute(
+            "UPDATE trades SET timestamp=? WHERE id=?",
+            (old_ts, trade_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Fetcher nem precisa retornar candles — timeout é checado antes do fetch
+    fetcher = lambda symbol: []  # noqa: E731
+    closed = j.check_open_trades(fetch_klines_fn=fetcher)
+    assert closed == 1
+
+    conn = sqlite3.connect(tmp_journal["db_path"])
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM trades WHERE id=?", (trade_id,)).fetchone()
+        assert row["status"] == "EXPIRED"
+        assert row["exit_price"] == pytest.approx(100.0)  # = entry
+        assert row["pnl_pct"] == pytest.approx(0.0)
+    finally:
+        conn.close()
