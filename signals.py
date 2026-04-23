@@ -1,652 +1,422 @@
-# signals.py -- Calculo de parametros de trade e pipeline por token
-# Extraido de setup_atirador_v7_0_0.py -- PR 7 modular-v8
-#
-# Bug #3 corrigido:
-#   _get_nearest_resistance_zone / _get_nearest_support_zone agora chamam
-#   analyze_resistance_1h / analyze_support_1h com (candles_1h, current_price)
-#   e tratam o retorno como tuple[int, str] -- nao iterado como lista de precos.
-#
-# Bug #2 corrigido:
-#   calc_trade_params / calc_trade_params_short usam get_alav_max_por_score()
-#   em vez de ALAV_POR_SCORE.get().
-import asyncio
-import json
-import logging
-import os
-import time
-from datetime import datetime
-from typing import Any
+"""signals.py — orquestrador multi-setup (v9).
 
-import aiohttp
+Décimo módulo da fundação v9. Para cada token, roda todos os setups
+aplicáveis a partir do :class:`MarketContext` e da classificação de regime,
+resolve a direção final, aplica filtros de proteção e constrói o
+:class:`TradePlan` correspondente. O resultado é consolidado em um
+:class:`SignalDecision` tipado que carrega também todos os
+:class:`SetupResult` avaliados — o chamador (main/journal/telegram) não
+precisa inspecionar estado interno para logar cada setup.
 
-from config import (
-    BANKROLL,
-    BRT,
-    COLS_1H,
-    COLS_4H,
-    COLS_15M_TECH,
-    MARGEM_MAX_POR_TRADE,
-    RISCO_POR_TRADE_USD,
-    ALAVANCAGEM_MIN,
-    ALAVANCAGEM_MAX,
-    RR_MINIMO,
-    ALAV_POR_SCORE,
-    VERSION,
-)
-from config import get_alav_max_por_score
-from exchanges import fetch_klines_cached_async, fetch_perpetuals, fetch_fear_greed_async
-from gates import fetch_tv_batch_async, recommendation_from_value
-from indicators import (
-    analyze_resistance_1h,
-    analyze_support_1h,
-    apply_candle_lock,
-    detect_order_blocks,
-    detect_order_blocks_bearish,
-    find_swing_points,
-    get_candle_lock_status,
-    identify_zona,
-    identify_zona_rich,
-    ZONA_ORDER,
-)
-from scoring import (
-    _zone_to_score,
-    check_estrutura_direcional,
-    check_forca_movimento,
-    check_rejeicao_presente,
-)
-from state import cleanup_score_history, load_daily_state, save_daily_state, update_score_history
+Regras de pureza (absolutas):
+    - Zero I/O (sem rede, arquivo, banco, logging persistente)
+    - Zero estado global — ``evaluate_token`` é pura dado seus inputs
+    - Dependências: pandas, numpy, indicators, regime, risk, smc_lib, setups.*
+"""
 
-try:
-    from logger_v7 import RoundLoggerV7
-    _HAS_LOGGER = True
-except ImportError:
-    RoundLoggerV7 = None  # type: ignore[assignment,misc]
-    _HAS_LOGGER = False
+from __future__ import annotations
 
-try:
-    from telegram_v8 import tg_notify_v7
-    _HAS_TELEGRAM = True
-except ImportError:
-    tg_notify_v7 = None  # type: ignore[assignment]
-    _HAS_TELEGRAM = False
+from dataclasses import dataclass
+from typing import Optional
 
-LOG = logging.getLogger("atirador")
+import pandas as pd
+
+from indicators import build_market_context
+from regime import classify_regime
+from risk import TradePlan, calculate_trade_plan, validate_trade_plan
+from setups.base import SetupResult
+from setups.break_range import evaluate_break_range
+from setups.breaker import evaluate_breaker
+from setups.cont_pull import evaluate_cont_pull
+from setups.rev_exaust import evaluate_rev_exaust
+from setups.rev_zone import evaluate_rev_zone
+from smc_lib import detect_breaker_blocks, detect_order_blocks
+
+__all__ = ["SignalDecision", "build_btc_context", "evaluate_token"]
 
 
 # ---------------------------------------------------------------------------
-# SL anchoring helpers
+# Constantes
 # ---------------------------------------------------------------------------
 
-def _get_nearest_resistance_zone(
-    candles_4h: list[dict],
-    candles_1h: list[dict],
-    current_price: float,
-) -> float | None:
-    """Retorna o preco da zona de resistencia mais proxima ACIMA do preco atual.
+CONFLUENCE_BOOST: float = 1.15
+CONFIDENCE_CAP: float = 100.0
+MIN_CONFIDENCE: float = 50.0
+MAX_ATR_PCT: float = 5.0
+MAX_BTC_CHANGE_PCT: float = 2.0
 
-    Combina OBs bearish e swing highs do 4H.
-    Chama analyze_resistance_1h(candles_1h, current_price) corretamente (Bug #3
-    fix): dois argumentos, retorno tratado como tuple[int, str] -- nao iterado
-    como lista de precos.
+_OB_SWING_LENGTH: int = 5
+_OB_ATR_PERIOD: int = 14
+_OB_MIN_STRENGTH_ATR: float = 0.3
+
+
+# ---------------------------------------------------------------------------
+# Dataclass de saída
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SignalDecision:
+    """Resultado final da avaliação de um token em uma rodada.
+
+    Campos:
+        symbol: identificador do token.
+        timestamp: timestamp do candle avaliado (vem do ``MarketContext``).
+        timeframe: timeframe primário da decisão (sempre ``"15m"``).
+        action: ``"CALL"`` se o token deve ser operado, ``"SKIP"`` caso
+            contrário.
+        direction: ``"LONG"`` | ``"SHORT"`` quando ``action=CALL``;
+            ``None`` em SKIP antes da resolução de direção.
+        signal_tag: nome do setup disparado (ou ``a+b+...`` ordenado em
+            confluência).
+        confluent_setups: lista de setups disparados (1 ou mais).
+        confidence: score 0-100 consolidado — aplica boost de 15% em
+            confluência, com cap em 100.
+        trade_plan: :class:`TradePlan` quando ``action=CALL``;
+            ``None`` em SKIP.
+        regime: regime do momento avaliado.
+        all_setup_results: todos os setups rodados (para log/journal).
+        protection_filters: dict com o estado de cada filtro
+            (True=passou, False=bloqueou, None=não checado).
+        skip_reason: motivo principal quando ``action=SKIP``; ``None`` em CALL.
     """
-    candidates: list[float] = []
 
-    # OB Bearish 4H -- highs acima do preco atual
-    obs4b = detect_order_blocks_bearish(candles_4h)
-    for ob in obs4b[-10:]:
-        if ob["high"] > current_price:
-            candidates.append(ob["high"])
-
-    # Swing highs 4H -- precos acima do preco atual
-    swing_highs, _ = find_swing_points(candles_4h)
-    for sh in swing_highs:
-        if sh["price"] > current_price:
-            candidates.append(sh["price"])
-
-    # Resistencia 1H -- chamada correta com current_price (Bug #3 fix)
-    # Retorno e tuple[int, str]: (score, details) -- nao uma lista de precos
-    _score_1h, _details_1h = analyze_resistance_1h(candles_1h, current_price)
-    # score_1h indica se ha resistencia proxima no 1H; nao expoe preco exato.
-    # Os niveis de preco do 4H acima sao suficientes para ancoragem de SL.
-
-    return min(candidates) if candidates else None
-
-
-def _get_nearest_support_zone(
-    candles_4h: list[dict],
-    candles_1h: list[dict],
-    current_price: float,
-) -> float | None:
-    """Retorna o preco da zona de suporte mais proxima ABAIXO do preco atual.
-
-    Combina OBs bullish e swing lows do 4H.
-    Chama analyze_support_1h(candles_1h, current_price) corretamente (Bug #3
-    fix): dois argumentos, retorno tratado como tuple[int, str] -- nao iterado
-    como lista de precos.
-    """
-    candidates: list[float] = []
-
-    # OB Bullish 4H -- lows abaixo do preco atual
-    obs4b = detect_order_blocks(candles_4h)
-    for ob in obs4b[-10:]:
-        if ob["low"] < current_price:
-            candidates.append(ob["low"])
-
-    # Swing lows 4H -- precos abaixo do preco atual
-    _, swing_lows = find_swing_points(candles_4h)
-    for sl in swing_lows:
-        if sl["price"] < current_price:
-            candidates.append(sl["price"])
-
-    # Suporte 1H -- chamada correta com current_price (Bug #3 fix)
-    # Retorno e tuple[int, str]: (score, details) -- nao uma lista de precos
-    _score_1h, _details_1h = analyze_support_1h(candles_1h, current_price)
-    # score_1h indica se ha suporte proximo no 1H; nao expoe preco exato.
-    # Os niveis de preco do 4H abaixo sao suficientes para ancoragem de SL.
-
-    return max(candidates) if candidates else None
+    symbol: str
+    timestamp: pd.Timestamp
+    timeframe: str
+    action: str
+    direction: Optional[str]
+    signal_tag: Optional[str]
+    confluent_setups: list[str]
+    confidence: float
+    trade_plan: Optional[TradePlan]
+    regime: str
+    all_setup_results: list[SetupResult]
+    protection_filters: dict
+    skip_reason: Optional[str]
 
 
 # ---------------------------------------------------------------------------
-# Trade params
+# Helpers privados
 # ---------------------------------------------------------------------------
 
-def calc_trade_params(
+
+def _skip(
+    *,
     symbol: str,
-    current_price: float,
-    zona_qualidade: str,
-    check_c_total: int,
-    candles_4h: list[dict],
-    candles_1h: list[dict],
-) -> dict | None:
-    """Calcula parametros de trade LONG.
-
-    SL ancorado na zona de suporte mais proxima ou 2% abaixo do preco.
-    Alavancagem via get_alav_max_por_score() -- nunca ALAV_POR_SCORE.get().
-    """
-    atr_pct = 0.015  # fallback
-
-    # Tenta obter SL da zona de suporte mais proxima
-    sup = _get_nearest_support_zone(candles_4h, candles_1h, current_price)
-    if sup and sup < current_price:
-        sl_price = sup * 0.998  # 0.2% abaixo da zona
-        stop_pct = (current_price - sl_price) / current_price
-    else:
-        stop_pct = atr_pct
-        sl_price = current_price * (1 - stop_pct)
-
-    if stop_pct <= 0 or stop_pct > 0.15:
-        stop_pct = 0.02
-        sl_price = current_price * 0.98
-
-    notional   = RISCO_POR_TRADE_USD / stop_pct
-    score_alav = _zone_to_score(zona_qualidade, check_c_total)
-    max_alav   = get_alav_max_por_score(score_alav)  # Bug #2 fix
-    alav       = min(max_alav, int(notional / (BANKROLL * MARGEM_MAX_POR_TRADE / 100)))
-    alav       = max(1, alav)
-
-    tp1 = current_price * (1 + stop_pct * 1.5)
-    tp2 = current_price * (1 + stop_pct * 2.5)
-    tp3 = current_price * (1 + stop_pct * 4.0)
-
-    margem = notional / alav
-    if margem > BANKROLL * MARGEM_MAX_POR_TRADE / 100:
-        alav   = max(1, int(notional / (BANKROLL * MARGEM_MAX_POR_TRADE / 100)))
-        margem = notional / alav
-
-    return {
-        "entry"    : current_price,
-        "sl"       : sl_price,
-        "tp1"      : tp1,
-        "tp2"      : tp2,
-        "tp3"      : tp3,
-        "stop_pct" : stop_pct * 100,
-        "notional" : notional,
-        "margem"   : margem,
-        "alav"     : alav,
-        "rr1"      : round(stop_pct * 1.5 / stop_pct, 1),
-        "rr2"      : round(stop_pct * 2.5 / stop_pct, 1),
-        "rr3"      : round(stop_pct * 4.0 / stop_pct, 1),
-    }
-
-
-def calc_trade_params_short(
-    symbol: str,
-    current_price: float,
-    zona_qualidade: str,
-    check_c_total: int,
-    candles_4h: list[dict],
-    candles_1h: list[dict],
-) -> dict | None:
-    """Calcula parametros de trade SHORT.
-
-    SL ancorado na zona de resistencia mais proxima ou 2% acima do preco.
-    Alavancagem via get_alav_max_por_score() -- nunca ALAV_POR_SCORE.get().
-    """
-    res = _get_nearest_resistance_zone(candles_4h, candles_1h, current_price)
-    if res and res > current_price:
-        sl_price = res * 1.002  # 0.2% acima da zona
-        stop_pct = (sl_price - current_price) / current_price
-    else:
-        stop_pct = 0.02
-        sl_price = current_price * (1 + stop_pct)
-
-    if stop_pct <= 0 or stop_pct > 0.15:
-        stop_pct = 0.02
-        sl_price = current_price * 1.02
-
-    notional   = RISCO_POR_TRADE_USD / stop_pct
-    score_alav = _zone_to_score(zona_qualidade, check_c_total)
-    max_alav   = get_alav_max_por_score(score_alav)  # Bug #2 fix
-    alav       = min(max_alav, int(notional / (BANKROLL * MARGEM_MAX_POR_TRADE / 100)))
-    alav       = max(1, alav)
-
-    tp1 = current_price * (1 - stop_pct * 1.5)
-    tp2 = current_price * (1 - stop_pct * 2.5)
-    tp3 = current_price * (1 - stop_pct * 4.0)
-
-    margem = notional / alav
-    if margem > BANKROLL * MARGEM_MAX_POR_TRADE / 100:
-        alav   = max(1, int(notional / (BANKROLL * MARGEM_MAX_POR_TRADE / 100)))
-        margem = notional / alav
-
-    return {
-        "entry"    : current_price,
-        "sl"       : sl_price,
-        "tp1"      : tp1,
-        "tp2"      : tp2,
-        "tp3"      : tp3,
-        "stop_pct" : stop_pct * 100,
-        "notional" : notional,
-        "margem"   : margem,
-        "alav"     : alav,
-        "rr1"      : 1.5,
-        "rr2"      : 2.5,
-        "rr3"      : 4.0,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Pipeline por token
-# ---------------------------------------------------------------------------
-
-async def analisar_token_async(
-    session: aiohttp.ClientSession,
-    symbol: str,
-    d_4h: dict,
-    d_1h: dict,
-    current_price: float,
-    oi_usd: float,
-    state: dict,
-    exchange: str,
-    candle_lock: dict | None = None,
-) -> dict | None:
-    """Pipeline v7 por token:
-
-    1. Gate 4H strict -- NEUTRAL -> DROP
-    2. Gate 1H (contexto apenas)
-    3. identify_zona -- sem zona -> DROP
-    4. Check A (obrigatorio) -> RADAR se falhou
-    5. Check B (obrigatorio para CALL) -> QUASE se falhou
-    6. Check C (amplificador, threshold varia por zona)
-    7. Decisao: CALL | QUASE | RADAR
-    """
-    rec_4h = recommendation_from_value(d_4h.get("Recommend.All|240", 0))
-    rec_1h = recommendation_from_value(d_1h.get("Recommend.All|60", 0))
-
-    # Gate 4H strict
-    direction_4h = None
-    if rec_4h in ("BUY", "STRONG_BUY"):
-        direction_4h = "LONG"
-    elif rec_4h in ("SELL", "STRONG_SELL"):
-        direction_4h = "SHORT"
-    else:
-        return None  # NEUTRAL -> drop silencioso
-
-    direction = direction_4h
-
-    # Gate 1H (contexto)
-    gate_1h_ok = (
-        (direction == "LONG"  and rec_1h in ("BUY", "STRONG_BUY", "NEUTRAL")) or
-        (direction == "SHORT" and rec_1h in ("SELL", "STRONG_SELL", "NEUTRAL"))
+    timestamp: pd.Timestamp,
+    regime_label: str,
+    skip_reason: str,
+    all_results: list[SetupResult],
+    protection: dict,
+    direction: Optional[str] = None,
+    signal_tag: Optional[str] = None,
+    confluent_setups: Optional[list[str]] = None,
+    confidence: float = 0.0,
+) -> SignalDecision:
+    """Constrói um :class:`SignalDecision` de SKIP com campos padronizados."""
+    return SignalDecision(
+        symbol=symbol,
+        timestamp=timestamp,
+        timeframe="15m",
+        action="SKIP",
+        direction=direction,
+        signal_tag=signal_tag,
+        confluent_setups=confluent_setups if confluent_setups is not None else [],
+        confidence=confidence,
+        trade_plan=None,
+        regime=regime_label,
+        all_setup_results=all_results,
+        protection_filters=protection,
+        skip_reason=skip_reason,
     )
 
-    # Klines 4H e 1H
-    candles_4h = await fetch_klines_cached_async(session, symbol, "4H", 50)
-    candles_1h = await fetch_klines_cached_async(session, symbol, "1H", 50)
-    if not candles_4h or not candles_1h:
-        return None
-    if len(candles_4h) < 20 or len(candles_1h) < 20:
-        return None
 
-    # Identify zona
-    zona_qualidade, zona_descricao = identify_zona(candles_4h, candles_1h, current_price, direction)
-    if zona_qualidade == "NENHUMA":
-        return None  # Fora de zona -> DROP
+def _run_setups(
+    df_15m: pd.DataFrame,
+    df_5m: Optional[pd.DataFrame],
+    df_1m: Optional[pd.DataFrame],
+    ctx,
+    regime_result,
+    order_blocks,
+    breaker_blocks,
+    disabled: set[str],
+) -> list[SetupResult]:
+    """Executa cada setup não desabilitado e retorna a lista de resultados."""
+    results: list[SetupResult] = []
 
-    zona_rich = identify_zona_rich(candles_4h, candles_1h, current_price, direction)
+    if "cont_pull" not in disabled:
+        results.append(evaluate_cont_pull(df_15m, ctx, regime_result))
+    if "rev_exaust" not in disabled:
+        results.append(evaluate_rev_exaust(df_15m, df_5m, df_1m, ctx, regime_result))
+    if "break_range" not in disabled:
+        results.append(evaluate_break_range(df_15m, ctx, regime_result))
+    if "rev_zone" not in disabled:
+        results.append(evaluate_rev_zone(df_15m, ctx, regime_result, order_blocks))
+    if "breaker" not in disabled:
+        results.append(evaluate_breaker(df_15m, ctx, regime_result, breaker_blocks))
 
-    # Klines 15m
-    candles_15m = await fetch_klines_cached_async(session, symbol, "15m", 20)
-    if not candles_15m:
-        return None
-    if candle_lock:
-        candles_15m = apply_candle_lock(candles_15m, candle_lock)
-    if not candles_15m:
-        return None
+    return results
 
-    # d_15m vazio -- sera preenchido pelo run_scan_async via batch (injecao pos-call)
-    d_15m: dict = {}
 
-    # Check A
-    check_a_ok, check_a_reason, check_a_ev = check_rejeicao_presente(candles_15m, direction)
+def _consolidate(
+    triggered: list[SetupResult],
+) -> tuple[str, float, str, list[str]]:
+    """Consolida direção, confidence, signal_tag e confluent_setups.
 
-    # Check B
-    check_b_ok, check_b_reason, check_b_ev = check_estrutura_direcional(candles_15m, direction)
+    - Single setup: confidence e setup_name vêm direto do setup.
+    - Confluência: confidence = min(CAP, max(confidences) * CONFLUENCE_BOOST);
+      signal_tag junta os nomes ordenados com ``+``.
+    """
+    direction = triggered[0].direction
+    confluent_setups = [r.setup_name for r in triggered]
 
-    # Check C (d_15m pode estar vazio; C1 BB re-avaliado em run_scan_async)
-    check_c_total, check_c_det = check_forca_movimento(candles_15m, d_15m, state, direction)
+    if len(triggered) == 1:
+        return direction, triggered[0].confidence, triggered[0].setup_name, confluent_setups
 
-    # Threshold C depende da zona
-    thr_c = 2 if zona_qualidade in ("MAXIMA", "ALTA_OB4H", "ALTA_OB1H") else 3
+    max_conf = max(r.confidence for r in triggered)
+    confidence = min(CONFIDENCE_CAP, max_conf * CONFLUENCE_BOOST)
+    signal_tag = "+".join(sorted(r.setup_name for r in triggered))
+    return direction, confidence, signal_tag, confluent_setups
 
-    # Decisao
-    if not check_a_ok:
-        status = "RADAR"
-    elif not check_b_ok:
-        status = "QUASE" if check_c_total >= 1 else "RADAR"
-    elif check_c_total >= thr_c:
-        status = "CALL"
+
+# ---------------------------------------------------------------------------
+# API pública
+# ---------------------------------------------------------------------------
+
+
+def evaluate_token(
+    symbol: str,
+    df_15m: pd.DataFrame,
+    df_1h: pd.DataFrame,
+    df_4h: pd.DataFrame,
+    df_5m: Optional[pd.DataFrame] = None,
+    df_1m: Optional[pd.DataFrame] = None,
+    open_trades: Optional[list[str]] = None,
+    btc_context: Optional[dict] = None,
+    disabled_setups: Optional[set[str]] = None,
+) -> SignalDecision:
+    """Orquestra a avaliação completa de um token.
+
+    Fluxo:
+        1. Calcula :class:`MarketContext` 15m e :class:`RegimeClassification`.
+        2. Detecta Order Blocks e Breaker Blocks via ``smc_lib``.
+        3. Roda os 5 setups (exceto os listados em ``disabled_setups``).
+        4. Consolida direção e confidence — 15% de boost em confluência.
+        5. Aplica filtros de proteção (trade aberto, volatilidade, BTC,
+           confidence mínima).
+        6. Calcula e valida :class:`TradePlan`; emite CALL ou SKIP final.
+
+    Parâmetros:
+        symbol: identificador do token (ex.: ``"BTCUSDT"``).
+        df_15m: OHLCV 15m (primário da decisão).
+        df_1h: OHLCV 1h (reservado para setups HTF futuros).
+        df_4h: OHLCV 4h (reservado para setups HTF futuros).
+        df_5m: OHLCV 5m — usado pelo ``rev_exaust``; pode ser ``None``.
+        df_1m: OHLCV 1m — usado pelo ``rev_exaust``; pode ser ``None``.
+        open_trades: lista de símbolos com trade ativo — bloqueia duplicação.
+        btc_context: dict produzido por :func:`build_btc_context` para o
+            filtro de correlação BTC. ``None`` desativa o filtro.
+        disabled_setups: conjunto de nomes de setups a não avaliar.
+
+    Retorno:
+        :class:`SignalDecision`. ``all_setup_results`` carrega todos os
+        setups rodados (mesmo em SKIP), permitindo log granular upstream.
+    """
+    disabled = disabled_setups or set()
+    open_list = open_trades or []
+
+    ctx = build_market_context(df_15m, symbol=symbol, timeframe="15m")
+    regime_result = classify_regime(df_15m)
+
+    order_blocks = detect_order_blocks(
+        df_15m,
+        swing_length=_OB_SWING_LENGTH,
+        atr_period=_OB_ATR_PERIOD,
+        min_strength_atr=_OB_MIN_STRENGTH_ATR,
+    )
+    breaker_blocks = detect_breaker_blocks(df_15m, order_blocks)
+
+    results = _run_setups(
+        df_15m=df_15m,
+        df_5m=df_5m,
+        df_1m=df_1m,
+        ctx=ctx,
+        regime_result=regime_result,
+        order_blocks=order_blocks,
+        breaker_blocks=breaker_blocks,
+        disabled=disabled,
+    )
+
+    triggered = [r for r in results if r.triggered]
+
+    if not triggered:
+        return _skip(
+            symbol=symbol,
+            timestamp=ctx.timestamp,
+            regime_label=regime_result.regime,
+            skip_reason="no_setup_triggered",
+            all_results=results,
+            protection={},
+        )
+
+    directions = {r.direction for r in triggered}
+    if len(directions) > 1:
+        return _skip(
+            symbol=symbol,
+            timestamp=ctx.timestamp,
+            regime_label=regime_result.regime,
+            skip_reason="conflicting_setups",
+            all_results=results,
+            protection={},
+            confluent_setups=[r.setup_name for r in triggered],
+        )
+
+    direction, confidence, signal_tag, confluent_setups = _consolidate(triggered)
+
+    protection: dict = {}
+
+    if symbol in open_list:
+        protection["already_open"] = False
+        return _skip(
+            symbol=symbol,
+            timestamp=ctx.timestamp,
+            regime_label=regime_result.regime,
+            skip_reason="trade_already_open",
+            all_results=results,
+            protection=protection,
+            direction=direction,
+            signal_tag=signal_tag,
+            confluent_setups=confluent_setups,
+            confidence=confidence,
+        )
+    protection["already_open"] = True
+
+    atr_pct = (ctx.atr / ctx.close) * 100.0 if ctx.close > 0 else 0.0
+    if atr_pct > MAX_ATR_PCT:
+        protection["volatility_ok"] = False
+        return _skip(
+            symbol=symbol,
+            timestamp=ctx.timestamp,
+            regime_label=regime_result.regime,
+            skip_reason="extreme_volatility",
+            all_results=results,
+            protection=protection,
+            direction=direction,
+            signal_tag=signal_tag,
+            confluent_setups=confluent_setups,
+            confidence=confidence,
+        )
+    protection["volatility_ok"] = True
+
+    if btc_context is not None:
+        btc_change_pct = btc_context.get("change_pct_15m", 0.0)
+        if abs(btc_change_pct) > MAX_BTC_CHANGE_PCT:
+            protection["btc_stable"] = False
+            return _skip(
+                symbol=symbol,
+                timestamp=ctx.timestamp,
+                regime_label=regime_result.regime,
+                skip_reason="btc_abrupt_move",
+                all_results=results,
+                protection=protection,
+                direction=direction,
+                signal_tag=signal_tag,
+                confluent_setups=confluent_setups,
+                confidence=confidence,
+            )
+        protection["btc_stable"] = True
     else:
-        status = "QUASE" if check_c_total >= 1 else "RADAR"
+        protection["btc_stable"] = None
 
-    # Trade params (CALL e QUASE)
-    params = None
-    if status in ("CALL", "QUASE"):
-        if direction == "LONG":
-            params = calc_trade_params(
-                symbol, current_price, zona_qualidade, check_c_total,
-                candles_4h, candles_1h,
-            )
-        else:
-            params = calc_trade_params_short(
-                symbol, current_price, zona_qualidade, check_c_total,
-                candles_4h, candles_1h,
-            )
+    if confidence < MIN_CONFIDENCE:
+        protection["confidence_threshold"] = False
+        return _skip(
+            symbol=symbol,
+            timestamp=ctx.timestamp,
+            regime_label=regime_result.regime,
+            skip_reason="low_confidence",
+            all_results=results,
+            protection=protection,
+            direction=direction,
+            signal_tag=signal_tag,
+            confluent_setups=confluent_setups,
+            confidence=confidence,
+        )
+    protection["confidence_threshold"] = True
+
+    trade_plan = calculate_trade_plan(
+        df=df_15m,
+        direction=direction,
+        entry_price=ctx.close,
+        setup_confidence=confidence,
+        regime=regime_result.regime,
+    )
+
+    is_valid, invalid_reason = validate_trade_plan(trade_plan)
+    if not is_valid:
+        return _skip(
+            symbol=symbol,
+            timestamp=ctx.timestamp,
+            regime_label=regime_result.regime,
+            skip_reason=f"invalid_trade_plan:{invalid_reason}",
+            all_results=results,
+            protection=protection,
+            direction=direction,
+            signal_tag=signal_tag,
+            confluent_setups=confluent_setups,
+            confidence=confidence,
+        )
+
+    return SignalDecision(
+        symbol=symbol,
+        timestamp=ctx.timestamp,
+        timeframe="15m",
+        action="CALL",
+        direction=direction,
+        signal_tag=signal_tag,
+        confluent_setups=confluent_setups,
+        confidence=confidence,
+        trade_plan=trade_plan,
+        regime=regime_result.regime,
+        all_setup_results=results,
+        protection_filters=protection,
+        skip_reason=None,
+    )
+
+
+def build_btc_context(df_btc_15m: pd.DataFrame) -> dict:
+    """Constrói o dicionário de contexto do BTC para o filtro de correlação.
+
+    Parâmetros:
+        df_btc_15m: OHLCV 15m do BTC. Precisa atender ao mínimo exigido
+            por :func:`indicators.build_market_context` e
+            :func:`regime.classify_regime`.
+
+    Retorno:
+        dict com chaves:
+            ``change_pct_15m`` — variação percentual do close da última
+                vela em relação à penúltima.
+            ``atr_pct`` — ATR em percentual do close atual.
+            ``regime`` — regime classificado pelo ``classify_regime``.
+    """
+    ctx = build_market_context(df_btc_15m, symbol="BTCUSDT", timeframe="15m")
+    regime_result = classify_regime(df_btc_15m)
+
+    close_series = df_btc_15m["close"]
+    if len(close_series) >= 2 and close_series.iloc[-2] != 0:
+        change_pct_15m = float(
+            (close_series.iloc[-1] - close_series.iloc[-2])
+            / close_series.iloc[-2]
+            * 100.0
+        )
+    else:
+        change_pct_15m = 0.0
+
+    atr_pct = (ctx.atr / ctx.close) * 100.0 if ctx.close > 0 else 0.0
 
     return {
-        "symbol"         : symbol,
-        "direction"      : direction,
-        "status"         : status,
-        "rec_4h"         : rec_4h,
-        "rec_1h"         : rec_1h,
-        "gate_1h_ok"     : gate_1h_ok,
-        "zona_qualidade" : zona_qualidade,
-        "zona_descricao" : zona_descricao,
-        "check_a_ok"     : check_a_ok,
-        "check_a_reason" : check_a_reason,
-        "check_a_ev"     : check_a_ev,
-        "check_b_ok"     : check_b_ok,
-        "check_b_reason" : check_b_reason,
-        "check_b_ev"     : check_b_ev,
-        "check_c_total"  : check_c_total,
-        "check_c_det"    : check_c_det,
-        **(check_c_det or {}),
-        "check_c_thr"    : thr_c,
-        "price"          : current_price,
-        "oi_usd"         : oi_usd,
-        "params"         : params,
-        "rec_1h_raw"     : rec_1h,
-        "exchange"       : exchange,
-        "zona_rich"      : zona_rich,
-        "candle_ref"     : candles_15m[-1] if candles_15m else {},
+        "change_pct_15m": change_pct_15m,
+        "atr_pct": float(atr_pct),
+        "regime": regime_result.regime,
     }
-
-
-# ---------------------------------------------------------------------------
-# Pipeline principal do scan
-# ---------------------------------------------------------------------------
-
-async def run_scan_async() -> None:
-    """Pipeline principal v7 (extraido para signals.py -- sera movido para
-    main.py no PR 9):
-
-    1. Fetch perpetuals (universo) -- exchange: str via fetch_perpetuals() PR 3
-    2. TV batch 4H + gate 4H strict (LONG/SHORT, NEUTRAL -> drop)
-    3. TV batch 1H (contexto)
-    4. Candle lock 15m
-    5. TV batch 15m (BB/vol para Check C)
-    6. Por token: analisar_token_async -> injecao 15m -> decisao
-    7. BTC 4H trend
-    8. Notificacoes Telegram
-    9. Estado, logging, watchdog
-    """
-    t_start = time.time()
-
-    log = RoundLoggerV7(version=VERSION) if _HAS_LOGGER and RoundLoggerV7 else None
-    state = load_daily_state()
-
-    # Fear & Greed
-    async with aiohttp.ClientSession() as session:
-        fg = await fetch_fear_greed_async(session)
-
-    fg_val   = fg.get("value") or 50
-    fg_class = fg.get("classification", "")
-    LOG.info(f"[v8] FGI={fg_val} ({fg_class})")
-
-    # Perpetuals (universo) -- exchange e str (Bug #1 corrigido no PR 3)
-    perps, exchange = fetch_perpetuals()
-    if not perps:
-        LOG.error("[v8] Sem perpetuals -- abortando")
-        return
-
-    symbols = [p["symbol"] for p in perps]
-    prices  = {p["symbol"]: p["price"] for p in perps}
-    LOG.info(f"[v8] Universo: {len(symbols)} simbolos ({exchange})")
-
-    # TV batch 4H
-    async with aiohttp.ClientSession() as session:
-        tv4h, _ = await fetch_tv_batch_async(session, symbols, COLS_4H)
-
-    # Gate 4H strict
-    gate_long_syms:  list[str] = []
-    gate_short_syms: list[str] = []
-    for sym in symbols:
-        d4  = tv4h.get(sym, {})
-        rec = recommendation_from_value(d4.get("Recommend.All|240", 0))
-        if rec in ("BUY", "STRONG_BUY"):
-            gate_long_syms.append(sym)
-        elif rec in ("SELL", "STRONG_SELL"):
-            gate_short_syms.append(sym)
-        # NEUTRAL -> drop
-
-    n_gate_long  = len(gate_long_syms)
-    n_gate_short = len(gate_short_syms)
-    gate_syms    = gate_long_syms + gate_short_syms
-    LOG.info(f"[v8] Gate 4H: {n_gate_long} LONG, {n_gate_short} SHORT")
-
-    # TV batch 1H
-    async with aiohttp.ClientSession() as session:
-        tv1h, _ = await fetch_tv_batch_async(session, gate_syms, COLS_1H)
-
-    # Candle lock 15m
-    candle_lock = get_candle_lock_status()
-    if candle_lock["use_prev"]:
-        LOG.info(
-            f"[v8] Candle lock ativo -- vela em formacao "
-            f"({candle_lock['seconds_open']:.0f}s), "
-            f"proximo fechamento em {candle_lock['next_close']:.0f}s"
-        )
-
-    # TV batch 15m
-    async with aiohttp.ClientSession() as session:
-        tv15m, _ = await fetch_tv_batch_async(session, gate_syms, COLS_15M_TECH)
-
-    # Analise por token
-    results: list[dict] = []
-    n_zona_long  = 0
-    n_zona_short = 0
-
-    async with aiohttp.ClientSession() as session:
-        oi_lookup = {p["symbol"]: p.get("oi_usd", 0) for p in perps}
-
-        tasks = []
-        for sym in gate_syms:
-            d4    = tv4h.get(sym, {})
-            d1    = tv1h.get(sym, {})
-            price = prices.get(sym, 0.0)
-            if not price:
-                continue
-            tasks.append((sym, d4, d1, price))
-
-        for sym, d4, d1, price in tasks:
-            try:
-                r = await analisar_token_async(
-                    session, sym, d4, d1, price, oi_lookup.get(sym, 0),
-                    state, exchange, candle_lock)
-                if r is None:
-                    continue
-
-                # Re-avaliacao do Check C com dados TV 15m (C1 BB)
-                d15m = tv15m.get(sym, {})
-                if d15m and r.get("check_a_ok"):
-                    candles_15m_recheck = await fetch_klines_cached_async(
-                        session, sym, "15m", 20)
-                    if candles_15m_recheck:
-                        candles_15m_recheck = apply_candle_lock(candles_15m_recheck, candle_lock)
-                    if candles_15m_recheck:
-                        c_total, c_det = check_forca_movimento(
-                            candles_15m_recheck, d15m, state, r["direction"])
-                        r["check_c_total"] = c_total
-                        r["check_c_det"]   = c_det
-                        r.update(c_det or {})
-                        thr_c = r["check_c_thr"]
-                        # Re-decide status
-                        if r["check_b_ok"]:
-                            r["status"] = "CALL" if c_total >= thr_c else "QUASE"
-                        elif c_total >= 1:
-                            r["status"] = "QUASE"
-                        else:
-                            r["status"] = "RADAR"
-                        # Recalcular trade params se virou CALL
-                        if r["status"] == "CALL" and not r.get("params"):
-                            candles_4h = await fetch_klines_cached_async(
-                                session, sym, "4H", 50)
-                            candles_1h = await fetch_klines_cached_async(
-                                session, sym, "1H", 50)
-                            if r["direction"] == "LONG":
-                                r["params"] = calc_trade_params(
-                                    sym, r["price"], r["zona_qualidade"],
-                                    c_total, candles_4h, candles_1h)
-                            else:
-                                r["params"] = calc_trade_params_short(
-                                    sym, r["price"], r["zona_qualidade"],
-                                    c_total, candles_4h, candles_1h)
-
-                if r["direction"] == "LONG":
-                    n_zona_long += 1
-                else:
-                    n_zona_short += 1
-                results.append(r)
-
-            except Exception as e:
-                LOG.warning(f"[v8] Erro em {sym}: {e}", exc_info=True)
-
-    # BTC 4H trend (busca independente do universo)
-    btc_4h = "-"
-    try:
-        async with aiohttp.ClientSession() as session:
-            btc_tv, _ = await fetch_tv_batch_async(session, ["BTCUSDT"], COLS_4H)
-        btc_d4 = btc_tv.get("BTCUSDT", {})
-        if btc_d4:
-            btc_4h = recommendation_from_value(btc_d4.get("Recommend.All|240", 0))
-    except Exception:
-        pass
-
-    # Notificacoes Telegram
-    n_calls  = sum(1 for r in results if r["status"] == "CALL")
-    n_quase  = sum(1 for r in results if r["status"] == "QUASE")
-    elapsed  = time.time() - t_start
-
-    if _HAS_TELEGRAM and tg_notify_v7 is not None:
-        tg_notify_v7(
-            results      = results,
-            fg_val       = fg_val,
-            n_univ       = len(symbols),
-            n_gate_short = n_gate_short,
-            n_gate_long  = n_gate_long,
-            n_zona_short = n_zona_short,
-            n_zona_long  = n_zona_long,
-            elapsed      = elapsed,
-            exchange     = exchange,
-            btc_4h       = btc_4h,
-        )
-    else:
-        LOG.debug("[v8] tg_notify_v7 indisponivel -- modulo telegram nao extraido ainda")
-
-    # Estado
-    ts_now = datetime.now(BRT).strftime("%Y-%m-%dT%H:%M")
-    update_score_history(state, perps, ts_now)
-    cleanup_score_history(state)
-    save_daily_state(state)
-
-    # Logging estruturado
-    if log is not None:
-        log.set_meta(
-            fgi           = fg_val,
-            btc_4h        = btc_4h,
-            exchange      = exchange,
-            candle_locked = candle_lock.get("use_prev", False),
-        )
-        log.set_pipeline(
-            universe      = len(symbols),
-            gate_4h_long  = n_gate_long,
-            gate_4h_short = n_gate_short,
-            in_zona_long  = n_zona_long,
-            in_zona_short = n_zona_short,
-        )
-
-        for r in results:
-            det = r.get("check_c_det", {})
-            log.add_token(
-                symbol           = r["symbol"],
-                direction        = r["direction"],
-                zona_qualidade   = r["zona_qualidade"],
-                zona_descricao   = r["zona_descricao"],
-                check_a          = r["check_a_ok"],
-                check_a_razao    = r["check_a_reason"],
-                check_b          = r["check_b_ok"],
-                check_b_razao    = r["check_b_reason"],
-                check_c_total    = r["check_c_total"],
-                check_c_detalhes = det,
-                status           = r["status"],
-            )
-
-        for r in results:
-            if r["status"] in ("CALL", "QUASE"):
-                log.add_event(
-                    r["status"],
-                    symbol    = r["symbol"],
-                    direction = r["direction"],
-                    zona      = r["zona_qualidade"],
-                    check_c   = r["check_c_total"],
-                )
-
-        log.set_exec_seconds(elapsed)
-        log.commit()
-
-    # Watchdog -- registra ultima execucao bem-sucedida
-    try:
-        _wd = {
-            "last_run": datetime.now(BRT).isoformat(),
-            "version" : f"v{VERSION}",
-        }
-        with open("/tmp/atirador_last_run.json", "w") as _f:
-            json.dump(_wd, _f)
-    except Exception:
-        pass
-
-    LOG.info(
-        f"[v8] Rodada concluida em {elapsed:.1f}s -- "
-        f"{n_calls} CALL, {n_quase} QUASE"
-    )
