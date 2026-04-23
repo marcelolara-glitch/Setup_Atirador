@@ -358,24 +358,43 @@ def test_evaluate_token_invalid_trade_plan_blocks(fake_df):
 # ---------------------------------------------------------------------------
 
 
-def test_evaluate_token_disabled_setup_not_evaluated(fake_df):
-    """Quando ``cont_pull`` está desabilitado, não aparece em
-    ``all_setup_results`` e sua função ``evaluate_cont_pull`` não é chamada.
+def test_evaluate_token_disabled_setup_not_evaluated(fake_df, monkeypatch):
+    """``cont_pull`` desabilitado: não aparece em ``all_setup_results`` e
+    ``evaluate_cont_pull`` não é chamado.
+
+    Não usa ``_Patches`` para evitar que ``patch.object`` colida com a
+    sobrescrita direta do mock rastreável — ``monkeypatch`` instala cada
+    dependência de forma isolada e o ``MagicMock`` é o único objeto vivo
+    durante a chamada, garantindo que o assert de ``call_count`` seja real.
     """
-    returns = {"break_range": _sr("break_range", True, "LONG", 70.0)}
-    with _Patches(setup_returns=returns):
-        # Substitui o mock de cont_pull por um MagicMock rastreável. O
-        # context manager interno de `_Patches` já parou os patches anteriores
-        # no __exit__ — aqui a substituição é direta sobre signals_mod.
-        from unittest.mock import MagicMock  # noqa: WPS433 — local em teste
-        tracked = MagicMock(return_value=_sr("cont_pull", False))
-        signals_mod.evaluate_cont_pull = tracked
-        decision = _call(fake_df, disabled_setups={"cont_pull"})
+    from unittest.mock import MagicMock  # noqa: WPS433 — local em teste
+
+    monkeypatch.setattr(signals_mod, "build_market_context", lambda *a, **k: _FakeCtx())
+    monkeypatch.setattr(signals_mod, "classify_regime", lambda *a, **k: _FakeRegime())
+    monkeypatch.setattr(signals_mod, "detect_order_blocks", lambda *a, **k: [])
+    monkeypatch.setattr(signals_mod, "detect_breaker_blocks", lambda *a, **k: [])
+
+    tracked_cont_pull = MagicMock(return_value=_sr("cont_pull", False))
+    monkeypatch.setattr(signals_mod, "evaluate_cont_pull", tracked_cont_pull)
+    monkeypatch.setattr(
+        signals_mod, "evaluate_rev_exaust", lambda *a, **k: _sr("rev_exaust", False)
+    )
+    monkeypatch.setattr(
+        signals_mod, "evaluate_break_range", lambda *a, **k: _sr("break_range", False)
+    )
+    monkeypatch.setattr(
+        signals_mod, "evaluate_rev_zone", lambda *a, **k: _sr("rev_zone", False)
+    )
+    monkeypatch.setattr(
+        signals_mod, "evaluate_breaker", lambda *a, **k: _sr("breaker", False)
+    )
+
+    decision = _call(fake_df, disabled_setups={"cont_pull"})
 
     names = [r.setup_name for r in decision.all_setup_results]
     assert "cont_pull" not in names
     assert len(decision.all_setup_results) == 4
-    assert tracked.call_count == 0
+    assert tracked_cont_pull.call_count == 0
 
 
 # ---------------------------------------------------------------------------
