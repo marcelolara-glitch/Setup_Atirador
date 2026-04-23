@@ -1,459 +1,660 @@
-#!/usr/bin/env python3
-"""
-logger.py — Logging Estruturado de Rodada (Camada 1)
-=====================================================
-[v6.6.5] Módulo de observabilidade — registra tudo que o sistema calcula
-em cada rodada para debug de consistência e calibração de indicadores.
+"""logger.py — Logging Estruturado de Rodada v9 (Camada 1).
 
-Padrão de uso:
-    log = RoundLogger(version=VERSION)
+Reescrita completa para a arquitetura multi-setup. Substitui o
+``RoundLogger`` v8 (gate+check+score) por :class:`RoundLoggerV9`
+(action/signal_tag/confidence/regime + near-misses observacionais).
+
+Arquitetura de duas camadas (preservada do v8):
+    - JSONL append-only em ``SCAN_LOG_JSONL_V9`` — verdade bruta.
+    - SQLite analítico em ``SCAN_LOG_DB_V9`` — reconstruível via
+      :func:`rebuild_db` a partir do JSONL.
+
+Padrão de uso::
+
+    log = RoundLoggerV9(version=VERSION)
     log.set_meta(...)
     log.set_pipeline(...)
-    log.add_token(...)      # chamado N vezes, um por token no 15m
-    log.add_event(...)      # chamado para cada CALL e QUASE emitido
-    log.commit()            # UMA vez, no finally: do bloco principal
+    log.set_exec_seconds(t)
+    for decision in decisions:
+        log.add_token_evaluation(decision)
+    for nm in near_misses:
+        log.add_near_miss(...)
+    for call in calls:
+        log.add_event(type="CALL", ...)
+    log.commit()                   # UMA vez, no finally:
 
-CLI:
-    python3 logger.py --rebuild    # reconstrói SQLite a partir do JSONL
+CLI::
+
+    python3 logger.py --rebuild [jsonl_path] [db_path]
+
+Princípios:
+    - Falhas silenciosas em I/O (`LOG.warning`/`LOG.error`); nunca crasha.
+    - JSONL primeiro: se SQLite falhar, JSONL sobrevive como fallback.
+    - Idempotência: double-`commit()` é no-op.
+    - Sem migração em runtime; schema v9 nasce limpo (paths isolados).
+    - Duck typing com ``SignalDecision``/``SetupResult``/``TradePlan`` —
+      logger não importa de ``signals.py``/``setups.base``/``risk``.
 """
+
+from __future__ import annotations
+
+import dataclasses
 import json
 import logging
 import os
 import sqlite3
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from typing import Any, Optional
 
-# ── Configuração ──────────────────────────────────────────────────────────────
-BRT      = timezone(timedelta(hours=-3))
-BASE_DIR = os.path.expanduser("~/Setup_Atirador/logs")
-JSONL_PATH = os.path.join(BASE_DIR, "scan_log.jsonl")
-DB_PATH    = os.path.join(BASE_DIR, "scan_log.db")
+from config import BRT, LOG_DIR, SCAN_LOG_DB_V9, SCAN_LOG_JSONL_V9
 
 LOG = logging.getLogger(__name__)
 
 
-# ── DDL SQLite ────────────────────────────────────────────────────────────────
-_DDL = """
+# ---------------------------------------------------------------------------
+# DDL SQLite v9
+# ---------------------------------------------------------------------------
+
+_DDL_V9 = """
 CREATE TABLE IF NOT EXISTS rounds (
-    round_id      TEXT PRIMARY KEY,
-    ts            TEXT NOT NULL,
-    version       TEXT,
-    fgi           INTEGER,
-    btc_4h        TEXT,
-    thr_long      INTEGER,
-    thr_short     INTEGER,
-    exchange      TEXT,
-    candle_locked INTEGER,
-    exec_secs     REAL,
-    univ_count    INTEGER,
-    gate_4h       INTEGER,
-    gate_1h       INTEGER,
-    scored_15m    INTEGER,
-    venue_summary TEXT
+    round_id                TEXT PRIMARY KEY,
+    ts                      TEXT NOT NULL,
+    version                 TEXT,
+    fgi                     INTEGER,
+    btc_regime              TEXT,
+    btc_change_pct_15m      REAL,
+    btc_filter_blocked      INTEGER,
+    exchange_primary        TEXT,
+    setups_enabled          TEXT,
+    exec_secs               REAL,
+    universe                INTEGER,
+    tokens_evaluated        INTEGER,
+    calls_emitted           INTEGER,
+    setups_triggered_total  INTEGER,
+    near_misses_count       INTEGER
 );
 
-CREATE TABLE IF NOT EXISTS token_scores (
-    round_id       TEXT NOT NULL,
-    ts             TEXT NOT NULL,
-    symbol         TEXT NOT NULL,
-    direction      TEXT NOT NULL,
-    status         TEXT,
-    zona_qualidade TEXT,
-    zona_descricao TEXT,
-    check_a_ok     INTEGER,
-    check_a_reason TEXT,
-    check_a_ev     TEXT,
-    check_b_ok     INTEGER,
-    check_b_reason TEXT,
-    check_b_ev     TEXT,
-    check_c_total  INTEGER,
-    check_c_thr    INTEGER,
-    check_c_gap    INTEGER,
-    check_c_det    TEXT,
-    zona_rich      TEXT,
+CREATE TABLE IF NOT EXISTS token_evaluations (
+    round_id             TEXT NOT NULL,
+    ts                   TEXT NOT NULL,
+    symbol               TEXT NOT NULL,
+    timeframe            TEXT,
+    action               TEXT NOT NULL,
+    direction            TEXT,
+    signal_tag           TEXT,
+    confluent_setups     TEXT,
+    confidence           REAL,
+    regime               TEXT,
+    skip_reason          TEXT,
+    all_setup_results    TEXT,
+    protection_filters   TEXT,
+    trade_plan           TEXT,
     FOREIGN KEY (round_id) REFERENCES rounds(round_id)
 );
+CREATE INDEX IF NOT EXISTS idx_tev_ts     ON token_evaluations(ts);
+CREATE INDEX IF NOT EXISTS idx_tev_symbol ON token_evaluations(symbol);
+CREATE INDEX IF NOT EXISTS idx_tev_action ON token_evaluations(action);
+
+CREATE TABLE IF NOT EXISTS near_misses (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    round_id            TEXT NOT NULL,
+    ts                  TEXT NOT NULL,
+    symbol              TEXT NOT NULL,
+    closest_setup_name  TEXT NOT NULL,
+    closest_confidence  REAL,
+    closest_direction   TEXT,
+    closest_regime      TEXT,
+    conditions          TEXT,
+    FOREIGN KEY (round_id) REFERENCES rounds(round_id)
+);
+CREATE INDEX IF NOT EXISTS idx_nm_ts     ON near_misses(ts);
+CREATE INDEX IF NOT EXISTS idx_nm_symbol ON near_misses(symbol);
+CREATE INDEX IF NOT EXISTS idx_nm_setup  ON near_misses(closest_setup_name);
 
 CREATE TABLE IF NOT EXISTS round_events (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    round_id       TEXT NOT NULL,
-    ts             TEXT NOT NULL,
-    type           TEXT NOT NULL,
-    symbol         TEXT NOT NULL,
-    direction      TEXT NOT NULL,
-    zona_qualidade TEXT,
-    check_c_total  INTEGER,
-    check_c_thr    INTEGER,
-    gap            INTEGER
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    round_id             TEXT NOT NULL,
+    ts                   TEXT NOT NULL,
+    type                 TEXT NOT NULL,
+    symbol               TEXT NOT NULL,
+    direction            TEXT NOT NULL,
+    signal_tag           TEXT NOT NULL,
+    confidence           REAL,
+    leverage             REAL
 );
-
-CREATE INDEX IF NOT EXISTS idx_ts_scores  ON token_scores(ts);
-CREATE INDEX IF NOT EXISTS idx_sym_scores ON token_scores(symbol);
-CREATE INDEX IF NOT EXISTS idx_ts_events  ON round_events(ts);
+CREATE INDEX IF NOT EXISTS idx_ev_ts     ON round_events(ts);
+CREATE INDEX IF NOT EXISTS idx_ev_symbol ON round_events(symbol);
+CREATE INDEX IF NOT EXISTS idx_ev_type   ON round_events(type);
 """
 
 
-class RoundLogger:
+# ---------------------------------------------------------------------------
+# Helpers privados — serialização tolerante (duck typing)
+# ---------------------------------------------------------------------------
+
+
+def _to_iso(value: Any) -> Optional[str]:
+    """Converte ``pd.Timestamp``/``datetime``/str para ISO; None se vazio."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    iso = getattr(value, "isoformat", None)
+    if callable(iso):
+        try:
+            return iso()
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def _asdict_safe(obj: Any) -> Any:
+    """``dataclasses.asdict`` quando possível; fallback para ``__dict__``."""
+    if obj is None:
+        return None
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        try:
+            return dataclasses.asdict(obj)
+        except Exception:
+            pass
+    if isinstance(obj, dict):
+        return obj
+    d = getattr(obj, "__dict__", None)
+    if isinstance(d, dict):
+        return dict(d)
+    return obj
+
+
+def _serialize_setup_result(result: Any) -> dict:
+    """Serializa um ``SetupResult`` (com ``triggered_at`` ``pd.Timestamp``).
+
+    ``dataclasses.asdict()`` falha em ``pd.Timestamp``; convertemos manualmente.
     """
-    [v6.6.5] Logging estruturado de rodada — Camada 1 da arquitetura de observabilidade.
+    if result is None:
+        return {}
+    return {
+        "setup_name":   getattr(result, "setup_name", None),
+        "triggered":    bool(getattr(result, "triggered", False)),
+        "direction":    getattr(result, "direction", None),
+        "confidence":   float(getattr(result, "confidence", 0.0) or 0.0),
+        "evidence":     getattr(result, "evidence", {}) or {},
+        "triggered_at": _to_iso(getattr(result, "triggered_at", None)),
+    }
 
-    Registra em duas camadas complementares:
-      - scan_log.jsonl: verdade bruta, append-only, nunca corrompível
-      - scan_log.db (SQLite): camada analítica, reconstituível do JSONL
 
-    Padrão de uso:
-      log = RoundLogger(version=VERSION)
-      log.set_meta(...)
-      log.set_pipeline(...)
-      log.add_token(...)      # chamado N vezes, um por token no 15m
-      log.add_event(...)      # chamado para cada CALL e QUASE emitido
-      log.commit()            # UMA vez, no finally: do bloco principal
+def _serialize_trade_plan(plan: Any) -> Optional[dict]:
+    """Serializa um ``TradePlan`` para dict JSON-amigável; None se vazio."""
+    if plan is None:
+        return None
+    d = _asdict_safe(plan)
+    if not isinstance(d, dict):
+        return None
+    split = d.get("position_split")
+    if isinstance(split, tuple):
+        d["position_split"] = list(split)
+    return d
 
-    Falhas de I/O são silenciosas — warning no LOG, nunca interrompem o scan.
-    Tempo adicional estimado por rodada: 50–200ms (desprezível vs timeout 25min).
+
+def _json_or_none(value: Any) -> Optional[str]:
+    """``json.dumps(value, ensure_ascii=False)`` se não None; senão None."""
+    if value is None:
+        return None
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except Exception as e:
+        LOG.warning(f"[logger] Falha ao serializar JSON: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Classe principal
+# ---------------------------------------------------------------------------
+
+
+class RoundLoggerV9:
+    """Logging estruturado de rodada v9 — Camada 1 (multi-setup + near-misses).
+
+    Acumula contexto da rodada em memória e persiste em duas camadas no
+    :meth:`commit`: JSONL append-only (verdade bruta) + SQLite analítico.
+
+    Falhas de I/O são silenciosas — warning/error no LOG, nunca interrompem
+    o scan. Idempotente: double-commit é no-op.
     """
 
     def __init__(self, version: str):
-        # Gera round_id no formato "YYYYMMDD_HHMM" em BRT
+        """Cria o logger da rodada. ``round_id`` = ``YYYYMMDD_HHMM`` em BRT."""
         now = datetime.now(BRT)
-        self.round_id  = now.strftime("%Y%m%d_%H%M")
-        self.ts        = now.isoformat()
-        self.version   = version
-        self._meta     = {}
-        self._pipeline = {}
-        self._tokens   = []
-        self._events   = []
-        self._exec_secs = None
-        self._committed = False
-        os.makedirs(BASE_DIR, exist_ok=True)
+        self.round_id: str = now.strftime("%Y%m%d_%H%M")
+        self.ts: str = now.isoformat()
+        self.version: str = version
+        self._meta: dict = {}
+        self._pipeline: dict = {}
+        self._tokens: list[dict] = []
+        self._near_misses: list[dict] = []
+        self._events: list[dict] = []
+        self._exec_secs: Optional[float] = None
+        self._committed: bool = False
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+        except Exception as e:
+            LOG.warning(f"[RoundLoggerV9] Falha ao criar LOG_DIR: {e}")
 
-    def set_meta(self, fgi: int, btc_4h: str, exchange: str, candle_locked: bool):
-        """Contexto da rodada — chamado após determinar FGI e thresholds."""
-        self._meta = {
-            "fgi"              : fgi,
-            "btc_4h_trend"     : btc_4h,
-            "exchange_primary" : exchange,
-            "exec_seconds"     : None,   # preenchido em set_exec_seconds
-            "candle_locked"    : candle_locked,
-        }
+    # ── set_meta / set_pipeline / set_exec_seconds ──────────────────────────
 
-    def set_pipeline(self, universe: int, after_gate_4h: int,
-                     after_gate_1h: int, scored_15m: int):
-        """Contagens do pipeline — chamado após completar os gates."""
-        self._pipeline = {
-            "universe"     : universe,
-            "after_gate_4h": after_gate_4h,
-            "after_gate_1h": after_gate_1h,
-            "scored_15m"   : scored_15m,
-        }
-
-    def set_exec_seconds(self, seconds: float):
-        """Tempo de execução — chamado no finally: com time.time() - t_start."""
-        self._exec_secs = seconds
-        if self._meta:
-            self._meta["exec_seconds"] = round(seconds, 1)
-
-    def add_token(
+    def set_meta(
         self,
-        symbol         : str,
-        direction      : str,
-        status         : str,
-        zona_qualidade : str,
-        zona_descricao : str,
-        check_a_ok     : bool,
-        check_a_reason : str,
-        check_a_ev     : dict,
-        check_b_ok     : bool,
-        check_b_reason : str,
-        check_b_ev     : dict,
-        check_c_total  : int,
-        check_c_thr    : int,
-        check_c_det    : dict,
-        zona_rich      : dict | None = None,
-        # Novos campos de debug:
-        candle_ref     : dict | None = None,
-        price          : float | None = None,
-        oi_usd         : float | None = None,
-        rec_4h         : str | None = None,
-        rec_1h         : str | None = None,
-        gate_1h_ok     : bool | None = None,
+        fgi: int,
+        btc_regime: str,
+        btc_change_pct_15m: float,
+        exchange_primary: str,
+        setups_enabled: dict[str, bool],
+        btc_filter_blocked: bool = False,
     ) -> None:
-        self._tokens.append({
-            "symbol"         : symbol,
-            "direction"      : direction,
-            "status"         : status,
-            "zona_qualidade" : zona_qualidade,
-            "zona_descricao" : zona_descricao,
-            "check_a_ok"     : check_a_ok,
-            "check_a_reason" : check_a_reason,
-            "check_a_ev"     : check_a_ev or {},
-            "check_b_ok"     : check_b_ok,
-            "check_b_reason" : check_b_reason,
-            "check_b_ev"     : check_b_ev or {},
-            "check_c_total"  : check_c_total,
-            "check_c_thr"    : check_c_thr,
-            "check_c_det"    : check_c_det or {},
-            "zona_rich"      : zona_rich or {},
-            "candle_ref"     : candle_ref or {},
-            "price"          : price,
-            "oi_usd"         : oi_usd,
-            "rec_4h"         : rec_4h,
-            "rec_1h"         : rec_1h,
-            "gate_1h_ok"     : gate_1h_ok,
+        """Grava o contexto macro da rodada (FGI, regime BTC, exchange ativa).
+
+        Parâmetros:
+            fgi: Fear & Greed index (0-100).
+            btc_regime: ``TREND_UP`` | ``TREND_DOWN`` | ``RANGE`` | ``SQUEEZE``.
+            btc_change_pct_15m: variação do BTC na última vela 15m.
+            exchange_primary: ``"OKX"`` | ``"Gate.io"`` | ``"Bitget"``.
+            setups_enabled: dict de kill-switches ativos.
+            btc_filter_blocked: True se algum CALL foi bloqueado pelo filtro BTC.
+        """
+        self._meta = {
+            "fgi":                 fgi,
+            "btc_regime":          btc_regime,
+            "btc_change_pct_15m":  float(btc_change_pct_15m),
+            "exchange_primary":    exchange_primary,
+            "setups_enabled":      dict(setups_enabled or {}),
+            "btc_filter_blocked":  bool(btc_filter_blocked),
+            "exec_seconds":        self._exec_secs,
+        }
+
+    def set_pipeline(
+        self,
+        universe: int,
+        tokens_evaluated: int,
+        calls_emitted: int,
+        setups_triggered_total: int,
+        near_misses_count: int,
+    ) -> None:
+        """Grava as contagens do pipeline da rodada.
+
+        Parâmetros:
+            universe: total de símbolos qualificados por OKX/Gate/Bitget.
+            tokens_evaluated: quantos chegaram a ``signals.evaluate_token()``.
+            calls_emitted: decisions com ``action == "CALL"``.
+            setups_triggered_total: soma de setups disparados (confluências
+                contam múltiplo).
+            near_misses_count: tokens com pelo menos 1 setup triggered mas
+                que acabaram em SKIP.
+        """
+        self._pipeline = {
+            "universe":               int(universe),
+            "tokens_evaluated":       int(tokens_evaluated),
+            "calls_emitted":          int(calls_emitted),
+            "setups_triggered_total": int(setups_triggered_total),
+            "near_misses_count":      int(near_misses_count),
+        }
+
+    def set_exec_seconds(self, seconds: float) -> None:
+        """Registra tempo total de execução da rodada (em segundos)."""
+        self._exec_secs = float(seconds)
+        if self._meta:
+            self._meta["exec_seconds"] = round(self._exec_secs, 1)
+
+    # ── add_token_evaluation / add_near_miss / add_event ────────────────────
+
+    def add_token_evaluation(self, decision: Any) -> None:
+        """Acumula um snapshot de ``SignalDecision`` (CALL ou SKIP).
+
+        Aceita qualquer objeto duck-typed com os atributos do
+        ``SignalDecision`` v9; não importa a classe real para evitar
+        acoplamento com ``signals.py``. ``timestamp`` (``pd.Timestamp``)
+        é convertido para ISO.
+        """
+        try:
+            all_results = list(getattr(decision, "all_setup_results", []) or [])
+            snapshot = {
+                "symbol":             getattr(decision, "symbol", None),
+                "timestamp":          _to_iso(getattr(decision, "timestamp", None)),
+                "timeframe":          getattr(decision, "timeframe", None),
+                "action":             getattr(decision, "action", None),
+                "direction":          getattr(decision, "direction", None),
+                "signal_tag":         getattr(decision, "signal_tag", None),
+                "confluent_setups":   list(getattr(decision, "confluent_setups", []) or []),
+                "confidence":         float(getattr(decision, "confidence", 0.0) or 0.0),
+                "regime":             getattr(decision, "regime", None),
+                "skip_reason":        getattr(decision, "skip_reason", None),
+                "all_setup_results":  [_serialize_setup_result(r) for r in all_results],
+                "protection_filters": dict(getattr(decision, "protection_filters", {}) or {}),
+                "trade_plan":         _serialize_trade_plan(getattr(decision, "trade_plan", None)),
+            }
+        except Exception as e:
+            LOG.warning(f"[RoundLoggerV9] Falha ao montar snapshot de decision: {e}")
+            return
+        self._tokens.append(snapshot)
+
+    def add_near_miss(
+        self,
+        symbol: str,
+        closest_setup_name: str,
+        closest_confidence: float,
+        closest_direction: Optional[str],
+        closest_regime: str,
+        conditions: list[dict],
+        ts: str,
+    ) -> None:
+        """Registra um token que quase disparou (observabilidade pura).
+
+        A lógica de detecção do near-miss é responsabilidade do chamador
+        (``main.py``). O logger apenas armazena. Sem SL/TP hipotéticos —
+        difere conceitualmente do ``QUASE`` do v8.
+        """
+        self._near_misses.append({
+            "symbol":             symbol,
+            "closest_setup_name": closest_setup_name,
+            "closest_confidence": float(closest_confidence or 0.0),
+            "closest_direction":  closest_direction,
+            "closest_regime":     closest_regime,
+            "conditions":         list(conditions or []),
+            "ts":                 ts,
         })
 
     def add_event(
         self,
-        type           : str,
-        symbol         : str,
-        direction      : str,
-        zona_qualidade : str,
-        check_c_total  : int,
-        check_c_thr    : int,
+        type: str,
+        symbol: str,
+        direction: str,
+        signal_tag: str,
+        confidence: float,
+        leverage: float,
     ) -> None:
+        """Registra um evento operacional da rodada (em v9, apenas ``CALL``)."""
         self._events.append({
-            "type"          : type,
-            "symbol"        : symbol,
-            "direction"     : direction,
-            "zona_qualidade": zona_qualidade,
-            "check_c_total" : check_c_total,
-            "check_c_thr"   : check_c_thr,
-            "gap"           : check_c_total - check_c_thr,
+            "type":       type,
+            "symbol":     symbol,
+            "direction":  direction,
+            "signal_tag": signal_tag,
+            "confidence": float(confidence or 0.0),
+            "leverage":   float(leverage or 0.0),
         })
 
+    # ── commit ──────────────────────────────────────────────────────────────
+
     def commit(self) -> bool:
-        """
-        Escreve JSONL e SQLite atomicamente.
-        JSONL primeiro — se falhar, loga warning e tenta SQLite mesmo assim.
-        SQLite segundo — se falhar, JSONL já está salvo como fallback.
-        Retorna True se ambos OK, False se qualquer um falhou.
+        """Persiste a rodada em JSONL e SQLite. Idempotente.
+
+        JSONL é gravado primeiro (verdade bruta, sempre recuperável via
+        :func:`rebuild_db`). SQLite vem em seguida; se falhar, o JSONL
+        ainda preserva os dados.
+
+        Retorna:
+            True se ambos JSONL e SQLite gravaram com sucesso, False caso
+            contrário. Double-commit é no-op (retorna True).
         """
         if self._committed:
             return True
         self._committed = True
 
-        # [v6.6.6] Compute venue_summary from all scored tokens
-        venue_summary = {
-            "clean"  : sum(1 for t in self._tokens
-                           if t.get("venue_info", {}).get("quality") == "clean"),
-            "mixed"  : sum(1 for t in self._tokens
-                           if t.get("venue_info", {}).get("quality") == "mixed"),
-            "unknown": sum(1 for t in self._tokens
-                           if t.get("venue_info", {}).get("quality") == "unknown"),
-            "mixed_symbols": [t["symbol"] for t in self._tokens
-                              if t.get("venue_info", {}).get("quality") == "mixed"],
-        }
-        self._meta["venue_summary"] = venue_summary
-
         record = {
-            "ts"      : self.ts,
-            "version" : self.version,
-            "round_id": self.round_id,
-            "meta"    : self._meta,
-            "pipeline": self._pipeline,
-            "tokens"  : self._tokens,
-            "events"  : self._events,
+            "ts":          self.ts,
+            "version":     self.version,
+            "round_id":    self.round_id,
+            "meta":        self._meta,
+            "pipeline":    self._pipeline,
+            "tokens":      self._tokens,
+            "near_misses": self._near_misses,
+            "events":      self._events,
         }
 
         jsonl_ok = self._write_jsonl(record)
         db_ok    = self._write_db(record)
         return jsonl_ok and db_ok
 
-    # ── I/O privado ──────────────────────────────────────────────────────────
+    # ── I/O privado ─────────────────────────────────────────────────────────
 
     def _write_jsonl(self, record: dict) -> bool:
         try:
-            with open(JSONL_PATH, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            with open(SCAN_LOG_JSONL_V9, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
             return True
         except Exception as e:
-            LOG.warning(f"[RoundLogger] Falha ao gravar JSONL: {e}")
+            LOG.warning(f"[RoundLoggerV9] Falha ao gravar JSONL: {e}")
             return False
 
     def _write_db(self, record: dict) -> bool:
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=10)
-            conn.execute("PRAGMA journal_mode=WAL")
-
+            conn = sqlite3.connect(SCAN_LOG_DB_V9, timeout=10)
             try:
-                cur = conn.execute("PRAGMA table_info(token_scores)")
-                cols = [row[1] for row in cur.fetchall()]
-                if "p1" in cols:
-                    conn.execute("DROP TABLE IF EXISTS token_scores")
-                    conn.execute("DROP TABLE IF EXISTS round_events")
-                    LOG.info("[logger] Migração v8: schema v6 detectado, recriando tabelas")
-            except Exception:
-                pass
-
-            conn.executescript(_DDL)
-
-            meta = record.get("meta", {})
-            pipe = record.get("pipeline", {})
-            rid  = record["round_id"]
-            ts   = record["ts"]
-
-            conn.execute(
-                """INSERT OR REPLACE INTO rounds VALUES
-                   (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    rid, ts, record.get("version"),
-                    meta.get("fgi"), meta.get("btc_4h_trend"),
-                    meta.get("threshold_long"), meta.get("threshold_short"),
-                    meta.get("exchange_primary"),
-                    1 if meta.get("candle_locked") else 0,
-                    meta.get("exec_seconds"),
-                    pipe.get("universe"), pipe.get("after_gate_4h"),
-                    pipe.get("after_gate_1h"), pipe.get("scored_15m"),
-                    json.dumps(meta.get("venue_summary", {}), ensure_ascii=False),
-                )
-            )
-
-            for t in record.get("tokens", []):
-                conn.execute(
-                    """INSERT INTO token_scores VALUES
-                       (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        rid, ts,
-                        t.get("symbol"),
-                        t.get("direction"),
-                        t.get("status"),
-                        t.get("zona_qualidade"),
-                        t.get("zona_descricao"),
-                        1 if t.get("check_a_ok") else 0,
-                        t.get("check_a_reason"),
-                        json.dumps(t.get("check_a_ev", {}), ensure_ascii=False),
-                        1 if t.get("check_b_ok") else 0,
-                        t.get("check_b_reason"),
-                        json.dumps(t.get("check_b_ev", {}), ensure_ascii=False),
-                        t.get("check_c_total", 0),
-                        t.get("check_c_thr", 0),
-                        (t.get("check_c_total", 0) or 0) - (t.get("check_c_thr", 0) or 0),
-                        json.dumps(t.get("check_c_det", {}), ensure_ascii=False),
-                        json.dumps(t.get("zona_rich", {}), ensure_ascii=False),
-                    )
-                )
-
-            for e in record.get("events", []):
-                conn.execute(
-                    """INSERT INTO round_events
-                       (round_id, ts, type, symbol, direction,
-                        zona_qualidade, check_c_total, check_c_thr, gap)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
-                    (
-                        rid, ts,
-                        e.get("type"),
-                        e.get("symbol"),
-                        e.get("direction"),
-                        e.get("zona_qualidade"),
-                        e.get("check_c_total", 0),
-                        e.get("check_c_thr", 0),
-                        e.get("gap", 0),
-                    )
-                )
-
-            conn.commit()
-            conn.close()
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.executescript(_DDL_V9)
+                _insert_record_v9(conn, record)
+                conn.commit()
+            finally:
+                conn.close()
             return True
         except Exception as e:
-            LOG.warning(f"[RoundLogger] Falha ao gravar SQLite: {e}")
+            LOG.warning(f"[RoundLoggerV9] Falha ao gravar SQLite: {e}")
             return False
 
 
-# ── Reconstrução do banco ─────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# INSERT helper (compartilhado entre commit() e rebuild_db)
+# ---------------------------------------------------------------------------
 
-def rebuild_db(jsonl_path: str = JSONL_PATH, db_path: str = DB_PATH) -> int:
+
+def _insert_record_v9(conn: sqlite3.Connection, record: dict) -> None:
+    """Insere um registro JSONL v9 nas 4 tabelas SQLite.
+
+    Usado por :meth:`RoundLoggerV9._write_db` e :func:`rebuild_db`. Falhas
+    em rounds/tokens/near_misses/events individuais são logadas mas não
+    abortam o restante (rebuild de 10k rodadas não pode parar na primeira
+    linha corrompida).
     """
-    Reconstrói o SQLite completo a partir do JSONL.
-    Chamável via: python3 logger.py --rebuild
-    Retorna o número de rodadas processadas.
-    """
-    if not os.path.exists(jsonl_path):
-        print(f"[rebuild_db] JSONL não encontrado: {jsonl_path}")
-        return 0
+    meta = record.get("meta") or {}
+    pipe = record.get("pipeline") or {}
+    rid  = record.get("round_id")
+    ts   = record.get("ts")
 
-    # Dropa tabelas antigas e recria
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("DROP TABLE IF EXISTS token_scores")
-    conn.execute("DROP TABLE IF EXISTS round_events")
-    conn.execute("DROP TABLE IF EXISTS rounds")
-    conn.executescript(_DDL)
-    conn.commit()
-
-    count = 0
-    with open(jsonl_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-                _insert_record(conn, record)
-                count += 1
-            except Exception as e:
-                print(f"[rebuild_db] Erro na linha {count+1}: {e}")
-
-    conn.commit()
-    conn.close()
-    print(f"[rebuild_db] Reconstruído: {count} rodadas → {db_path}")
-    return count
-
-
-def _insert_record(conn: sqlite3.Connection, record: dict):
-    """Insere um registro JSONL no banco SQLite (usado pelo rebuild_db)."""
-    meta = record.get("meta", {})
-    pipe = record.get("pipeline", {})
-    rid  = record["round_id"]
-    ts   = record["ts"]
+    if not rid or not ts:
+        raise ValueError("registro sem round_id/ts")
 
     conn.execute(
-        "INSERT OR REPLACE INTO rounds VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        """INSERT OR REPLACE INTO rounds (
+               round_id, ts, version,
+               fgi, btc_regime, btc_change_pct_15m, btc_filter_blocked,
+               exchange_primary, setups_enabled, exec_secs,
+               universe, tokens_evaluated, calls_emitted,
+               setups_triggered_total, near_misses_count
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            rid, ts, record.get("version"),
-            meta.get("fgi"), meta.get("btc_4h_trend"),
-            meta.get("threshold_long"), meta.get("threshold_short"),
+            rid,
+            ts,
+            record.get("version"),
+            meta.get("fgi"),
+            meta.get("btc_regime"),
+            meta.get("btc_change_pct_15m"),
+            1 if meta.get("btc_filter_blocked") else 0,
             meta.get("exchange_primary"),
-            1 if meta.get("candle_locked") else 0,
+            _json_or_none(meta.get("setups_enabled")),
             meta.get("exec_seconds"),
-            pipe.get("universe"), pipe.get("after_gate_4h"),
-            pipe.get("after_gate_1h"), pipe.get("scored_15m"),
-        )
+            pipe.get("universe"),
+            pipe.get("tokens_evaluated"),
+            pipe.get("calls_emitted"),
+            pipe.get("setups_triggered_total"),
+            pipe.get("near_misses_count"),
+        ),
     )
 
-    for tok in record.get("tokens", []):
-        p = tok.get("pillars", {})
-        def _ps(key):
-            return p.get(key, {}).get("score")
-        def _pr(key):
-            return p.get(key, {}).get("reason")
-        conn.execute(
-            "INSERT INTO token_scores VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                rid, ts, tok["symbol"], tok["direction"],
-                tok.get("score_total"), tok.get("threshold"), tok.get("gap"),
-                tok.get("status"),
-                _ps("P1"), _pr("P1"), _ps("P2"), _pr("P2"),
-                _ps("P3"), _pr("P3"), _ps("P4"), _pr("P4"),
-                _ps("P5"), _pr("P5"), _ps("P6"), _pr("P6"),
-                _ps("P7"), _pr("P7"), _ps("P8"), _pr("P8"),
-                _ps("P9"), _pr("P9"), _ps("P1H"), _pr("P1H"),
+    for tok in record.get("tokens", []) or []:
+        try:
+            conn.execute(
+                """INSERT INTO token_evaluations (
+                       round_id, ts, symbol, timeframe, action, direction,
+                       signal_tag, confluent_setups, confidence, regime,
+                       skip_reason, all_setup_results, protection_filters,
+                       trade_plan
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    rid,
+                    ts,
+                    tok.get("symbol"),
+                    tok.get("timeframe"),
+                    tok.get("action"),
+                    tok.get("direction"),
+                    tok.get("signal_tag"),
+                    _json_or_none(tok.get("confluent_setups")),
+                    tok.get("confidence"),
+                    tok.get("regime"),
+                    tok.get("skip_reason"),
+                    _json_or_none(tok.get("all_setup_results")),
+                    _json_or_none(tok.get("protection_filters")),
+                    _json_or_none(tok.get("trade_plan")),
+                ),
             )
-        )
+        except Exception as e:
+            LOG.warning(f"[logger] Falha ao inserir token {tok.get('symbol')}: {e}")
 
-    for ev in record.get("events", []):
-        conn.execute(
-            "INSERT INTO round_events (round_id, ts, type, symbol, direction, score, gap) VALUES (?,?,?,?,?,?,?)",
-            (rid, ts, ev["type"], ev["symbol"], ev["direction"],
-             ev.get("score"), ev.get("gap"))
-        )
+    for nm in record.get("near_misses", []) or []:
+        try:
+            conn.execute(
+                """INSERT INTO near_misses (
+                       round_id, ts, symbol, closest_setup_name,
+                       closest_confidence, closest_direction, closest_regime,
+                       conditions
+                   ) VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    rid,
+                    nm.get("ts", ts),
+                    nm.get("symbol"),
+                    nm.get("closest_setup_name"),
+                    nm.get("closest_confidence"),
+                    nm.get("closest_direction"),
+                    nm.get("closest_regime"),
+                    _json_or_none(nm.get("conditions")),
+                ),
+            )
+        except Exception as e:
+            LOG.warning(f"[logger] Falha ao inserir near_miss {nm.get('symbol')}: {e}")
+
+    for ev in record.get("events", []) or []:
+        try:
+            conn.execute(
+                """INSERT INTO round_events (
+                       round_id, ts, type, symbol, direction, signal_tag,
+                       confidence, leverage
+                   ) VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    rid,
+                    ts,
+                    ev.get("type"),
+                    ev.get("symbol"),
+                    ev.get("direction"),
+                    ev.get("signal_tag"),
+                    ev.get("confidence"),
+                    ev.get("leverage"),
+                ),
+            )
+        except Exception as e:
+            LOG.warning(f"[logger] Falha ao inserir event {ev.get('symbol')}: {e}")
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# rebuild_db — reconstrói SQLite v9 a partir do JSONL
+# ---------------------------------------------------------------------------
+
+
+def rebuild_db(
+    jsonl_path: str = SCAN_LOG_JSONL_V9,
+    db_path: str = SCAN_LOG_DB_V9,
+) -> int:
+    """Reconstrói o SQLite v9 completo a partir do JSONL.
+
+    1. Drop das 4 tabelas v9 (``rounds``, ``token_evaluations``,
+       ``near_misses``, ``round_events``).
+    2. ``CREATE TABLE IF NOT EXISTS`` com o DDL v9.
+    3. Para cada linha do JSONL, chama :func:`_insert_record_v9`.
+
+    Linhas malformadas são contadas como erro mas não abortam o processo.
+    Retorna o número de rodadas processadas com sucesso.
+    """
+    if not os.path.exists(jsonl_path):
+        LOG.warning(f"[rebuild_db] JSONL não encontrado: {jsonl_path}")
+        try:
+            os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        except Exception as e:
+            LOG.warning(f"[rebuild_db] Falha ao criar diretório do DB: {e}")
+        try:
+            conn = sqlite3.connect(db_path, timeout=10)
+            try:
+                conn.executescript(_DDL_V9)
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            LOG.error(f"[rebuild_db] Falha ao criar DB vazio: {e}")
+        return 0
+
+    try:
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    except Exception as e:
+        LOG.warning(f"[rebuild_db] Falha ao criar diretório do DB: {e}")
+
+    try:
+        conn = sqlite3.connect(db_path, timeout=10)
+    except Exception as e:
+        LOG.error(f"[rebuild_db] Falha ao abrir DB: {e}")
+        return 0
+
+    success = 0
+    errors = 0
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("DROP TABLE IF EXISTS round_events")
+        conn.execute("DROP TABLE IF EXISTS near_misses")
+        conn.execute("DROP TABLE IF EXISTS token_evaluations")
+        conn.execute("DROP TABLE IF EXISTS rounds")
+        conn.executescript(_DDL_V9)
+        conn.commit()
+
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line_no, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                    _insert_record_v9(conn, record)
+                    success += 1
+                except Exception as e:
+                    errors += 1
+                    LOG.warning(f"[rebuild_db] Erro na linha {line_no}: {e}")
+        conn.commit()
+    except Exception as e:
+        LOG.error(f"[rebuild_db] Falha durante reconstrução: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    LOG.info(
+        f"[rebuild_db] Reconstruído: {success} rodadas, {errors} erros → {db_path}"
+    )
+    return success
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--rebuild":
-        jsonl = sys.argv[2] if len(sys.argv) > 2 else JSONL_PATH
-        db    = sys.argv[3] if len(sys.argv) > 3 else DB_PATH
-        rebuild_db(jsonl, db)
+        jsonl = sys.argv[2] if len(sys.argv) > 2 else SCAN_LOG_JSONL_V9
+        db    = sys.argv[3] if len(sys.argv) > 3 else SCAN_LOG_DB_V9
+        n = rebuild_db(jsonl, db)
+        print(f"[rebuild_db] {n} rodadas processadas → {db}")
     else:
         print("Uso: python3 logger.py --rebuild [jsonl_path] [db_path]")
