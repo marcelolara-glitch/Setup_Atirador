@@ -1,7 +1,14 @@
-# exchanges.py — Módulo de busca de dados de mercado — Setup Atirador v8
-# Extração das funções de acesso a exchanges do monolito.
+# exchanges.py — Módulo de busca de dados de mercado — Setup Atirador v9.0.0-beta
+# Portado do v8 com adaptações cirúrgicas. A maioria do código é cópia literal
+# do v8 — comportamento testado em produção há meses.
+#
 # Correção Bug #1: fetch_perpetuals retorna tuple[list[dict], str] onde str é
 # o nome da fonte ativa ("OKX", "Gate.io" ou "Bitget"), não int.
+#
+# v9: adiciona fetch_btc_context, klines_to_dataframe, get_data_source_attempts
+# e reset_data_source_attempts. Suporte a TFs 5m e 1m funciona out of the box
+# (OKX e Bitget aceitam esses grans no mesmo endpoint). TTL de cache para TFs
+# curtos foi estendido (ver fetch_klines_cached_async).
 
 import asyncio
 import json
@@ -11,6 +18,7 @@ import time
 from typing import Any, Callable
 
 import aiohttp
+import pandas as pd
 import requests
 
 from config import (
@@ -198,7 +206,8 @@ async def fetch_klines_cached_async(
         try:
             with open(cache_file) as f:
                 cached = json.load(f)
-            ttl = 0 if granularity == "15m" else KLINE_CACHE_TTL_H
+            # v9: TFs curtos (15m/5m/1m) sempre buscam fresh — dados mais voláteis
+            ttl = 0 if granularity in ("15m", "5m", "1m") else KLINE_CACHE_TTL_H
             if cached and ttl > 0 and age_h < ttl and len(cached) >= 20:
                 return cached
         except Exception:
@@ -499,7 +508,7 @@ async def fetch_perpetuals() -> tuple[list[dict], str]:
     """
     global _data_source_attempts
     _data_source_attempts = []
-    LOG.info("📡 [v8.1.0] Iniciando busca de tickers — hierarquia OKX → Gate.io → Bitget")
+    LOG.info("📡 [v9] Iniciando busca de tickers — hierarquia OKX → Gate.io → Bitget")
 
     tickers_with_oi = await _fetch_okx_tickers_with_oi()
     if tickers_with_oi:
@@ -602,3 +611,82 @@ async def _fetch_token_okx_async(
         "volume_24h": sf(t.get("vol24h", 0)), "funding_rate": fr_val,
         "price_change_24h": pct_chg,
     }
+
+
+# ===========================================================================
+# v9 — Funções novas
+# ===========================================================================
+
+async def fetch_btc_context(session: aiohttp.ClientSession) -> dict:
+    """Busca contexto BTC para filtro de correlação.
+
+    v9: usado em signals.evaluate_token() para bloquear CALLs quando BTC
+    se move abruptamente (proteção contra correlação direcional).
+
+    Retorno:
+        {
+            "symbol": "BTCUSDT",
+            "change_pct_15m": float,   # variação % entre últimas 2 velas 15m
+            "atr_pct": float,          # ATR / preço * 100
+        }
+    """
+    from config import BTC_SYMBOL
+
+    klines = await fetch_klines_cached_async(session, BTC_SYMBOL, "15m", limit=20)
+    if len(klines) < 2:
+        return {"symbol": BTC_SYMBOL, "change_pct_15m": 0.0, "atr_pct": 0.0}
+
+    last_close = klines[-1]["close"]
+    prev_close = klines[-2]["close"]
+    change_pct = ((last_close - prev_close) / prev_close * 100) if prev_close > 0 else 0.0
+
+    # ATR simples sobre últimos 14 candles (média das amplitudes)
+    recent = klines[-14:] if len(klines) >= 14 else klines
+    atr_raw = sum(k["high"] - k["low"] for k in recent) / len(recent)
+    atr_pct = (atr_raw / last_close * 100) if last_close > 0 else 0.0
+
+    return {
+        "symbol": BTC_SYMBOL,
+        "change_pct_15m": change_pct,
+        "atr_pct": atr_pct,
+    }
+
+
+def klines_to_dataframe(klines: list[dict]) -> pd.DataFrame:
+    """Converte lista de klines (formato exchanges.py) em DataFrame OHLCV.
+
+    Schema de entrada: [{"ts": int_ms, "open": float, "high": float,
+                          "low": float, "close": float, "volume": float}, ...]
+
+    Schema de saída: DataFrame com colunas [open, high, low, close, volume]
+    indexado por timestamp (DatetimeIndex), ordem ascendente.
+
+    Retorno:
+        pd.DataFrame vazio se klines for vazio.
+    """
+    if not klines:
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+    df = pd.DataFrame(klines)
+    df["ts"] = pd.to_datetime(df["ts"], unit="ms")
+    df = df.set_index("ts")
+    df = df[["open", "high", "low", "close", "volume"]]
+    df = df.astype(float)
+    return df
+
+
+def get_data_source_attempts() -> list[dict]:
+    """Retorna cópia do registro de tentativas de fontes da última rodada.
+
+    Cada entrada contém:
+        {fonte, url, status, elapsed_s, tokens_brutos, qualificados, falha}
+
+    Usado por logger.py e telegram_bot.py (/status) para diagnóstico.
+    """
+    return list(_data_source_attempts)
+
+
+def reset_data_source_attempts() -> None:
+    """Limpa registro de tentativas. Chamar no início de cada rodada."""
+    global _data_source_attempts
+    _data_source_attempts = []

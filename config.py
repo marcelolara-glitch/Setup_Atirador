@@ -1,6 +1,9 @@
-# config.py — Constantes centralizadas do Setup Atirador v8.4.0
+# config.py — Constantes centralizadas do Setup Atirador v9.0.0-beta
 # Este arquivo é a fonte da verdade para todas as constantes do sistema.
 # NÃO contém lógica de negócio — apenas valores configuráveis.
+#
+# v9: portado do v8 com adaptações cirúrgicas — multi-setup, sem TradingView
+# Scanner, saídas parciais TP1/TP2/TP3, regimes de mercado.
 
 # ---------------------------------------------------------------------------
 # Bloco 1 — Imports e timezone
@@ -12,7 +15,7 @@ BRT = timezone(timedelta(hours=-3))
 # ---------------------------------------------------------------------------
 # Bloco 2 — Versão
 # ---------------------------------------------------------------------------
-VERSION = "8.5.2"
+VERSION = "9.0.0-beta"
 
 # ---------------------------------------------------------------------------
 # Bloco 3 — Paths
@@ -27,14 +30,21 @@ JOURNAL_DIR = os.path.join(BASE_DIR, "journal")
 TELEGRAM_CONFIG_FILE        = os.path.expanduser("~/.atirador_telegram_config.json")
 TELEGRAM_CONFIG_FILE_LEGACY = "/tmp/atirador_telegram_config.json"
 
+# v9 — bancos novos, isolados dos v8 (descartados no deploy)
+SCAN_LOG_DB_V9    = os.path.join(LOG_DIR, "scan_log_v9.db")
+JOURNAL_DB_V9     = os.path.join(JOURNAL_DIR, "atirador_journal_v9.db")
+STATE_FILE_V9     = os.path.join(BASE_DIR, "states", "atirador_state_v9.json")
+SCAN_LOG_JSONL_V9 = os.path.join(LOG_DIR, "scan_log_v9.jsonl")
+
 # ---------------------------------------------------------------------------
 # Bloco 4 — Parâmetros de universo e klines
 # ---------------------------------------------------------------------------
-MIN_TURNOVER_24H    = 2_000_000
-MIN_OI_USD          = 5_000_000
-KLINE_TOP_N         = 20
-KLINE_TOP_N_LIGHT   = 30
-KLINE_LIMIT         = 60
+MIN_TURNOVER_24H    = 1_000_000   # v8 era 2_000_000 — ampliando universo em v9
+MIN_OI_USD          = 3_000_000   # v8 era 5_000_000
+# v9: None = sem cap, processa universo todo. Se rodada ficar lenta demais, voltamos a um int.
+KLINE_TOP_N         = None
+KLINE_TOP_N_LIGHT   = None
+KLINE_LIMIT         = 200         # v8 era 60 — v9 precisa mais história para indicadores
 KLINE_CACHE_TTL_H   = 1
 TICKER_TIMEOUT      = 8
 _GATE_MULTIPLIERS_TTL = 86400
@@ -68,41 +78,30 @@ ALAVANCAGEM_MAX      = 50.0
 RR_MINIMO            = 2.0
 
 # ---------------------------------------------------------------------------
-# Bloco 8 — Alavancagem por score
-# Correção do Bug #2: chaves int simples (não tuplas) para evitar falha
-# silenciosa no .get(int_key).
+# Bloco 8 — Cron e timing
 # ---------------------------------------------------------------------------
-ALAV_POR_SCORE: dict = {
-    14: 5.0,
-    15: 5.0,
-    16: 10.0,
-    17: 10.0,
-    18: 15.0,
-    19: 15.0,
-    20: 20.0,
-    21: 20.0,
-    22: 30.0,
-    23: 30.0,
-    24: 40.0,
-    25: 40.0,
+SCAN_INTERVAL_MIN = 15   # v8 era 30 — v9 alinha com candle 15m
+SCAN_OFFSET_MIN   = 1    # offset em minutos para dar tempo de fechar candle
+
+# ---------------------------------------------------------------------------
+# Bloco 9 — Setups (kill-switches)
+# ---------------------------------------------------------------------------
+SETUPS_ENABLED: dict[str, bool] = {
+    "cont_pull":   True,
+    "rev_exaust":  True,
+    "break_range": True,
+    "rev_zone":    True,
+    "breaker":     True,
 }
 
-
-def get_alav_max_por_score(score: int) -> float:
-    """Retorna alavancagem máxima para o score dado.
-    Fallback para ALAVANCAGEM_MIN se score não mapeado."""
-    return ALAV_POR_SCORE.get(score, ALAVANCAGEM_MIN)
-
+# ---------------------------------------------------------------------------
+# Bloco 10 — BTC contexto
+# ---------------------------------------------------------------------------
+BTC_SYMBOL = "BTCUSDT"   # formato interno (sem -USDT-SWAP)
+BTC_ABRUPT_MOVE_THRESHOLD_PCT = 2.0   # bloqueia CALLs se BTC mover mais que isso em 15m
 
 # ---------------------------------------------------------------------------
-# Bloco 9 — Colunas TradingView
-# ---------------------------------------------------------------------------
-COLS_4H     = ["Recommend.All|240", "RSI|240"]
-COLS_1H     = ["Recommend.All|60"]
-COLS_15M_TECH = ["BB.upper|15", "BB.lower|15", "ATR|15", "high|15", "low|15", "close|15"]
-
-# ---------------------------------------------------------------------------
-# Bloco 10 — URLs de API
+# Bloco 11 — URLs de API
 # ---------------------------------------------------------------------------
 URLS = {
     "okx_tickers":   "https://www.okx.com/api/v5/market/tickers?instType=SWAP",
@@ -113,28 +112,34 @@ URLS = {
     "gate_contracts":"https://api.gateio.ws/api/v4/futures/usdt/contracts",
     "bitget_tickers":"https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES",
     "bitget_klines": "https://api.bitget.com/api/v2/mix/market/candles",
-    "tradingview":   "https://scanner.tradingview.com/crypto/scan",
     "fear_greed":    "https://api.alternative.me/fng/?limit=1",
 }
 
 # ---------------------------------------------------------------------------
-# Bloco 11 — Parâmetros Bitget
+# Bloco 12 — Parâmetros Bitget
+# CRÍTICO: sem esta constante a Bitget V2 retorna vazio. Não tocar.
 # ---------------------------------------------------------------------------
 BITGET_PRODUCT_TYPE = "USDT-FUTURES"
 
 # ---------------------------------------------------------------------------
-# Bloco 12 — Heartbeat
+# Bloco 13 — Telegram
 # ---------------------------------------------------------------------------
 TELEGRAM_HEARTBEAT = True
+TELEGRAM_BETA_TAG  = "v9-beta"
 
 # ---------------------------------------------------------------------------
-# Bloco 13 — Zona order
+# Bloco 14 — Confidence mínimo
 # ---------------------------------------------------------------------------
-ZONA_ORDER = ["MAXIMA", "ALTA_OB4H", "ALTA_OB1H", "MEDIA", "BASE"]
+MIN_CONFIDENCE_FOR_CALL = 50.0   # signals.py descarta CALL abaixo disso
 
 # ---------------------------------------------------------------------------
 # Changelog
 # ---------------------------------------------------------------------------
+# v9.0.0-beta (23/04/2026): Reescrita arquitetural — multi-setup, sem TV Scanner,
+#                            saídas parciais TP1/TP2/TP3, regimes de mercado.
+#                            Universo ampliado (MIN_TURNOVER_24H 2M→1M,
+#                            MIN_OI_USD 5M→3M). KLINE_LIMIT 60→200, sem cap em
+#                            KLINE_TOP_N. Bancos SQLite/JSONL isolados em *_v9.
 # v8.4.0 (13/04/2026): c1_bb reescrito — lógica toque+retorno na banda BB
 #                       (high≥BB.upper+close<BB.upper para SHORT;
 #                        low≤BB.lower+close>BB.lower para LONG).
