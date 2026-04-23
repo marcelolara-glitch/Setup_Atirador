@@ -36,7 +36,7 @@ from typing import Any, Optional
 import requests
 
 from config import BRT, JOURNAL_DB_V9, JOURNAL_DIR, TRADE_TIMEOUT_HOURS
-from risk import TradePlan, TradeState, update_trade_state  # noqa: F401 (usados em 12c.C)
+from risk import TradePlan, TradeState, update_trade_state
 
 LOG = logging.getLogger("atirador")
 
@@ -578,8 +578,254 @@ class TradeJournalV9:
             return None
 
     def check_open_trades(self, fetch_klines_fn=None) -> int:
-        """Avalia trades OPEN via klines, atualiza estado. [12c.C]"""
-        raise NotImplementedError("check_open_trades: será implementado em 12c.C")
+        """Itera trades OPEN, avalia avanço/saída via klines, persiste mudanças.
+
+        Parâmetros:
+            fetch_klines_fn: callable opcional ``(symbol) -> list[dict]`` que
+                retorna klines no formato v9 (``[{"ts": int_ms, "open":...}]``).
+                Se None, usa :func:`_fetch_klines_sync_v9` internamente. Injeção
+                permite testes sem rede.
+
+        Retorno:
+            Número de trades que chegaram a status final nesta verificação
+            (``LOSS_SL``/``WIN_TP1``/``WIN_TP2``/``WIN_TP3``/``EXPIRED``).
+            Updates intermediários (TP1 hit mas trade ainda OPEN) não contam.
+        """
+        try:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM trades WHERE status='OPEN'"
+                ).fetchall()
+            finally:
+                conn.close()
+            open_trades = [dict(r) for r in rows]
+        except Exception as e:
+            LOG.warning(f"[TradeJournalV9] Falha ao buscar trades abertos: {e}")
+            return 0
+
+        if not open_trades:
+            return 0
+
+        closed = 0
+        for row in open_trades:
+            try:
+                closed += self._check_one_trade(row, fetch_klines_fn)
+            except Exception as e:
+                LOG.warning(
+                    f"[TradeJournalV9] Erro ao verificar trade "
+                    f"{row.get('id', '?')}: {e}"
+                )
+
+        if closed > 0:
+            LOG.info(f"[TradeJournalV9] check_open_trades: {closed} trade(s) fechado(s)")
+        return closed
+
+    def _check_one_trade(self, row: dict, fetch_klines_fn) -> int:
+        """Avalia um único trade contra klines recentes. Persiste mudanças.
+
+        Pipeline:
+            1. Timeout check (antes de buscar klines — evita I/O desnecessário).
+            2. Fetch de klines 15m (via callable injetado ou fetcher interno).
+            3. Filtra só candles novos (ts > timestamp de abertura em ms).
+            4. Reconstrói TradePlan + TradeState via helpers.
+            5. Loop cronológico: atualiza runup/drawdown, chama update_trade_state,
+               interrompe ao primeiro status final (decisão: max_runup/drawdown
+               inclui o candle da saída).
+            6. Persiste: _close_trade se status final; _update_partial se só
+               mudou SL/tp_hit/position_remaining; no-op se nada mudou.
+
+        Retorna 1 se chegou a status final, 0 caso contrário.
+        """
+        now = datetime.now(BRT)
+        trade_id = row["id"]
+        symbol = row["symbol"]
+        direction = row["direction"]
+        entry = float(row["entry_price"])
+
+        # --- 1. Timeout check ------------------------------------------------
+        try:
+            ts_open = datetime.fromisoformat(row["timestamp"])
+        except Exception as e:
+            LOG.warning(f"[TradeJournalV9] timestamp inválido em {trade_id}: {e}")
+            return 0
+
+        hours_open = (now - ts_open).total_seconds() / 3600.0
+        timeout_h = float(row.get("timeout_hours") or TRADE_TIMEOUT_HOURS)
+        if hours_open >= timeout_h:
+            self._close_trade(
+                trade_id=trade_id,
+                status="EXPIRED",
+                exit_price=entry,
+                exit_time=now.isoformat(),
+                pnl_pct=0.0,
+            )
+            LOG.info(
+                f"[TradeJournalV9] EXPIRED: {trade_id} "
+                f"({hours_open:.1f}h > {timeout_h:.0f}h)"
+            )
+            return 1
+
+        # --- 2. Busca klines -------------------------------------------------
+        try:
+            if fetch_klines_fn is not None:
+                klines = fetch_klines_fn(symbol)
+            else:
+                klines = _fetch_klines_sync_v9(symbol, granularity="15m", limit=20)
+        except Exception as e:
+            LOG.debug(f"[TradeJournalV9] Falha ao buscar klines para {symbol}: {e}")
+            return 0
+
+        if not klines:
+            return 0
+
+        # --- 3. Filtra só candles novos -------------------------------------
+        # timestamp ISO do trade em ms (para comparar com ts de klines)
+        try:
+            open_ts_ms = int(ts_open.timestamp() * 1000)
+        except Exception:
+            open_ts_ms = 0
+
+        new_klines = [
+            k for k in klines
+            if isinstance(k, dict) and int(k.get("ts", 0)) > open_ts_ms
+        ]
+        if not new_klines:
+            return 0
+
+        # Garante ordem crescente de ts (candles chegam crescentes do fetcher,
+        # mas não custa garantir)
+        new_klines.sort(key=lambda k: int(k["ts"]))
+
+        # --- 4. Reconstrói TradePlan + TradeState ---------------------------
+        try:
+            plan = _plan_from_row(row)
+            state = _state_from_row(row, plan)
+        except Exception as e:
+            LOG.warning(
+                f"[TradeJournalV9] Falha ao reconstruir plan/state "
+                f"de {trade_id}: {e}"
+            )
+            return 0
+
+        # Acumuladores de extremos
+        max_runup = float(row.get("max_runup") or 0.0)
+        max_drawdown = float(row.get("max_drawdown") or 0.0)
+        initial_sl = float(row.get("current_sl") or row.get("sl_price") or 0.0)
+        initial_tp1 = bool(row.get("tp1_hit"))
+        initial_tp2 = bool(row.get("tp2_hit"))
+        initial_tp3 = bool(row.get("tp3_hit"))
+        initial_pos = float(row.get("position_remaining") or 1.0)
+        initial_runup = float(row.get("max_runup") or 0.0)
+        initial_drawdown = float(row.get("max_drawdown") or 0.0)
+
+        # --- 5. Loop cronológico --------------------------------------------
+        for candle in new_klines:
+            try:
+                hi = float(candle["high"])
+                lo = float(candle["low"])
+            except Exception:
+                continue
+
+            if entry > 0:
+                if direction == "LONG":
+                    runup = (hi - entry) / entry * 100.0
+                    drawdown = (entry - lo) / entry * 100.0
+                else:  # SHORT
+                    runup = (entry - lo) / entry * 100.0
+                    drawdown = (hi - entry) / entry * 100.0
+                if runup > max_runup:
+                    max_runup = runup
+                if drawdown > max_drawdown:
+                    max_drawdown = drawdown
+
+            state = update_trade_state(state, candle)
+
+            if state.status != "OPEN":
+                break  # não processa candles após saída
+
+        # --- 6. Persistência -------------------------------------------------
+        if state.status != "OPEN":
+            # Status final: calcula exit_price + pnl
+            exit_price = self._exit_price_for_status(state, plan, row)
+            pnl_pct = _calc_partial_pnl(
+                status=state.status,
+                direction=direction,
+                entry=entry,
+                tp1=float(plan.tp1_price),
+                tp2=float(plan.tp2_price),
+                tp3=float(plan.tp3_price),
+                current_sl=float(state.current_sl),
+                position_split=plan.position_split,
+            )
+            self._close_trade(
+                trade_id=trade_id,
+                status=state.status,
+                exit_price=exit_price,
+                exit_time=now.isoformat(),
+                pnl_pct=pnl_pct,
+                current_sl=state.current_sl,
+                tp1_hit=state.tp1_hit,
+                tp2_hit=state.tp2_hit,
+                tp3_hit=state.tp3_hit,
+                position_remaining=state.position_remaining,
+                max_runup=max_runup,
+                max_drawdown=max_drawdown,
+            )
+            LOG.info(
+                f"[TradeJournalV9] {state.status}: {trade_id} "
+                f"| pnl={pnl_pct:+.2f}% | exit={exit_price:.6f}"
+            )
+            return 1
+
+        # Trade continua OPEN — atualiza se algo mudou
+        changed = (
+            state.current_sl != initial_sl
+            or state.tp1_hit != initial_tp1
+            or state.tp2_hit != initial_tp2
+            or state.tp3_hit != initial_tp3
+            or state.position_remaining != initial_pos
+            or max_runup != initial_runup
+            or max_drawdown != initial_drawdown
+        )
+        if changed:
+            self._update_partial(
+                trade_id=trade_id,
+                current_sl=state.current_sl,
+                tp1_hit=state.tp1_hit,
+                tp2_hit=state.tp2_hit,
+                tp3_hit=state.tp3_hit,
+                position_remaining=state.position_remaining,
+                max_runup=max_runup,
+                max_drawdown=max_drawdown,
+            )
+
+        return 0
+
+    @staticmethod
+    def _exit_price_for_status(state: TradeState, plan: TradePlan, row: dict) -> float:
+        """Retorna o exit_price conforme o status final do trade.
+
+        Convenção v9 (simplificada — a matemática ponderada de pnl está em
+        ``_calc_partial_pnl``):
+            - WIN_TP3 → tp3_price
+            - WIN_TP2 → tp2_price
+            - WIN_TP1 → tp1_price
+            - LOSS_SL → current_sl no momento (pode ser sl_price original,
+                        entry após TP1, ou tp1_price após TP2)
+            - EXPIRED → entry_price (0% pnl)
+        """
+        status = state.status
+        if status == "WIN_TP3":
+            return float(plan.tp3_price)
+        if status == "WIN_TP2":
+            return float(plan.tp2_price)
+        if status == "WIN_TP1":
+            return float(plan.tp1_price)
+        if status == "LOSS_SL":
+            return float(state.current_sl)
+        # EXPIRED ou desconhecido — devolve entry
+        return float(row.get("entry_price") or 0.0)
 
     def get_performance(
         self,
