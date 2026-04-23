@@ -8,10 +8,12 @@ Direções:
     LONG  — preço testou OB bullish ativo e forma candle de rejeição
     SHORT — preço testou OB bearish ativo e forma candle de rejeição
 
-Filtro de regime (inclusão, não exclusão):
+Filtro de regime (skip global, simetria com ``cont_pull`` e ``break_range``):
     * ``TREND_UP``   — apenas LONG (pullback em tendência alta)
     * ``TREND_DOWN`` — apenas SHORT (pullback em tendência baixa)
     * ``RANGE`` / ``SQUEEZE`` — LONG e SHORT permitidos
+    Regime incompatível retorna ``triggered=False`` com ``skip_reason``,
+    sem poluir os QUASEs com bloqueios estruturais.
 
 Conditions (LONG — reversão de baixa em OB bullish; espelho em SHORT):
     1. Preço tocou OB bullish ativo nas últimas ``lookback_zone`` velas  (weight 3.0)
@@ -19,7 +21,6 @@ Conditions (LONG — reversão de baixa em OB bullish; espelho em SHORT):
     3. Candle de rejeição: ``wick_bottom_pct >= 0.30``                   (weight 2.5)
     4. Close bullish OU doji (``body_pct < 0.15``)                       (weight 1.5)
     5. RSI(14) saindo de sobrevendido: ``30 < rsi_14 < 50``              (weight 1.0)
-    6. Regime compatível (não ``TREND_DOWN`` no LONG)                    (weight 1.0)
 
 Regras de pureza (absolutas):
     - Zero I/O (sem rede, arquivo, banco, logging persistente)
@@ -97,14 +98,12 @@ def _find_touched_ob(
 def _build_conditions_long(
     ctx: "MarketContext",
     ob: "OrderBlock",
-    regime: "RegimeClassification",
 ) -> list[dict[str, Any]]:
-    """Monta as 6 conditions do lado LONG."""
+    """Monta as 5 conditions do lado LONG."""
     rejection_candle = float(
         ctx.is_bullish or ctx.body_pct < DOJI_BODY_MAX
     )
     rsi_in_band = float(RSI_LONG_LOW < ctx.rsi_14 < RSI_LONG_HIGH)
-    regime_ok = float(regime.regime in _LONG_ALLOWED_REGIMES)
 
     return [
         evaluate_condition(
@@ -142,27 +141,18 @@ def _build_conditions_long(
             operator=">",
             weight=1.0,
         ),
-        evaluate_condition(
-            "regime_allows_long",
-            regime_ok,
-            0.5,
-            operator=">",
-            weight=1.0,
-        ),
     ]
 
 
 def _build_conditions_short(
     ctx: "MarketContext",
     ob: "OrderBlock",
-    regime: "RegimeClassification",
 ) -> list[dict[str, Any]]:
-    """Monta as 6 conditions do lado SHORT (espelho do LONG)."""
+    """Monta as 5 conditions do lado SHORT (espelho do LONG)."""
     rejection_candle = float(
         (not ctx.is_bullish) or ctx.body_pct < DOJI_BODY_MAX
     )
     rsi_in_band = float(RSI_SHORT_LOW < ctx.rsi_14 < RSI_SHORT_HIGH)
-    regime_ok = float(regime.regime in _SHORT_ALLOWED_REGIMES)
 
     return [
         evaluate_condition(
@@ -200,13 +190,6 @@ def _build_conditions_short(
             operator=">",
             weight=1.0,
         ),
-        evaluate_condition(
-            "regime_allows_short",
-            regime_ok,
-            0.5,
-            operator=">",
-            weight=1.0,
-        ),
     ]
 
 
@@ -225,9 +208,9 @@ def evaluate_rev_zone(
             ``lookback_zone`` velas — o candle de rejeição em si vem do
             ``ctx`` pré-calculado.
         ctx: :class:`MarketContext` pré-calculado do 15m.
-        regime: :class:`RegimeClassification` pré-calculado. Filtro de
-            regime é aplicado como condition 6 (e não como skip global),
-            para que a evidência registre por que não disparou.
+        regime: :class:`RegimeClassification` pré-calculado. Regime
+            incompatível com a direção do OB tocado é tratado como skip
+            global (simetria com ``cont_pull`` e ``break_range``).
         order_blocks: lista de :class:`OrderBlock` candidatos. Apenas OBs
             não mitigados são considerados.
         lookback_zone: quantas velas anteriores à atual (inclusive) são
@@ -236,10 +219,12 @@ def evaluate_rev_zone(
     Retorno:
         :class:`SetupResult`. Skips possíveis em ``evidence["skip_reason"]``:
 
-        * ``"no_active_obs"``     — nenhum OB ativo na lista.
-        * ``"no_ob_touched"``     — nenhum OB bullish/bearish tocado na janela.
-        * ``"ambiguous_ob_touch"``— preço tocou simultaneamente OB bullish e
+        * ``"no_active_obs"``       — nenhum OB ativo na lista.
+        * ``"no_ob_touched"``       — nenhum OB bullish/bearish tocado na janela.
+        * ``"ambiguous_ob_touch"``  — preço tocou simultaneamente OB bullish e
           bearish — evita direção ambígua.
+        * ``"regime <X> blocks LONG/SHORT"`` — regime incompatível com a
+          direção do OB tocado.
     """
     active_obs = [ob for ob in order_blocks if not ob.mitigated]
     if not active_obs:
@@ -275,11 +260,11 @@ def evaluate_rev_zone(
     if touched_bullish_ob is not None:
         direction = "LONG"
         ob = touched_bullish_ob
-        conditions = _build_conditions_long(ctx, ob, regime)
+        allowed_regimes = _LONG_ALLOWED_REGIMES
     elif touched_bearish_ob is not None:
         direction = "SHORT"
         ob = touched_bearish_ob
-        conditions = _build_conditions_short(ctx, ob, regime)
+        allowed_regimes = _SHORT_ALLOWED_REGIMES
     else:
         return SetupResult(
             setup_name=SETUP_NAME,
@@ -289,6 +274,28 @@ def evaluate_rev_zone(
             evidence={"skip_reason": "no_ob_touched"},
             triggered_at=ctx.timestamp,
         )
+
+    if regime.regime not in allowed_regimes:
+        return SetupResult(
+            setup_name=SETUP_NAME,
+            triggered=False,
+            direction=None,
+            confidence=0.0,
+            evidence={
+                "skip_reason": f"regime {regime.regime} blocks {direction}",
+                "ob_top": ob.top,
+                "ob_bottom": ob.bottom,
+                "ob_strength_atr": ob.strength_atr,
+                "ob_direction": ob.direction,
+                "regime": regime.regime,
+            },
+            triggered_at=ctx.timestamp,
+        )
+
+    if direction == "LONG":
+        conditions = _build_conditions_long(ctx, ob)
+    else:
+        conditions = _build_conditions_short(ctx, ob)
 
     all_passed = all(c["passed"] for c in conditions)
     confidence = calculate_setup_confidence(conditions)

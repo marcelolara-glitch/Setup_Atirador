@@ -274,7 +274,7 @@ def test_rev_zone_skips_no_rejection():
 
 
 def test_rev_zone_long_blocked_in_trend_down():
-    """Regime TREND_DOWN + OB bullish → condition de regime falha, triggered=False."""
+    """Regime TREND_DOWN + OB bullish → skip global, triggered=False."""
     df = _make_df(low=99.0, high=101.0)
     obs = [FakeOB(direction="bullish", top=99.5, bottom=98.5, strength_atr=0.8)]
     ctx = _build_ctx_long()
@@ -283,9 +283,11 @@ def test_rev_zone_long_blocked_in_trend_down():
     result = evaluate_rev_zone(df, ctx, regime, obs)
 
     assert result.triggered is False
-    cond = _find_condition(result, "regime_allows_long")
-    assert cond is not None
-    assert cond["passed"] is False
+    assert result.direction is None
+    assert result.confidence == 0.0
+    assert result.evidence["skip_reason"] == "regime TREND_DOWN blocks LONG"
+    assert result.evidence["ob_direction"] == "bullish"
+    assert "conditions" not in result.evidence
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +296,7 @@ def test_rev_zone_long_blocked_in_trend_down():
 
 
 def test_rev_zone_short_blocked_in_trend_up():
-    """Regime TREND_UP + OB bearish → condition de regime falha, triggered=False."""
+    """Regime TREND_UP + OB bearish → skip global, triggered=False."""
     df = _make_df(low=99.0, high=101.0)
     obs = [FakeOB(direction="bearish", top=101.5, bottom=100.5, strength_atr=0.8)]
     ctx = _build_ctx_short()
@@ -303,9 +305,11 @@ def test_rev_zone_short_blocked_in_trend_up():
     result = evaluate_rev_zone(df, ctx, regime, obs)
 
     assert result.triggered is False
-    cond = _find_condition(result, "regime_allows_short")
-    assert cond is not None
-    assert cond["passed"] is False
+    assert result.direction is None
+    assert result.confidence == 0.0
+    assert result.evidence["skip_reason"] == "regime TREND_UP blocks SHORT"
+    assert result.evidence["ob_direction"] == "bearish"
+    assert "conditions" not in result.evidence
 
 
 # ---------------------------------------------------------------------------
