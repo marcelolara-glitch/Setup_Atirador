@@ -30,7 +30,7 @@ import logging
 import os
 import sqlite3
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import requests
@@ -248,6 +248,22 @@ def _calc_metrics_v9(trades: list[dict]) -> dict:
         "avg_runup": round(sum(runups) / len(runups), 2) if runups else 0.0,
         "avg_drawdown": round(sum(drawdowns) / len(drawdowns), 2) if drawdowns else 0.0,
     }
+
+
+_BREAKDOWN_STATUSES_V9 = ("WIN_TP1", "WIN_TP2", "WIN_TP3", "LOSS_SL", "EXPIRED")
+
+
+def _normalize_breakdown_v9(breakdown: dict) -> dict:
+    """Preenche o breakdown com as 5 chaves canônicas (0 para ausentes).
+
+    Mantém as chaves já presentes e adiciona as faltantes com valor 0.
+    Usado por :meth:`TradeJournalV9.get_performance` e
+    :meth:`TradeJournalV9.get_performance_by_setup` para garantir que o
+    consumidor sempre possa acessar qualquer status sem KeyError.
+    """
+    out = {k: 0 for k in _BREAKDOWN_STATUSES_V9}
+    out.update(breakdown or {})
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -833,12 +849,113 @@ class TradeJournalV9:
         direction: Optional[str] = None,
         days: int = 30,
     ) -> dict:
-        """Métricas sobre trades fechados. [12c.D]"""
-        raise NotImplementedError("get_performance: será implementado em 12c.D")
+        """Calcula métricas sobre trades fechados nos últimos ``days`` dias.
+
+        Parâmetros:
+            setup_name: filtro opcional — match exato no campo setup_name.
+                Note: se um trade tem setup_name="cont_pull+rev_zone"
+                (confluência), filtrar por "cont_pull" NÃO o captura aqui.
+                Para métricas por setup individual use
+                :meth:`get_performance_by_setup`.
+            direction: filtro opcional ("LONG" ou "SHORT").
+            days: janela em dias (default 30). Usa ``timestamp`` do trade,
+                não ``exit_time``.
+
+        Retorno:
+            dict com chaves documentadas em ``_calc_metrics_v9`` (total,
+            wins, losses, win_rate, profit_factor, expectancy, breakdown,
+            avg_pnl, avg_runup, avg_drawdown). Dict vazio de métricas
+            (total=0, tudo zerado) se não houver trades ou em erro de I/O.
+        """
+        try:
+            # Janela temporal: timestamp >= now - days
+            cutoff = (datetime.now(BRT) - timedelta(days=int(days))).isoformat()
+
+            # Monta query dinamicamente com filtros opcionais
+            where_clauses = ["status != 'OPEN'", "timestamp >= ?"]
+            params: list = [cutoff]
+
+            if setup_name:
+                where_clauses.append("setup_name = ?")
+                params.append(setup_name)
+            if direction in ("LONG", "SHORT"):
+                where_clauses.append("direction = ?")
+                params.append(direction)
+
+            where_sql = " AND ".join(where_clauses)
+
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    f"SELECT * FROM trades WHERE {where_sql}",
+                    tuple(params),
+                ).fetchall()
+            finally:
+                conn.close()
+
+            trades = [dict(r) for r in rows]
+            metrics = _calc_metrics_v9(trades)
+            metrics["breakdown"] = _normalize_breakdown_v9(metrics.get("breakdown") or {})
+            return metrics
+        except Exception as e:
+            LOG.warning(f"[TradeJournalV9] Falha em get_performance: {e}")
+            metrics = _calc_metrics_v9([])
+            metrics["breakdown"] = _normalize_breakdown_v9(metrics.get("breakdown") or {})
+            return metrics
 
     def get_performance_by_setup(self, days: int = 30) -> dict:
-        """Performance por setup individual (splits confluências). [12c.D]"""
-        raise NotImplementedError("get_performance_by_setup: será implementado em 12c.D")
+        """Retorna métricas por setup individual, com split de confluências.
+
+        Para confluências (setup_name="cont_pull+rev_zone"), o trade é
+        contabilizado nas métricas de "cont_pull" E de "rev_zone"
+        individualmente. Essa divisão responde "qual setup traz mais
+        sinal?" quando a maioria dos trades vem de confluências.
+
+        Parâmetros:
+            days: janela em dias (default 30).
+
+        Retorno:
+            dict ``{setup_name: metrics_dict}`` onde ``metrics_dict``
+            tem a estrutura de ``_calc_metrics_v9``. Retorna dict vazio
+            se não houver trades fechados ou em erro de I/O.
+        """
+        try:
+            cutoff = (datetime.now(BRT) - timedelta(days=int(days))).isoformat()
+
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM trades "
+                    "WHERE status != 'OPEN' AND timestamp >= ?",
+                    (cutoff,),
+                ).fetchall()
+            finally:
+                conn.close()
+
+            all_trades = [dict(r) for r in rows]
+            if not all_trades:
+                return {}
+
+            # Agrupa por setup individual (split do "+")
+            by_setup: dict[str, list] = {}
+            for trade in all_trades:
+                setup_str = trade.get("setup_name") or ""
+                if not setup_str:
+                    continue
+                individual_setups = [s.strip() for s in setup_str.split("+") if s.strip()]
+                for s in individual_setups:
+                    by_setup.setdefault(s, []).append(trade)
+
+            # Calcula métricas para cada setup
+            result = {}
+            for s, trades in by_setup.items():
+                m = _calc_metrics_v9(trades)
+                m["breakdown"] = _normalize_breakdown_v9(m.get("breakdown") or {})
+                result[s] = m
+            return result
+        except Exception as e:
+            LOG.warning(f"[TradeJournalV9] Falha em get_performance_by_setup: {e}")
+            return {}
 
     # ── helpers privados de UPDATE (usados em 12c.C) ────────────────────────
 
