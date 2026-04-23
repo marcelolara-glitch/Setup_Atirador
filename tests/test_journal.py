@@ -545,3 +545,220 @@ def test_check_open_trades_expired_after_timeout(tmp_journal):
         assert row["pnl_pct"] == pytest.approx(0.0)
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Helpers para testes de get_performance
+# ---------------------------------------------------------------------------
+
+
+def _force_closed_trade(
+    j: TradeJournalV9,
+    symbol: str = "BTCUSDT",
+    direction: str = "LONG",
+    setup_name: str = "cont_pull",
+    status: str = "WIN_TP1",
+    pnl_pct: float = 1.0,
+    days_ago: int = 0,
+    max_runup: float = 1.2,
+    max_drawdown: float = 0.3,
+) -> str:
+    """Insere um trade já fechado diretamente no DB para testes de performance.
+
+    Bypassa open_trade/check_open_trades para controle total sobre os campos.
+    Timestamp é ajustado para ``days_ago`` dias atrás.
+    """
+    from datetime import timedelta as _td
+    ts = (datetime.now(BRT) - _td(days=days_ago)).isoformat()
+    exit_time = ts  # simplificação — não importa para get_performance
+    trade_id = f"{symbol}_{direction}_{ts[:10].replace('-', '')}_0000_{setup_name}"
+
+    conn = sqlite3.connect(j.db_path)
+    try:
+        conn.execute(
+            """INSERT INTO trades (
+                   id, timestamp, symbol, direction, setup_name,
+                   confluent_setups, confidence, regime_at_entry,
+                   entry_price, sl_price, current_sl,
+                   tp1_price, tp2_price, tp3_price,
+                   leverage, atr_value, position_split,
+                   tp1_hit, tp2_hit, tp3_hit, position_remaining,
+                   context_fgi, context_btc_regime,
+                   status, timeout_hours, evidence_json,
+                   exit_price, exit_time, pnl_pct,
+                   max_runup, max_drawdown
+               ) VALUES (
+                   ?, ?, ?, ?, ?,
+                   '[]', 75.0, 'TREND_UP',
+                   100.0, 98.0, 98.0,
+                   102.0, 104.0, 107.0,
+                   5.0, 1.5, '[0.5, 0.3, 0.2]',
+                   ?, ?, ?, ?,
+                   50, 'TREND_UP',
+                   ?, 48, '[]',
+                   ?, ?, ?,
+                   ?, ?
+               )""",
+            (
+                trade_id, ts, symbol, direction, setup_name,
+                1 if status in ("WIN_TP1", "WIN_TP2", "WIN_TP3") else 0,
+                1 if status in ("WIN_TP2", "WIN_TP3") else 0,
+                1 if status == "WIN_TP3" else 0,
+                0.0 if status.startswith("WIN_TP3") or status == "LOSS_SL" else 0.5,
+                status,
+                102.0, exit_time, pnl_pct,
+                max_runup, max_drawdown,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return trade_id
+
+
+# ---------------------------------------------------------------------------
+# 12. get_performance — vazio quando não há trades
+# ---------------------------------------------------------------------------
+
+
+def test_get_performance_empty_db_returns_zeros(tmp_journal):
+    """DB vazio → dict com total=0 e métricas zeradas (não None nem exception)."""
+    j = TradeJournalV9(tmp_journal["db_path"])
+    metrics = j.get_performance()
+    assert metrics["total"] == 0
+    assert metrics["wins"] == 0
+    assert metrics["losses"] == 0
+    assert metrics["win_rate"] == 0.0
+    assert metrics["profit_factor"] == 0.0
+    assert metrics["expectancy"] == 0.0
+    assert metrics["breakdown"] == {
+        "WIN_TP1": 0, "WIN_TP2": 0, "WIN_TP3": 0,
+        "LOSS_SL": 0, "EXPIRED": 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 13. get_performance — agregação e filtros
+# ---------------------------------------------------------------------------
+
+
+def test_get_performance_aggregation_and_filters(tmp_journal):
+    """3 trades fechados: 2 wins + 1 loss. Testa métricas globais e filtros."""
+    j = TradeJournalV9(tmp_journal["db_path"])
+
+    # Trade 1: LONG cont_pull WIN_TP2 (+3%)
+    _force_closed_trade(
+        j, symbol="BTCUSDT", direction="LONG", setup_name="cont_pull",
+        status="WIN_TP2", pnl_pct=3.0, max_runup=4.0, max_drawdown=0.5,
+    )
+    # Trade 2: LONG rev_zone WIN_TP1 (+1%)
+    _force_closed_trade(
+        j, symbol="ETHUSDT", direction="LONG", setup_name="rev_zone",
+        status="WIN_TP1", pnl_pct=1.0, max_runup=2.5, max_drawdown=0.2,
+    )
+    # Trade 3: SHORT cont_pull LOSS_SL (-2%)
+    _force_closed_trade(
+        j, symbol="SOLUSDT", direction="SHORT", setup_name="cont_pull",
+        status="LOSS_SL", pnl_pct=-2.0, max_runup=0.3, max_drawdown=2.1,
+    )
+
+    # Sem filtros: total=3, wins=2, losses=1
+    all_metrics = j.get_performance()
+    assert all_metrics["total"] == 3
+    assert all_metrics["wins"] == 2
+    assert all_metrics["losses"] == 1
+    assert all_metrics["win_rate"] == pytest.approx(66.666, abs=0.1)
+    assert all_metrics["breakdown"]["WIN_TP1"] == 1
+    assert all_metrics["breakdown"]["WIN_TP2"] == 1
+    assert all_metrics["breakdown"]["LOSS_SL"] == 1
+
+    # Filtro por setup_name=cont_pull: 2 trades (trade 1 + trade 3)
+    cont_pull_metrics = j.get_performance(setup_name="cont_pull")
+    assert cont_pull_metrics["total"] == 2
+    assert cont_pull_metrics["wins"] == 1
+    assert cont_pull_metrics["losses"] == 1
+
+    # Filtro por direction=SHORT: só trade 3
+    short_metrics = j.get_performance(direction="SHORT")
+    assert short_metrics["total"] == 1
+    assert short_metrics["losses"] == 1
+    assert short_metrics["wins"] == 0
+
+    # Filtro combinado setup_name + direction
+    combo = j.get_performance(setup_name="cont_pull", direction="LONG")
+    assert combo["total"] == 1
+    assert combo["wins"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 14. get_performance — janela de dias
+# ---------------------------------------------------------------------------
+
+
+def test_get_performance_days_window(tmp_journal):
+    """Trades fora da janela de days NÃO são contabilizados."""
+    j = TradeJournalV9(tmp_journal["db_path"])
+
+    # Trade recente (hoje)
+    _force_closed_trade(j, setup_name="cont_pull", status="WIN_TP1",
+                        pnl_pct=1.0, days_ago=0)
+    # Trade antigo (40 dias atrás)
+    _force_closed_trade(j, setup_name="cont_pull", status="WIN_TP2",
+                        pnl_pct=3.0, days_ago=40)
+
+    # Default (30 dias): só o recente
+    metrics_30 = j.get_performance()
+    assert metrics_30["total"] == 1
+    assert metrics_30["breakdown"]["WIN_TP1"] == 1
+    assert metrics_30["breakdown"]["WIN_TP2"] == 0
+
+    # Janela ampla (60 dias): ambos
+    metrics_60 = j.get_performance(days=60)
+    assert metrics_60["total"] == 2
+    assert metrics_60["breakdown"]["WIN_TP1"] == 1
+    assert metrics_60["breakdown"]["WIN_TP2"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 15. get_performance_by_setup — split de confluências
+# ---------------------------------------------------------------------------
+
+
+def test_get_performance_by_setup_splits_confluences(tmp_journal):
+    """Trade com setup_name='cont_pull+rev_zone' conta para AMBOS os setups."""
+    j = TradeJournalV9(tmp_journal["db_path"])
+
+    # Trade 1: só cont_pull — WIN_TP1
+    _force_closed_trade(j, setup_name="cont_pull", status="WIN_TP1",
+                        pnl_pct=1.0)
+    # Trade 2: confluência cont_pull+rev_zone — WIN_TP3
+    _force_closed_trade(j, setup_name="cont_pull+rev_zone",
+                        status="WIN_TP3", pnl_pct=3.6)
+    # Trade 3: só breaker — LOSS_SL
+    _force_closed_trade(j, setup_name="breaker", status="LOSS_SL",
+                        pnl_pct=-2.0)
+
+    by_setup = j.get_performance_by_setup()
+
+    # Chaves esperadas: cont_pull, rev_zone, breaker
+    assert set(by_setup.keys()) == {"cont_pull", "rev_zone", "breaker"}
+
+    # cont_pull: trades 1 e 2 (2 wins)
+    assert by_setup["cont_pull"]["total"] == 2
+    assert by_setup["cont_pull"]["wins"] == 2
+    assert by_setup["cont_pull"]["breakdown"]["WIN_TP1"] == 1
+    assert by_setup["cont_pull"]["breakdown"]["WIN_TP3"] == 1
+
+    # rev_zone: trade 2 (1 win)
+    assert by_setup["rev_zone"]["total"] == 1
+    assert by_setup["rev_zone"]["wins"] == 1
+    assert by_setup["rev_zone"]["breakdown"]["WIN_TP3"] == 1
+
+    # breaker: trade 3 (1 loss)
+    assert by_setup["breaker"]["total"] == 1
+    assert by_setup["breaker"]["losses"] == 1
+    assert by_setup["breaker"]["breakdown"]["LOSS_SL"] == 1
+
+    # DB vazio → dict vazio
+    j2 = TradeJournalV9(":memory:")
+    assert j2.get_performance_by_setup() == {}
