@@ -145,6 +145,11 @@ MIN_CONFIDENCE_FOR_CALL = 50.0   # signals.py descarta CALL abaixo disso
 NEAR_MISS_CONFIDENCE_MIN = 40.0   # confidence mínima para considerar near-miss
 
 # ---------------------------------------------------------------------------
+# Bloco — Journal v9
+# ---------------------------------------------------------------------------
+TRADE_TIMEOUT_HOURS = 48          # trades abertos > 48h viram EXPIRED
+
+# ---------------------------------------------------------------------------
 # Changelog
 # ---------------------------------------------------------------------------
 # v9.0.0-beta (23/04/2026): Reescrita arquitetural — multi-setup, sem TV Scanner,
