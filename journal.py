@@ -1,516 +1,420 @@
-#!/usr/bin/env python3
-"""
-journal.py — Forward Testing Automatizado (Camada 2)
-=====================================================
-[v6.6.5] Módulo de observabilidade — registra CALLs e QUASEs como entradas
-de forward test, monitora automaticamente se SL/TP foram atingidos via klines,
-e calcula métricas de performance.
+"""journal.py — Forward Testing v9 (Camada 2).
 
-Completamente independente do logger.py.
+Substitui o TradeJournal v8 (gate+check+score, is_hypothetical) pela
+:class:`TradeJournalV9` alinhada ao modelo multi-setup com saídas parciais
+TP1→TP2→TP3 e SL dinâmico (breakeven após TP1, tp1 após TP2).
 
-Ciclo de vida de um trade:
-  Fase A — Capture: open_trade() registra CALL ou QUASE com status OPEN
-  Fase B — Track:   check_open_trades() avalia SL/TP via klines a cada rodada
-  Fase C — Close:   automático quando condição de saída é atingida
+A lógica de avanço/saída é delegada a :func:`risk.update_trade_state`;
+o journal apenas persiste o estado e alimenta o update com candles novos.
+
+Princípios:
+    - Falhas silenciosas em I/O (nunca crasha o scan).
+    - Paths isolados (``JOURNAL_DB_V9``); v8 fica intocado.
+    - Fetcher síncrono interno — não depende de ``exchanges.py``.
+    - Duck typing com ``SignalDecision`` (não importa de ``signals.py``).
+    - Dedupe de trades OPEN por (symbol, direction) — crítico com 5 setups paralelos.
+
+Ciclo de vida:
+    Fase A — Capture: ``open_trade(decision)`` registra CALL com status OPEN.
+    Fase B — Track:   ``check_open_trades(fetch_klines_fn)`` avalia via klines.
+    Fase C — Close:   automático quando SL ou TP3 atingido, ou timeout 48h.
+
+Este módulo é construído em 4 PRs (12c.A → 12c.D). Este PR (12c.A) entrega
+o esqueleto + helpers puros; os métodos da classe estão como stubs.
 """
+
+from __future__ import annotations
+
 import json
 import logging
 import os
 import sqlite3
-import time
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+from collections import Counter
+from datetime import datetime
+from typing import Any, Optional
 
-try:
-    import requests as _requests
-    _HAS_REQUESTS = True
-except ImportError:
-    _HAS_REQUESTS = False
+import requests
 
-# ── Configuração ──────────────────────────────────────────────────────────────
-BRT         = timezone(timedelta(hours=-3))
-JOURNAL_DB  = os.path.expanduser("~/Setup_Atirador/journal/atirador_journal.db")
-JOURNAL_DIR = os.path.dirname(JOURNAL_DB)
+from config import BRT, JOURNAL_DB_V9, JOURNAL_DIR, TRADE_TIMEOUT_HOURS
+from risk import TradePlan, TradeState, update_trade_state  # noqa: F401 (usados em 12c.C)
 
-LOG = logging.getLogger(__name__)
+LOG = logging.getLogger("atirador")
 
-# ── DDL ───────────────────────────────────────────────────────────────────────
-_DDL = """
+
+# ---------------------------------------------------------------------------
+# DDL SQLite v9
+# ---------------------------------------------------------------------------
+
+_DDL_V9 = """
 CREATE TABLE IF NOT EXISTS trades (
-    id               TEXT PRIMARY KEY,
-    timestamp        TEXT NOT NULL,
-    symbol           TEXT NOT NULL,
-    direction        TEXT NOT NULL,
-    type             TEXT NOT NULL,
-    is_hypothetical  INTEGER NOT NULL DEFAULT 0,
-    score            INTEGER,
-    entry_price      REAL,
-    sl_price         REAL,
-    tp1_price        REAL,
-    tp2_price        REAL,
-    tp3_price        REAL,
-    context_fgi      INTEGER,
-    context_btc      TEXT,
-    status           TEXT NOT NULL DEFAULT 'OPEN',
-    exit_price       REAL,
-    exit_time        TEXT,
-    pnl_pct          REAL,
-    max_runup        REAL,
-    max_drawdown     REAL,
-    timeout_hours    INTEGER NOT NULL DEFAULT 48,
-    pillars_json     TEXT,
-    kline_venue      TEXT,
-    tv_venue         TEXT,
-    venue_quality    TEXT
+    id                    TEXT PRIMARY KEY,
+    timestamp             TEXT NOT NULL,
+    symbol                TEXT NOT NULL,
+    direction             TEXT NOT NULL,
+    setup_name            TEXT NOT NULL,
+    confluent_setups      TEXT,
+    confidence            REAL NOT NULL,
+    regime_at_entry       TEXT NOT NULL,
+    entry_price           REAL NOT NULL,
+    sl_price              REAL NOT NULL,
+    current_sl            REAL NOT NULL,
+    tp1_price             REAL NOT NULL,
+    tp2_price             REAL NOT NULL,
+    tp3_price             REAL NOT NULL,
+    leverage              REAL NOT NULL,
+    atr_value             REAL,
+    position_split        TEXT NOT NULL,
+    tp1_hit               INTEGER NOT NULL DEFAULT 0,
+    tp2_hit               INTEGER NOT NULL DEFAULT 0,
+    tp3_hit               INTEGER NOT NULL DEFAULT 0,
+    position_remaining    REAL NOT NULL DEFAULT 1.0,
+    context_fgi           INTEGER,
+    context_btc_regime    TEXT,
+    status                TEXT NOT NULL DEFAULT 'OPEN',
+    exit_price            REAL,
+    exit_time             TEXT,
+    pnl_pct               REAL,
+    max_runup             REAL DEFAULT 0,
+    max_drawdown          REAL DEFAULT 0,
+    timeout_hours         INTEGER NOT NULL DEFAULT 48,
+    evidence_json         TEXT
 );
-
-CREATE INDEX IF NOT EXISTS idx_status    ON trades(status);
-CREATE INDEX IF NOT EXISTS idx_symbol    ON trades(symbol);
-CREATE INDEX IF NOT EXISTS idx_timestamp ON trades(timestamp);
-CREATE INDEX IF NOT EXISTS idx_type      ON trades(type);
+CREATE INDEX IF NOT EXISTS idx_trades_status    ON trades(status);
+CREATE INDEX IF NOT EXISTS idx_trades_symbol    ON trades(symbol);
+CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp);
+CREATE INDEX IF NOT EXISTS idx_trades_setup     ON trades(setup_name);
 """
 
 
-def _now_brt() -> datetime:
-    return datetime.now(BRT)
+# ---------------------------------------------------------------------------
+# Helpers matemáticos puros (standalone, sem I/O)
+# ---------------------------------------------------------------------------
 
 
-def _now_iso() -> str:
-    return _now_brt().isoformat()
+def _plan_from_row(row: dict) -> TradePlan:
+    """Reconstrói TradePlan a partir de linha do DB.
 
-
-class TradeJournal:
+    Campos não armazenados (distance_pct, risk_reward_tp*) ficam 0.0 —
+    ``update_trade_state`` só consome direction/entry/sl/tp1/2/3/position_split.
     """
-    [v6.6.5] Forward testing automatizado — Camada 2 da arquitetura de observabilidade.
+    split_raw = row.get("position_split") or "[0.5, 0.3, 0.2]"
+    try:
+        split = tuple(json.loads(split_raw))
+    except Exception:
+        split = (0.5, 0.3, 0.2)
 
-    Ciclo de vida de um trade:
-      Fase A — Capture: open_trade() registra CALL ou QUASE com status OPEN
-      Fase B — Track:   check_open_trades() avalia SL/TP via klines a cada rodada
-      Fase C — Close:   automático pelo Tracker quando condição de saída é atingida
+    return TradePlan(
+        direction=row["direction"],
+        entry_price=float(row["entry_price"]),
+        sl_price=float(row["sl_price"]),
+        sl_distance_pct=0.0,
+        tp1_price=float(row["tp1_price"]),
+        tp2_price=float(row["tp2_price"]),
+        tp3_price=float(row["tp3_price"]),
+        tp1_distance_pct=0.0,
+        tp2_distance_pct=0.0,
+        tp3_distance_pct=0.0,
+        risk_reward_tp1=0.0,
+        risk_reward_tp2=0.0,
+        risk_reward_tp3=0.0,
+        atr_value=float(row.get("atr_value") or 0.0),
+        position_split=split,
+        leverage=float(row["leverage"]),
+    )
 
-    Separação CALL vs QUASE:
-      - CALLs: type="CALL", is_hypothetical=0 — métricas operacionais reais
-      - QUASEs: type="QUASE", is_hypothetical=1 — análise de calibração de threshold
-        SL e TPs das QUASEs são calculados hipoteticamente com a mesma lógica das CALLs,
-        capturados antes de descartar o token. Não foram emitidos como sinais operáveis.
 
-    Falhas de I/O são silenciosas — warning no LOG, nunca interrompem o scan.
-    check_open_trades() roda ANTES do scan principal em cada rodada.
+def _state_from_row(row: dict, plan: TradePlan) -> TradeState:
+    """Reconstrói TradeState a partir de linha do DB + TradePlan."""
+    return TradeState(
+        trade_plan=plan,
+        current_sl=float(row["current_sl"]),
+        tp1_hit=bool(row["tp1_hit"]),
+        tp2_hit=bool(row["tp2_hit"]),
+        tp3_hit=bool(row["tp3_hit"]),
+        position_remaining=float(row["position_remaining"]),
+        status=row["status"],
+    )
+
+
+def _calc_partial_pnl(
+    status: str,
+    direction: str,
+    entry: float,
+    tp1: float,
+    tp2: float,
+    tp3: float,
+    current_sl: float,
+    position_split: tuple,
+) -> float:
+    """Calcula pnl_pct ponderado conforme saídas parciais.
+
+    Esquema v9 de saídas:
+        - WIN_TP3: 50% em tp1 + 30% em tp2 + 20% em tp3
+        - WIN_TP2: 50% em tp1 + 30% em tp2 + 20% em current_sl (= tp1_price)
+        - WIN_TP1: 50% em tp1 + 50% em current_sl (= entry, breakeven)
+        - LOSS_SL: 100% em current_sl (= sl_price original)
+        - EXPIRED: 0.0
+
+    SHORT inverte sinal: lucro quando preço cai.
     """
+    if entry <= 0:
+        return 0.0
 
-    def __init__(self, db_path: str = JOURNAL_DB):
-        self.db_path = db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self._init_db()
+    def pct_long(price: float) -> float:
+        return (price - entry) / entry * 100.0
 
-    def _init_db(self):
-        try:
-            conn = self._connect()
-            conn.executescript(_DDL)
-            # [v6.6.6] Migration: add venue columns to existing tables
-            for _sql in [
-                "ALTER TABLE trades ADD COLUMN kline_venue TEXT",
-                "ALTER TABLE trades ADD COLUMN tv_venue TEXT",
-                "ALTER TABLE trades ADD COLUMN venue_quality TEXT",
-            ]:
-                try:
-                    conn.execute(_sql)
-                except sqlite3.OperationalError:
-                    pass  # column already exists
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            LOG.warning(f"[TradeJournal] Falha ao inicializar DB: {e}")
+    def pct_short(price: float) -> float:
+        return (entry - price) / entry * 100.0
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.row_factory = sqlite3.Row
-        return conn
+    pct = pct_long if direction == "LONG" else pct_short
 
-    def open_trade(self, symbol: str, direction: str, type: str,
-                   score: int, entry_price: float,
-                   sl_price: float, tp1: float, tp2: float, tp3: float,
-                   fgi: int, btc_4h: str, pillars_dict: dict,
-                   kline_venue: str = None, tv_venue: str = None,
-                   venue_quality: str = None) -> str:
-        """
-        Registra novo trade com status OPEN.
-        type: "CALL" | "QUASE"
-        is_hypothetical definido automaticamente: QUASE → 1, CALL → 0
-        kline_venue, tv_venue, venue_quality: observabilidade de venue [v6.6.6]
-        Retorna o id gerado.
-        """
-        now   = _now_brt()
-        ts    = now.isoformat()
-        rid   = now.strftime("%Y%m%d_%H%M")
-        trade_id = f"{symbol}_{direction}_{rid}"
-        is_hyp   = 1 if type == "QUASE" else 0
+    if not position_split or len(position_split) < 3:
+        split_tp1, split_tp2, split_tp3 = 0.5, 0.3, 0.2
+    else:
+        split_tp1 = float(position_split[0])
+        split_tp2 = float(position_split[1])
+        split_tp3 = float(position_split[2])
 
-        try:
-            conn = self._connect()
-            # Se já existe um trade aberto para este símbolo+direção, não abre outro
-            existing = conn.execute(
-                "SELECT id FROM trades WHERE symbol=? AND direction=? AND status='OPEN'",
-                (symbol, direction)
-            ).fetchone()
-            if existing:
-                LOG.debug(f"[TradeJournal] Trade já aberto para {symbol} {direction} — ignorando novo open")
-                conn.close()
-                return existing["id"]
+    if status == "WIN_TP3":
+        return (
+            split_tp1 * pct(tp1)
+            + split_tp2 * pct(tp2)
+            + split_tp3 * pct(tp3)
+        )
+    if status == "WIN_TP2":
+        return (
+            split_tp1 * pct(tp1)
+            + split_tp2 * pct(tp2)
+            + split_tp3 * pct(current_sl)
+        )
+    if status == "WIN_TP1":
+        return (
+            split_tp1 * pct(tp1)
+            + (1.0 - split_tp1) * pct(current_sl)
+        )
+    if status == "LOSS_SL":
+        return pct(current_sl)
+    # EXPIRED ou desconhecido
+    return 0.0
 
-            conn.execute(
-                """INSERT INTO trades
-                   (id, timestamp, symbol, direction, type, is_hypothetical,
-                    score, entry_price, sl_price, tp1_price, tp2_price, tp3_price,
-                    context_fgi, context_btc, status, pillars_json,
-                    kline_venue, tv_venue, venue_quality)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'OPEN',?,?,?,?)""",
-                (
-                    trade_id, ts, symbol, direction, type, is_hyp,
-                    score, entry_price, sl_price, tp1, tp2, tp3,
-                    fgi, btc_4h,
-                    json.dumps(pillars_dict, ensure_ascii=False),
-                    kline_venue, tv_venue, venue_quality,
-                )
-            )
-            conn.commit()
-            conn.close()
-            LOG.debug(f"[TradeJournal] Aberto: {trade_id} | type={type} | entry={entry_price:.4f}")
-            return trade_id
-        except Exception as e:
-            LOG.warning(f"[TradeJournal] Falha ao abrir trade {symbol}: {e}")
-            return trade_id
 
-    def check_open_trades(self, fetch_klines_fn=None) -> int:
-        """
-        Avalia todos os trades com status OPEN.
-        Chamado no início de cada rodada, antes do scan principal.
-        fetch_klines_fn: função sync opcional que recebe (symbol) e retorna lista de klines.
-                         Se None, usa fetcher interno via requests.
-        Retorna número de trades fechados nesta verificação.
+def _calc_metrics_v9(trades: list[dict]) -> dict:
+    """Métricas sobre lista de trades fechados (status != 'OPEN').
 
-        Lógica de avaliação por candle (ordem cronológica):
-          LONG: low <= sl_price → LOSS_SL | high >= tp1/2/3 → WIN_TP1/2/3
-          SHORT: high >= sl_price → LOSS_SL | low <= tp1/2/3 → WIN_TP1/2/3
-
-        Atualiza max_runup e max_drawdown acumulados a cada check.
-        Se aberto há mais de timeout_hours → EXPIRED no preço atual.
-        """
-        try:
-            conn = self._connect()
-            rows = conn.execute(
-                "SELECT * FROM trades WHERE status='OPEN'"
-            ).fetchall()
-            conn.close()
-        except Exception as e:
-            LOG.warning(f"[TradeJournal] Falha ao buscar trades abertos: {e}")
-            return 0
-
-        if not rows:
-            return 0
-
-        closed = 0
-        for row in rows:
-            try:
-                closed += self._check_one_trade(dict(row), fetch_klines_fn)
-            except Exception as e:
-                LOG.warning(f"[TradeJournal] Erro ao verificar trade {row['id']}: {e}")
-
-        if closed:
-            LOG.info(f"[TradeJournal] check_open_trades: {closed} trade(s) fechado(s)")
-        return closed
-
-    def _check_one_trade(self, trade: dict, fetch_klines_fn) -> int:
-        """Verifica um trade individual. Retorna 1 se fechado, 0 caso contrário."""
-        now      = _now_brt()
-        ts_open  = datetime.fromisoformat(trade["timestamp"])
-        hours_open = (now - ts_open).total_seconds() / 3600
-
-        # Timeout check
-        if hours_open >= trade["timeout_hours"]:
-            self._close_trade(
-                trade_id   = trade["id"],
-                status     = "EXPIRED",
-                exit_price = trade["entry_price"],
-                exit_time  = now.isoformat(),
-                pnl_pct    = 0.0,
-            )
-            LOG.info(f"[TradeJournal] EXPIRED: {trade['id']} ({hours_open:.1f}h aberto)")
-            return 1
-
-        # Busca klines para avaliação
-        symbol = trade["symbol"]
-        try:
-            if fetch_klines_fn is not None:
-                klines = fetch_klines_fn(symbol)
-            else:
-                klines = _fetch_klines_sync(symbol)
-        except Exception as e:
-            LOG.debug(f"[TradeJournal] Falha ao buscar klines para {symbol}: {e}")
-            return 0
-
-        if not klines:
-            return 0
-
-        direction = trade["direction"]
-        sl  = trade["sl_price"]
-        tp1 = trade["tp1_price"]
-        tp2 = trade["tp2_price"]
-        tp3 = trade["tp3_price"]
-        entry = trade["entry_price"]
-
-        # Acumula max_runup e max_drawdown
-        max_runup    = trade.get("max_runup") or 0.0
-        max_drawdown = trade.get("max_drawdown") or 0.0
-
-        final_status = None
-        exit_price   = None
-
-        for candle in klines:
-            try:
-                high = float(candle[2]) if isinstance(candle, (list, tuple)) else float(candle.get("high", 0))
-                low  = float(candle[3]) if isinstance(candle, (list, tuple)) else float(candle.get("low", 0))
-            except (IndexError, TypeError, ValueError):
-                continue
-
-            if entry > 0:
-                if direction == "LONG":
-                    runup    = (high  - entry) / entry * 100
-                    drawdown = (entry - low)   / entry * 100
-                else:
-                    runup    = (entry - low)   / entry * 100
-                    drawdown = (high  - entry) / entry * 100
-                max_runup    = max(max_runup,    runup)
-                max_drawdown = max(max_drawdown, drawdown)
-
-            if direction == "LONG":
-                if sl and low <= sl:
-                    final_status = "LOSS_SL"; exit_price = sl; break
-                if tp3 and high >= tp3:
-                    final_status = "WIN_TP3"; exit_price = tp3; break
-                if tp2 and high >= tp2:
-                    final_status = "WIN_TP2"; exit_price = tp2; break
-                if tp1 and high >= tp1:
-                    final_status = "WIN_TP1"; exit_price = tp1; break
-            else:  # SHORT
-                if sl and high >= sl:
-                    final_status = "LOSS_SL"; exit_price = sl; break
-                if tp3 and low <= tp3:
-                    final_status = "WIN_TP3"; exit_price = tp3; break
-                if tp2 and low <= tp2:
-                    final_status = "WIN_TP2"; exit_price = tp2; break
-                if tp1 and low <= tp1:
-                    final_status = "WIN_TP1"; exit_price = tp1; break
-
-        # Atualiza max_runup e max_drawdown mesmo sem fechar
-        self._update_extremes(trade["id"], max_runup, max_drawdown)
-
-        if final_status and exit_price and entry > 0:
-            if direction == "LONG":
-                pnl_pct = (exit_price - entry) / entry * 100
-            else:
-                pnl_pct = (entry - exit_price) / entry * 100
-            self._close_trade(
-                trade_id   = trade["id"],
-                status     = final_status,
-                exit_price = exit_price,
-                exit_time  = now.isoformat(),
-                pnl_pct    = round(pnl_pct, 4),
-            )
-            LOG.info(f"[TradeJournal] {final_status}: {trade['id']} | pnl={pnl_pct:+.2f}%")
-            return 1
-
-        return 0
-
-    def _close_trade(self, trade_id: str, status: str, exit_price: float,
-                     exit_time: str, pnl_pct: float):
-        try:
-            conn = self._connect()
-            conn.execute(
-                """UPDATE trades SET status=?, exit_price=?, exit_time=?, pnl_pct=?
-                   WHERE id=?""",
-                (status, exit_price, exit_time, pnl_pct, trade_id)
-            )
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            LOG.warning(f"[TradeJournal] Falha ao fechar trade {trade_id}: {e}")
-
-    def _update_extremes(self, trade_id: str, max_runup: float, max_drawdown: float):
-        try:
-            conn = self._connect()
-            conn.execute(
-                "UPDATE trades SET max_runup=?, max_drawdown=? WHERE id=?",
-                (round(max_runup, 4), round(max_drawdown, 4), trade_id)
-            )
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            LOG.debug(f"[TradeJournal] Falha ao atualizar extremos {trade_id}: {e}")
-
-    def get_performance(self, direction: str = None, days: int = 30) -> dict:
-        """
-        Calcula métricas de performance apenas sobre CALLs (is_hypothetical=0).
-        Retorna: win_rate, profit_factor, expectancy, breakdown por status.
-        direction: "LONG" | "SHORT" | None (ambos)
-        """
-        try:
-            conn  = self._connect()
-            since = (datetime.now(BRT) - timedelta(days=days)).isoformat()
-            q     = "SELECT * FROM trades WHERE is_hypothetical=0 AND timestamp >= ? AND status != 'OPEN'"
-            args  = [since]
-            if direction:
-                q += " AND direction=?"
-                args.append(direction)
-            rows = conn.execute(q, args).fetchall()
-            conn.close()
-        except Exception as e:
-            LOG.warning(f"[TradeJournal] Falha ao calcular performance: {e}")
-            return {}
-
-        trades = [dict(r) for r in rows]
-        return _calc_metrics(trades)
-
-    def get_quase_calibration(self, days: int = 30) -> dict:
-        """
-        Calcula win rate das QUASEs (is_hypothetical=1) para calibração de threshold.
-        Compara com win rate das CALLs do mesmo período.
-        """
-        try:
-            conn  = self._connect()
-            since = (datetime.now(BRT) - timedelta(days=days)).isoformat()
-            calls  = conn.execute(
-                "SELECT * FROM trades WHERE is_hypothetical=0 AND timestamp >= ? AND status != 'OPEN'",
-                [since]
-            ).fetchall()
-            quases = conn.execute(
-                "SELECT * FROM trades WHERE is_hypothetical=1 AND timestamp >= ? AND status != 'OPEN'",
-                [since]
-            ).fetchall()
-            # Gap médio
-            gaps = conn.execute(
-                """SELECT AVG(CAST(threshold - score AS REAL)) as avg_gap
-                   FROM trades WHERE is_hypothetical=1 AND timestamp >= ?""",
-                [since]
-            ).fetchone()
-            conn.close()
-        except Exception as e:
-            LOG.warning(f"[TradeJournal] Falha ao calcular calibração: {e}")
-            return {}
-
-        calls_m  = _calc_metrics([dict(r) for r in calls])
-        quases_m = _calc_metrics([dict(r) for r in quases])
-        avg_gap  = gaps["avg_gap"] if gaps and gaps["avg_gap"] else 0.0
-
+    Retorna dict com total/wins/losses/win_rate/profit_factor/expectancy/
+    breakdown/avg_pnl/avg_runup/avg_drawdown. Lista vazia retorna zeros.
+    """
+    if not trades:
         return {
-            "calls"   : calls_m,
-            "quases"  : quases_m,
-            "avg_gap" : round(avg_gap, 1) if avg_gap else 0.0,
+            "total": 0, "wins": 0, "losses": 0,
+            "win_rate": 0.0, "profit_factor": 0.0, "expectancy": 0.0,
+            "breakdown": {},
+            "avg_pnl": 0.0, "avg_runup": 0.0, "avg_drawdown": 0.0,
         }
 
-    def get_open_trade(self, symbol: str) -> Optional[dict]:
-        """Retorna trade aberto para o símbolo, ou None se não houver."""
-        try:
-            sym = symbol.upper()
-            if not sym.endswith("USDT"):
-                sym += "USDT"
-            conn = self._connect()
-            row  = conn.execute(
-                "SELECT * FROM trades WHERE symbol=? AND status='OPEN' LIMIT 1",
-                (sym,)
-            ).fetchone()
-            conn.close()
-            return dict(row) if row else None
-        except Exception as e:
-            LOG.warning(f"[TradeJournal] Falha ao buscar trade aberto {symbol}: {e}")
-            return None
-
-
-# ── Utilitários ───────────────────────────────────────────────────────────────
-
-def _calc_metrics(trades: list) -> dict:
-    """Calcula métricas a partir de uma lista de trades fechados."""
-    if not trades:
-        return {"total": 0, "closed": 0, "win_rate": 0.0, "profit_factor": 0.0,
-                "expectancy": 0.0, "breakdown": {}}
-
-    wins  = [t for t in trades if t["status"] and t["status"].startswith("WIN")]
-    losses= [t for t in trades if t["status"] in ("LOSS_SL", "EXPIRED")]
+    wins = [t for t in trades if (t.get("status") or "").startswith("WIN")]
+    losses = [t for t in trades if t.get("status") in ("LOSS_SL", "EXPIRED")]
     total = len(trades)
     n_wins = len(wins)
 
-    win_rate = round(n_wins / total * 100, 1) if total else 0.0
+    win_rate = round(n_wins / total * 100, 1)
 
-    # Profit factor = soma dos ganhos / soma das perdas absolutas
-    sum_wins   = sum(abs(t["pnl_pct"] or 0) for t in wins)
-    sum_losses = sum(abs(t["pnl_pct"] or 0) for t in losses)
-    profit_factor = round(sum_wins / sum_losses, 2) if sum_losses > 0 else (float("inf") if sum_wins > 0 else 0.0)
+    sum_wins = sum(max(0.0, t.get("pnl_pct") or 0.0) for t in wins)
+    sum_losses_abs = sum(abs(t.get("pnl_pct") or 0.0) for t in losses)
+    if sum_losses_abs > 0:
+        profit_factor = round(sum_wins / sum_losses_abs, 2)
+    elif sum_wins > 0:
+        profit_factor = float("inf")
+    else:
+        profit_factor = 0.0
 
-    # Expectancy = média de pnl_pct
-    pnls = [t["pnl_pct"] for t in trades if t["pnl_pct"] is not None]
+    pnls = [t["pnl_pct"] for t in trades if t.get("pnl_pct") is not None]
     expectancy = round(sum(pnls) / len(pnls), 2) if pnls else 0.0
 
-    # Breakdown por status
-    breakdown = {}
-    for t in trades:
-        s = t["status"] or "UNKNOWN"
-        breakdown[s] = breakdown.get(s, 0) + 1
+    breakdown = dict(Counter((t.get("status") or "UNKNOWN") for t in trades))
+
+    runups = [t.get("max_runup") or 0.0 for t in trades]
+    drawdowns = [t.get("max_drawdown") or 0.0 for t in trades]
 
     return {
-        "total"        : total,
-        "closed"       : total,
-        "wins"         : n_wins,
-        "losses"       : total - n_wins,
-        "win_rate"     : win_rate,
+        "total": total,
+        "wins": n_wins,
+        "losses": total - n_wins,
+        "win_rate": win_rate,
         "profit_factor": profit_factor,
-        "expectancy"   : expectancy,
-        "breakdown"    : breakdown,
+        "expectancy": expectancy,
+        "breakdown": breakdown,
+        "avg_pnl": expectancy,
+        "avg_runup": round(sum(runups) / len(runups), 2) if runups else 0.0,
+        "avg_drawdown": round(sum(drawdowns) / len(drawdowns), 2) if drawdowns else 0.0,
     }
 
 
-def _fetch_klines_sync(symbol: str, granularity: str = "15m", limit: int = 60) -> list:
-    """Fetcher interno de klines — primário OKX, fallback Bitget.
+# ---------------------------------------------------------------------------
+# Fetcher síncrono interno — isolado de exchanges.py
+# ---------------------------------------------------------------------------
 
-    Retorna lista de klines no formato [ts, open, high, low, close, vol].
-    OKX retorna decrescente → revertido para crescente.
-    Bitget retorna crescente → sem reverse necessário.
+_OKX_KLINES_URL = "https://www.okx.com/api/v5/market/candles"
+_BITGET_KLINES_URL = "https://api.bitget.com/api/v2/mix/market/candles"
+
+_BITGET_GRAN_MAP = {
+    "15m": "15min", "5m": "5min", "1m": "1min",
+    "1H": "1H", "4H": "4H",
+}
+
+
+def _fetch_klines_sync_v9(
+    symbol: str,
+    granularity: str = "15m",
+    limit: int = 20,
+) -> list[dict]:
+    """Fetcher síncrono OKX → Bitget. Retorna klines em ordem crescente.
+
+    Schema:
+        [{"ts": int_ms, "open": float, "high": float, "low": float,
+          "close": float, "volume": float}, ...]
+
+    Preserva filtro OKX confirm="0" (candles não-fechadas).
+    OKX retorna decrescente → reverse(). Bitget já é crescente.
+    Falha silenciosa: retorna [] se ambas exchanges falharem.
     """
     # OKX — primário
     try:
-        okx_bar = {"15m": "15m", "1H": "1H", "4H": "4H"}.get(granularity, "15m")
-        url  = "https://www.okx.com/api/v5/market/candles"
-        resp = _requests.get(url, params={
-            "instId": symbol.replace("USDT", "-USDT-SWAP"),
-            "bar"   : okx_bar,
-            "limit" : str(limit),
-        }, timeout=8)
+        inst_id = symbol.replace("USDT", "-USDT-SWAP")
+        resp = requests.get(
+            _OKX_KLINES_URL,
+            params={"instId": inst_id, "bar": granularity, "limit": str(limit)},
+            timeout=8,
+        )
         if resp.status_code == 200:
             data = resp.json().get("data", [])
             if data:
-                result = [[c[0], c[1], c[2], c[3], c[4], c[5]] for c in data]
+                result = [
+                    {
+                        "ts": int(c[0]),
+                        "open": float(c[1]),
+                        "high": float(c[2]),
+                        "low": float(c[3]),
+                        "close": float(c[4]),
+                        "volume": float(c[5]),
+                    }
+                    for c in data
+                    if len(c) <= 8 or c[8] != "0"  # filtra candles não fechadas
+                ]
                 result.reverse()  # OKX: decrescente → crescente
                 return result
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug(f"[_fetch_klines_sync_v9] OKX {symbol}: {e}")
 
     # Bitget — fallback
-    gran_map = {"15m": "15min", "1H": "1H", "4H": "4H"}
-    bg_gran  = gran_map.get(granularity, "15min")
     try:
-        url  = f"https://api.bitget.com/api/v2/mix/market/candles"
-        resp = _requests.get(url, params={
-            "symbol"      : symbol,
-            "productType" : "USDT-FUTURES",
-            "granularity" : bg_gran,
-            "limit"       : str(limit),
-        }, timeout=8)
+        bg_gran = _BITGET_GRAN_MAP.get(granularity, "15min")
+        resp = requests.get(
+            _BITGET_KLINES_URL,
+            params={
+                "symbol": symbol,
+                "productType": "USDT-FUTURES",
+                "granularity": bg_gran,
+                "limit": str(limit),
+            },
+            timeout=8,
+        )
         if resp.status_code == 200:
             data = resp.json().get("data", [])
             if data:
+                return [
+                    {
+                        "ts": int(c[0]),
+                        "open": float(c[1]),
+                        "high": float(c[2]),
+                        "low": float(c[3]),
+                        "close": float(c[4]),
+                        "volume": float(c[5]),
+                    }
+                    for c in data
+                ]
                 # Bitget: já crescente → sem reverse
-                return data
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug(f"[_fetch_klines_sync_v9] Bitget {symbol}: {e}")
 
     return []
+
+
+# ---------------------------------------------------------------------------
+# Classe principal
+# ---------------------------------------------------------------------------
+
+
+class TradeJournalV9:
+    """Forward testing v9 — tracking de trades com saídas parciais.
+
+    Ciclo: open_trade → check_open_trades (via risk.update_trade_state) →
+    fechamento automático ao bater SL/TP3/timeout.
+
+    Falhas silenciosas em I/O. Dedupe por (symbol, direction, OPEN).
+    """
+
+    def __init__(self, db_path: str = JOURNAL_DB_V9):
+        """Inicializa journal v9. Cria DB e tabela se necessário.
+
+        Aceita ``:memory:`` para testes. Falhas de init são silenciosas
+        (warning no LOG) para não crashar o scan por problema de disco.
+        """
+        self.db_path = db_path
+        if db_path != ":memory:":
+            try:
+                parent = os.path.dirname(db_path) or JOURNAL_DIR
+                os.makedirs(parent, exist_ok=True)
+            except Exception as e:
+                LOG.warning(f"[TradeJournalV9] Falha ao criar diretório: {e}")
+
+        try:
+            conn = self._connect()
+            try:
+                conn.executescript(_DDL_V9)
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            LOG.warning(f"[TradeJournalV9] Falha ao inicializar DB: {e}")
+
+    def _connect(self) -> sqlite3.Connection:
+        """Abre conexão SQLite. ``row_factory=sqlite3.Row`` para acesso por nome."""
+        conn = sqlite3.connect(self.db_path, timeout=10)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass  # :memory: não suporta WAL, ignora
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    # ── métodos públicos — stubs (implementados em 12c.B/C/D) ───────────────
+
+    def open_trade(self, decision: Any, fgi: int = 0) -> Optional[str]:
+        """Registra novo trade a partir de SignalDecision. [12c.B]"""
+        raise NotImplementedError("open_trade: será implementado em 12c.B")
+
+    def get_open_trade(
+        self,
+        symbol: str,
+        direction: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Retorna trade OPEN para (symbol, direction) ou None. [12c.B]"""
+        raise NotImplementedError("get_open_trade: será implementado em 12c.B")
+
+    def check_open_trades(self, fetch_klines_fn=None) -> int:
+        """Avalia trades OPEN via klines, atualiza estado. [12c.C]"""
+        raise NotImplementedError("check_open_trades: será implementado em 12c.C")
+
+    def get_performance(
+        self,
+        setup_name: Optional[str] = None,
+        direction: Optional[str] = None,
+        days: int = 30,
+    ) -> dict:
+        """Métricas sobre trades fechados. [12c.D]"""
+        raise NotImplementedError("get_performance: será implementado em 12c.D")
+
+    def get_performance_by_setup(self, days: int = 30) -> dict:
+        """Performance por setup individual (splits confluências). [12c.D]"""
+        raise NotImplementedError("get_performance_by_setup: será implementado em 12c.D")
