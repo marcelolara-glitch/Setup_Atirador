@@ -22,10 +22,11 @@ VERSION = "9.0.0-beta"
 # ---------------------------------------------------------------------------
 import os
 
-BASE_DIR    = os.path.expanduser("~/Setup_Atirador")
-LOG_DIR     = os.path.join(BASE_DIR, "logs")
-STATE_FILE  = os.path.join(BASE_DIR, "states", "atirador_state.json")
-JOURNAL_DIR = os.path.join(BASE_DIR, "journal")
+BASE_DIR       = os.path.expanduser("~/Setup_Atirador")
+LOG_DIR        = os.path.join(BASE_DIR, "logs")
+STATE_FILE     = os.path.join(BASE_DIR, "states", "atirador_state.json")
+STATE_FILE_V9  = os.path.join(BASE_DIR, "states", "atirador_state_v9.json")
+JOURNAL_DIR    = os.path.join(BASE_DIR, "journal")
 
 TELEGRAM_CONFIG_FILE        = os.path.expanduser("~/.atirador_telegram_config.json")
 TELEGRAM_CONFIG_FILE_LEGACY = "/tmp/atirador_telegram_config.json"
@@ -64,8 +65,14 @@ ZONE_PROXIMITY_PCT  = 1.5
 # ---------------------------------------------------------------------------
 # Bloco 6 — Parâmetros de estado
 # ---------------------------------------------------------------------------
+# Legado v8 — manter enquanto módulos v8 referenciam; remover ao descomissionar.
 SCORE_HISTORY_MAX_ROUNDS = 48
 SCORE_HISTORY_TTL_H      = 25
+
+# v9 — nomes explícitos para o estado multi-setup.
+SETUPS_HISTORY_MAX_ROUNDS = 96   # 96 rodadas = 24h em cron 15min
+OI_HISTORY_MAX_ROUNDS     = 96
+STATE_TTL_HOURS           = 26   # 24h + folga
 
 # ---------------------------------------------------------------------------
 # Bloco 7 — Parâmetros de trade e risco
