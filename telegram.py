@@ -250,7 +250,11 @@ def _fmt_heartbeat(stats: RoundStats) -> str:
     fgi_str = "—" if stats.fgi is None else str(int(stats.fgi))
 
     pct = stats.btc_change_pct_15m
-    sign = "+" if pct >= 0 else ""
+    if math.isnan(pct) or math.isinf(pct):
+        btc_pct_str = "—"
+    else:
+        sign = "+" if pct >= 0 else ""
+        btc_pct_str = f"{sign}{pct:.2f}%"
     btc_regime_safe = html.escape(stats.btc_regime)
 
     exchange_safe = html.escape(stats.exchange)
@@ -264,7 +268,7 @@ def _fmt_heartbeat(stats: RoundStats) -> str:
         f"📤 CALLs emitidos : {stats.n_calls} · Near-miss: {stats.n_near_miss}",
         f"🎪 Setups         : {setups_line}",
         "━━━━━━━━━━━━━━━━━━━",
-        f"📊 FGI: {fgi_str} · BTC: {btc_regime_safe} ({sign}{pct:.2f}%)",
+        f"📊 FGI: {fgi_str} · BTC: {btc_regime_safe} ({btc_pct_str})",
         f"⏱ Exec: {int(round(stats.elapsed_seconds))}s · Exchange: {exchange_safe}",
     ]
     return "\n".join(lines)

@@ -341,6 +341,42 @@ def test_notify_heartbeat_btc_negative_sign(monkeypatch):
     assert "FGI: —" in captured["text"]
 
 
+def test_format_heartbeat_btc_nan(monkeypatch):
+    monkeypatch.setattr(telegram, "TELEGRAM_HEARTBEAT", True)
+    monkeypatch.setattr(telegram, "_TELEGRAM_TOKEN", "t")
+    monkeypatch.setattr(telegram, "_TELEGRAM_CHAT_ID", "c")
+
+    stats = _make_round_stats(btc_change_pct_15m=float("nan"))
+    captured = {}
+
+    def fake_send(text: str) -> bool:
+        captured["text"] = text
+        return True
+
+    monkeypatch.setattr(telegram, "_tg_send", fake_send)
+    assert telegram.notify_heartbeat(stats) is True
+    assert "BTC: TREND_UP (—)" in captured["text"]
+    assert "nan" not in captured["text"].lower()
+
+
+def test_format_heartbeat_btc_inf(monkeypatch):
+    monkeypatch.setattr(telegram, "TELEGRAM_HEARTBEAT", True)
+    monkeypatch.setattr(telegram, "_TELEGRAM_TOKEN", "t")
+    monkeypatch.setattr(telegram, "_TELEGRAM_CHAT_ID", "c")
+
+    stats = _make_round_stats(btc_change_pct_15m=float("inf"))
+    captured = {}
+
+    def fake_send(text: str) -> bool:
+        captured["text"] = text
+        return True
+
+    monkeypatch.setattr(telegram, "_tg_send", fake_send)
+    assert telegram.notify_heartbeat(stats) is True
+    assert "BTC: TREND_UP (—)" in captured["text"]
+    assert "inf" not in captured["text"].lower()
+
+
 def test_notify_error_no_config_returns_false(monkeypatch):
     monkeypatch.setattr(telegram, "_TELEGRAM_TOKEN", "")
     monkeypatch.setattr(telegram, "_TELEGRAM_CHAT_ID", "")
