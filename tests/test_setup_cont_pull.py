@@ -133,23 +133,26 @@ def test_evaluate_condition_helper():
 # ---------------------------------------------------------------------------
 
 
-def test_calculate_setup_confidence_weighted():
-    """Peso maior em uma condition deve dominar o score."""
+def test_calculate_setup_confidence_binary_v91():
+    """v9.1: confidence é binária — 100.0 se todas passam, 0.0 caso contrário.
+
+    Semântica ponderada removida (contradizia o trigger ``all(passed)``).
+    """
+    # Uma condition falhou — 0.0 mesmo que o peso das passadas seja maior
     conds = [
         {"passed": True, "weight": 3.0},
         {"passed": False, "weight": 1.0},
     ]
-    # 3 / 4 = 75%
-    assert calculate_setup_confidence(conds) == 75.0
+    assert calculate_setup_confidence(conds) == 0.0
 
-    # Espelho: falha pesada, passa leve
+    # Espelho
     conds2 = [
         {"passed": False, "weight": 3.0},
         {"passed": True, "weight": 1.0},
     ]
-    assert calculate_setup_confidence(conds2) == 25.0
+    assert calculate_setup_confidence(conds2) == 0.0
 
-    # Todos passam
+    # Todas passam — 100.0
     all_pass = [{"passed": True, "weight": 2.0}, {"passed": True, "weight": 1.0}]
     assert calculate_setup_confidence(all_pass) == 100.0
 
@@ -360,19 +363,22 @@ def test_cont_pull_extreme_rsi():
 # ---------------------------------------------------------------------------
 
 
-def test_cont_pull_confidence_score():
-    """Todos passam → 100; falha isolada de peso 1 (volume) → confidence < 100."""
-    # Todos passam
+def test_cont_pull_confidence_binary_v91():
+    """v9.1: confidence binária — 100.0 quando todas passam, 0.0 quando alguma falha."""
+    # Todos passam — confidence 100, triggered=True
     df_all = _make_flat_df(n=100, close_price=100.0, last_low=99.5, last_close=101.0)
     ctx_all = _build_ctx()
     result_all = evaluate_cont_pull(df_all, ctx_all, FakeRegime(regime="TREND_UP"))
     assert result_all.confidence == 100.0
     assert result_all.triggered is True
 
-    # 4 de 5 passam (volume falha, peso 1.0). Total weight = 7.5; passed = 6.5.
-    # Esperado: round(6.5 / 7.5 * 100, 1) ≈ 86.7
+    # 4 de 5 passam (volume falha) — confidence 0 em v9.1, triggered=False.
+    # A informação de quais conditions passaram fica preservada em evidence.
     ctx_low_vol = _build_ctx(volume_ratio=0.8)
     result_part = evaluate_cont_pull(df_all, ctx_low_vol, FakeRegime(regime="TREND_UP"))
     assert result_part.triggered is False
-    assert result_part.confidence < 100.0
-    assert result_part.confidence == pytest.approx(86.7, abs=0.1)
+    assert result_part.confidence == 0.0
+    # Diagnóstico preservado
+    conditions = result_part.evidence["conditions"]
+    passed_count = sum(1 for c in conditions if c["passed"])
+    assert passed_count == 4  # 4 de 5 ainda passam, só não disparam

@@ -358,31 +358,35 @@ def test_breaker_skips_no_rejection():
 # ---------------------------------------------------------------------------
 
 
-def test_breaker_confidence_boost_in_trend():
-    """TREND_UP + LONG breaker parcial → confidence multiplicado por 1.1."""
+def test_breaker_no_boost_v91():
+    """v9.1: boost de regime alinhado removido — confidence é binária 100/0.
+
+    Todas as conditions passam nos dois regimes (RANGE e TREND_UP). Antes,
+    TREND_UP+LONG aplicaria × 1.1 (cap em 100). Agora ambos retornam 100.0.
+    """
     df = _make_df(low=99.0, high=101.0)
-    # Break volume abaixo do threshold (weight 1.5 não passa) → 100 - 1.5/8.5 * 100
     breakers = [
         FakeBreaker(
             new_direction="bullish",
             top=99.5,
             bottom=98.5,
-            break_volume=100.0,  # abaixo de 1.3 × 1000
+            break_volume=2000.0,
+            retest_count=1,
         )
     ]
-    ctx = _build_ctx_long(volume_median_20=1000.0)
+    ctx = _build_ctx_long()
 
     regime_range = FakeRegime(regime="RANGE")
     result_range = evaluate_breaker(df, ctx, regime_range, breakers)
-    base_confidence = result_range.confidence
 
     regime_trend = FakeRegime(regime="TREND_UP")
     result_trend = evaluate_breaker(df, ctx, regime_trend, breakers)
-    boosted = result_trend.confidence
 
-    # Boost de 10% aplicado (cap em 100)
-    assert boosted == min(100.0, round(base_confidence * 1.1, 1))
-    assert boosted > base_confidence
+    # Ambos triggered com confidence binária = 100.0 (sem boost)
+    assert result_range.triggered is True
+    assert result_trend.triggered is True
+    assert result_range.confidence == 100.0
+    assert result_trend.confidence == 100.0
     assert result_trend.evidence["regime"] == "TREND_UP"
 
 

@@ -122,6 +122,7 @@ class _Patches:
             patch.object(signals_mod, "classify_regime", return_value=self.regime),
             patch.object(signals_mod, "detect_order_blocks", return_value=[]),
             patch.object(signals_mod, "detect_breaker_blocks", return_value=[]),
+            patch.object(signals_mod, "detect_fvg", return_value=[]),
             patch.object(
                 signals_mod, "evaluate_cont_pull",
                 return_value=self.setup_returns["cont_pull"],
@@ -215,10 +216,11 @@ def test_evaluate_token_single_setup_triggered(fake_df):
 # ---------------------------------------------------------------------------
 
 
-def test_evaluate_token_confluence_same_direction(fake_df):
+def test_evaluate_token_confluence_no_boost_v91(fake_df):
+    """v9.1: confluência não aplica boost numérico — apenas signal_tag."""
     returns = {
-        "cont_pull": _sr("cont_pull", True, "LONG", 60.0),
-        "break_range": _sr("break_range", True, "LONG", 70.0),
+        "cont_pull": _sr("cont_pull", True, "LONG", 100.0),
+        "break_range": _sr("break_range", True, "LONG", 100.0),
     }
     with _Patches(setup_returns=returns):
         decision = _call(fake_df)
@@ -227,14 +229,14 @@ def test_evaluate_token_confluence_same_direction(fake_df):
     assert decision.direction == "LONG"
     assert sorted(decision.confluent_setups) == ["break_range", "cont_pull"]
     assert decision.signal_tag == "break_range+cont_pull"
-    # 70 * 1.15 = 80.5
-    assert decision.confidence == pytest.approx(80.5)
+    # Sem boost — consolidação de múltiplos setups binários retorna CONFIDENCE_CAP=100
+    assert decision.confidence == 100.0
 
 
-def test_evaluate_token_confluence_caps_at_100(fake_df):
+def test_evaluate_token_confluence_single_setup_returns_own_confidence(fake_df):
+    """Single setup preserva confidence do próprio setup (binária 100 quando triggered)."""
     returns = {
-        "cont_pull": _sr("cont_pull", True, "SHORT", 95.0),
-        "breaker": _sr("breaker", True, "SHORT", 90.0),
+        "cont_pull": _sr("cont_pull", True, "SHORT", 100.0),
     }
     with _Patches(setup_returns=returns):
         decision = _call(fake_df)
@@ -326,14 +328,19 @@ def test_evaluate_token_btc_context_none_not_checked(fake_df):
 # ---------------------------------------------------------------------------
 
 
-def test_evaluate_token_low_confidence_blocks(fake_df):
+def test_evaluate_token_no_min_confidence_filter_v91(fake_df):
+    """v9.1: filtro MIN_CONFIDENCE removido. confidence_threshold sempre True.
+
+    Antes, confidence=40 seria filtrado como low_confidence. Agora, o filtro
+    é no-op e o pipeline prossegue para calculate_trade_plan.
+    """
     returns = {"cont_pull": _sr("cont_pull", True, "LONG", 40.0)}
     with _Patches(setup_returns=returns):
         decision = _call(fake_df)
 
-    assert decision.action == "SKIP"
-    assert decision.skip_reason == "low_confidence"
-    assert decision.protection_filters["confidence_threshold"] is False
+    assert decision.action == "CALL"
+    assert decision.protection_filters["confidence_threshold"] is True
+    assert decision.skip_reason is None
 
 
 # ---------------------------------------------------------------------------
