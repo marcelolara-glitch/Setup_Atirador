@@ -1,37 +1,70 @@
-# main.py — Orquestrador principal do Setup Atirador v8.3.0
+# main.py — Orquestrador principal do Setup Atirador v9.
 # Entry point para cron e execução manual.
-# Contém apenas lógica de orquestração — toda lógica de negócio vive nos módulos.
+#
+# Pipeline:
+#   1. fetch_perpetuals → universe
+#   2. fetch BTC klines 15m → build_btc_context
+#   3. Para cada token: gather klines (5 TFs) → dataframes → evaluate_token
+#   4. Persistência: state, logger, journal
+#   5. Notificações: telegram notify_call/notify_heartbeat
+#   6. Watchdog + notify_error no wrapper global
 
+from __future__ import annotations
+
+import argparse
 import asyncio
+import json
 import logging
+import os
 import sys
 import time
+import traceback
 from datetime import datetime
+from typing import Optional
 
 import aiohttp
+import pandas as pd
 
-from config import VERSION, BRT, LOG_DIR, COLS_4H, COLS_1H, COLS_15M_TECH, ZONA_ORDER
-from exchanges import fetch_perpetuals, fetch_fear_greed_async, fetch_klines_cached_async
-from gates import fetch_tv_batch_async, recommendation_from_value
-from indicators import get_candle_lock_status, apply_candle_lock
-from scoring import check_rejeicao_presente, check_estrutura_direcional, check_forca_movimento
-from signals import analisar_token_async, calc_trade_params, calc_trade_params_short
-from state import load_daily_state, save_daily_state, update_score_history, cleanup_score_history
-from telegram import tg_notify_v7
-
-try:
-    from logger import RoundLogger
-    _OBSERVABILITY = True
-except ImportError:
-    _OBSERVABILITY = False
-
-try:
-    from journal import TradeJournal
-    _OBSERVABILITY_JOURNAL = True
-except ImportError:
-    _OBSERVABILITY_JOURNAL = False
+from config import (
+    BRT,
+    BTC_SYMBOL,
+    KLINE_LIMIT_15M,
+    KLINE_LIMIT_1H,
+    KLINE_LIMIT_4H,
+    KLINE_LIMIT_5M,
+    KLINE_LIMIT_1M,
+    LOG_DIR,
+    MAX_CONCURRENT_FETCHES,
+    SETUPS_ENABLED,
+    VERSION,
+)
+from exchanges import (
+    fetch_fear_greed_async,
+    fetch_klines_cached_async,
+    fetch_perpetuals,
+    klines_to_dataframe,
+    reset_data_source_attempts,
+)
+from journal import TradeJournalV9
+from logger import RoundLoggerV9
+from signals import build_btc_context, evaluate_token
+from state import (
+    cleanup_state,
+    load_state,
+    save_state,
+    update_oi_history,
+    update_setups_history,
+)
+from telegram import (
+    RoundStats,
+    notify_call,
+    notify_error,
+    notify_heartbeat,
+)
 
 LOG = logging.getLogger("atirador")
+
+_WATCHDOG_PATH = "/tmp/atirador_last_run.json"
 
 
 # ===========================================================================
@@ -44,7 +77,6 @@ def setup_logger() -> tuple[logging.Logger, str, str]:
     Cria o diretório de logs se não existir.
     Retorna (logger, log_file_path, ts_scan).
     """
-    import os
     os.makedirs(LOG_DIR, exist_ok=True)
     ts_brt = datetime.now(BRT)
     ts_str = ts_brt.strftime("%Y%m%d_%H%M")
@@ -59,7 +91,7 @@ def setup_logger() -> tuple[logging.Logger, str, str]:
 
     fmt_file = logging.Formatter(
         "%(asctime)s BRT [%(levelname)-7s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
     fmt_file.converter = brt_converter
 
@@ -74,7 +106,7 @@ def setup_logger() -> tuple[logging.Logger, str, str]:
 
     logger.addHandler(fh)
     logger.addHandler(ch)
-    logger.info(f"[v8] Log iniciado: {logfile}")
+    logger.info(f"[v9] Log iniciado: {logfile}")
     return logger, logfile, ts_str
 
 
@@ -85,448 +117,419 @@ def log_section(title: str) -> None:
 
 
 # ===========================================================================
+# Helpers
+# ===========================================================================
+
+def _to_iso(value) -> Optional[str]:
+    """pd.Timestamp / datetime / str → ISO; None se vazio."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    iso = getattr(value, "isoformat", None)
+    if callable(iso):
+        try:
+            return iso()
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def _detect_near_miss(decision) -> Optional[dict]:
+    """Retorna dict para logger.add_near_miss se qualificar como near-miss.
+
+    Regra v9:
+        - decision.action == "SKIP"
+        - pelo menos 1 SetupResult em all_setup_results com triggered=True
+        - retorna o setup com maior confidence entre os triggered
+
+    Retorno: dict com chaves (symbol, closest_setup_name, closest_confidence,
+    closest_direction, closest_regime, conditions, ts) ou None.
+    """
+    if getattr(decision, "action", None) != "SKIP":
+        return None
+
+    all_results = list(getattr(decision, "all_setup_results", []) or [])
+    triggered = [r for r in all_results if getattr(r, "triggered", False)]
+    if not triggered:
+        return None
+
+    closest = max(triggered, key=lambda r: getattr(r, "confidence", 0.0) or 0.0)
+
+    conditions = list(getattr(closest, "conditions", []) or [])
+    conditions_serialized = []
+    for c in conditions:
+        try:
+            conditions_serialized.append({
+                "name":   getattr(c, "name", None),
+                "value":  float(getattr(c, "value", 0.0) or 0.0),
+                "passed": bool(getattr(c, "passed", False)),
+                "weight": float(getattr(c, "weight", 0.0) or 0.0),
+            })
+        except Exception:
+            pass
+
+    ts = _to_iso(getattr(decision, "timestamp", None)) or datetime.now(BRT).isoformat()
+
+    return {
+        "symbol":             getattr(decision, "symbol", None),
+        "closest_setup_name": getattr(closest, "setup_name", None),
+        "closest_confidence": float(getattr(closest, "confidence", 0.0) or 0.0),
+        "closest_direction":  getattr(closest, "direction", None),
+        "closest_regime":     getattr(decision, "regime", None),
+        "conditions":         conditions_serialized,
+        "ts":                 ts,
+    }
+
+
+async def _fetch_token_klines(
+    session: aiohttp.ClientSession,
+    symbol: str,
+    sem: asyncio.Semaphore,
+) -> dict:
+    """Busca 5 TFs de klines para um token. Semáforo limita concorrência.
+
+    Retorna dict com chaves df_15m, df_1h, df_4h, df_5m, df_1m — todos
+    pd.DataFrame (podem ser vazios se fetch falhou).
+
+    Não levanta exceção — falhas viram DataFrames vazios, que o
+    evaluate_token vai rejeitar no build_market_context.
+    """
+    async with sem:
+        try:
+            k15, k1h, k4h, k5m, k1m = await asyncio.gather(
+                fetch_klines_cached_async(session, symbol, "15m", KLINE_LIMIT_15M),
+                fetch_klines_cached_async(session, symbol, "1H",  KLINE_LIMIT_1H),
+                fetch_klines_cached_async(session, symbol, "4H",  KLINE_LIMIT_4H),
+                fetch_klines_cached_async(session, symbol, "5m",  KLINE_LIMIT_5M),
+                fetch_klines_cached_async(session, symbol, "1m",  KLINE_LIMIT_1M),
+                return_exceptions=True,
+            )
+        except Exception as e:
+            LOG.warning(f"[v9] gather klines {symbol}: {e}")
+            return {tf: pd.DataFrame() for tf in
+                    ("df_15m", "df_1h", "df_4h", "df_5m", "df_1m")}
+
+    def _to_df(result) -> pd.DataFrame:
+        if isinstance(result, Exception):
+            return pd.DataFrame()
+        if not result:
+            return pd.DataFrame()
+        try:
+            return klines_to_dataframe(result)
+        except Exception:
+            return pd.DataFrame()
+
+    return {
+        "df_15m": _to_df(k15),
+        "df_1h":  _to_df(k1h),
+        "df_4h":  _to_df(k4h),
+        "df_5m":  _to_df(k5m),
+        "df_1m":  _to_df(k1m),
+    }
+
+
+def _build_round_stats(
+    decisions: list,
+    perpetuals: list[dict],
+    btc_context: dict,
+    exchange: str,
+    fgi: int,
+    elapsed: float,
+) -> RoundStats:
+    """Agrega decisions + contexto em RoundStats para notify_heartbeat."""
+    n_universe = len(perpetuals)
+    n_regime_eligible = sum(
+        1 for d in decisions
+        if getattr(d, "regime", None) not in (None, "")
+    )
+
+    def _any_triggered(decision) -> bool:
+        results = getattr(decision, "all_setup_results", []) or []
+        return any(getattr(r, "triggered", False) for r in results)
+
+    n_triggered = sum(1 for d in decisions if _any_triggered(d))
+    n_calls = sum(1 for d in decisions if getattr(d, "action", None) == "CALL")
+    n_near_miss = sum(
+        1 for d in decisions
+        if getattr(d, "action", None) == "SKIP" and _any_triggered(d)
+    )
+
+    counter: dict[str, int] = {}
+    for d in decisions:
+        for r in getattr(d, "all_setup_results", []) or []:
+            if getattr(r, "triggered", False):
+                name = getattr(r, "setup_name", None)
+                if name:
+                    counter[name] = counter.get(name, 0) + 1
+
+    return RoundStats(
+        n_universe=n_universe,
+        n_regime_eligible=n_regime_eligible,
+        n_triggered=n_triggered,
+        n_calls=n_calls,
+        n_near_miss=n_near_miss,
+        setups_counter=counter,
+        fgi=fgi,
+        btc_regime=btc_context.get("regime", "UNKNOWN"),
+        btc_change_pct_15m=float(btc_context.get("change_pct_15m", 0.0) or 0.0),
+        elapsed_seconds=elapsed,
+        exchange=exchange,
+    )
+
+
+def _write_watchdog() -> None:
+    """Grava /tmp/atirador_last_run.json. Falha silenciosa."""
+    try:
+        payload = {
+            "last_run": datetime.now(BRT).isoformat(),
+            "version":  f"v{VERSION}",
+        }
+        with open(_WATCHDOG_PATH, "w") as f:
+            json.dump(payload, f)
+    except Exception:
+        pass
+
+
+def _get_open_symbols(journal: TradeJournalV9) -> list[str]:
+    """Lista símbolos com trade OPEN no journal.
+
+    TradeJournalV9 expõe get_open_trade(symbol, direction) mas não uma
+    listagem. Consulta direta via conexão interna (acesso a atributo privado
+    aceitável porque ambos os módulos estão sob nossa gestão).
+    """
+    try:
+        conn = journal._connect()
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT symbol FROM trades WHERE status='OPEN'"
+            ).fetchall()
+            return [r["symbol"] for r in rows] if rows else []
+        finally:
+            conn.close()
+    except Exception:
+        return []
+
+
+# ===========================================================================
 # Pipeline principal
 # ===========================================================================
 
 async def run_scan_async() -> None:
-    """
-    Pipeline principal v8.3.0:
-    1. Fetch perpetuals (universo)
-    2. TV batch 4H (Gate 4H strict — LONG/SHORT, NEUTRAL → drop)
-    3. TV batch 1H (contexto)
-    4. Candle lock 15m
-    5. TV batch 15m (BB/volume para Check C)
-    6. Por token: analisar_token_async → Check A/B/C → decisão
-    7. Notificações Telegram
-    8. Atualização de estado
-    9. Observability (RoundLogger + TradeJournal)
+    """Pipeline v9 completo de uma rodada.
+
+    1. Universe (OKX → Gate → Bitget fallback)
+    2. BTC klines 15m → build_btc_context
+    3. Para cada token (async gather de klines + evaluate serial)
+    4. Persistência: state, logger, journal
+    5. Notificações Telegram
+    6. Watchdog
     """
     t_start = time.time()
+    reset_data_source_attempts()
 
-    # ── Observability: instanciar localmente ──────────────────────────────────
-    round_log = None
-    if _OBSERVABILITY:
-        try:
-            round_log = RoundLogger(version=VERSION)
-        except Exception:
-            LOG.warning("[v8] RoundLogger falhou ao inicializar", exc_info=True)
-            round_log = None
+    round_log: Optional[RoundLoggerV9] = None
+    try:
+        round_log = RoundLoggerV9(version=str(VERSION))
+    except Exception:
+        LOG.warning("[v9] RoundLoggerV9 falhou ao inicializar", exc_info=True)
 
-    trade_journal = None
-    if _OBSERVABILITY_JOURNAL:
-        try:
-            trade_journal = TradeJournal()
-        except Exception:
-            LOG.warning("[v8] TradeJournal falhou ao inicializar", exc_info=True)
-            trade_journal = None
+    trade_journal: Optional[TradeJournalV9] = None
+    try:
+        trade_journal = TradeJournalV9()
+    except Exception:
+        LOG.warning("[v9] TradeJournalV9 falhou ao inicializar", exc_info=True)
 
-    state = load_daily_state()
+    state = load_state()
 
-    # ── Fear & Greed ──────────────────────────────────────────────────────────
-    log_section("Fear & Greed Index")
+    # ── 1. Fear & Greed + Universe ──────────────────────────────────────
+    log_section("Universe + FGI")
     async with aiohttp.ClientSession() as session:
         fg = await fetch_fear_greed_async(session)
-    fg_val   = fg.get("value") or 50
-    fg_class = fg.get("classification", "–")
-    LOG.info(f"[v8] FGI={fg_val} ({fg_class})")
+    fgi = int(fg.get("value") or 50)
+    LOG.info(f"[v9] FGI={fgi} ({fg.get('classification', '–')})")
 
-    # ── Perpetuals (universo) ─────────────────────────────────────────────────
-    log_section("Universo de perpetuals")
-    perps, exchange = await fetch_perpetuals()
-    if not perps:
-        LOG.error("[v8] Sem perpetuals — abortando")
+    perpetuals, exchange = await fetch_perpetuals()
+    if not perpetuals:
+        LOG.error("[v9] Sem perpetuals — abortando")
         return
 
-    symbols = [p["symbol"] for p in perps]
-    prices  = {p["symbol"]: p["price"] for p in perps}
-    LOG.info(f"[v8] Universo: {len(symbols)} símbolos ({exchange})")
+    symbols = [p["symbol"] for p in perpetuals]
+    LOG.info(f"[v9] Universo: {len(symbols)} tokens ({exchange})")
 
-    # ── TV batch 4H ───────────────────────────────────────────────────────────
-    log_section("TradingView 4H")
-    async with aiohttp.ClientSession() as session:
-        tv4h, _ = await fetch_tv_batch_async(session, symbols, COLS_4H)
-
-    # ── Gate 4H strict ────────────────────────────────────────────────────────
-    gate_long_syms  = []
-    gate_short_syms = []
-    for sym in symbols:
-        d4  = tv4h.get(sym, {})
-        rec = recommendation_from_value(d4.get("Recommend.All|240", 0))
-        if rec in ("BUY", "STRONG_BUY"):
-            gate_long_syms.append(sym)
-        elif rec in ("SELL", "STRONG_SELL"):
-            gate_short_syms.append(sym)
-        # NEUTRAL → drop
-
-    n_gate_long  = len(gate_long_syms)
-    n_gate_short = len(gate_short_syms)
-    gate_syms    = gate_long_syms + gate_short_syms
-    LOG.info(f"[v8] Gate 4H: {n_gate_long} LONG, {n_gate_short} SHORT")
-
-    # ── TV batch 1H ───────────────────────────────────────────────────────────
-    log_section("TradingView 1H")
-    async with aiohttp.ClientSession() as session:
-        tv1h, _ = await fetch_tv_batch_async(session, gate_syms, COLS_1H)
-
-    # ── Candle lock 15m ───────────────────────────────────────────────────────
-    candle_lock = get_candle_lock_status()
-    if candle_lock["use_prev"]:
-        LOG.info(
-            f"[v8] Candle lock ativo — vela em formação "
-            f"({candle_lock['seconds_open']:.0f}s), "
-            f"próximo fechamento em {candle_lock['next_close']:.0f}s"
-        )
-
-    # ── TV batch 15m ──────────────────────────────────────────────────────────
-    log_section("TradingView 15m")
-    async with aiohttp.ClientSession() as session:
-        tv15m, _ = await fetch_tv_batch_async(session, gate_syms, COLS_15M_TECH)
-
-    # ── Análise por token ─────────────────────────────────────────────────────
-    log_section("Análise por token")
-    results      = []
-    n_zona_long  = 0
-    n_zona_short = 0
-
-    oi_lookup = {p["symbol"]: p.get("oi_usd", 0) for p in perps}
-
-    async with aiohttp.ClientSession() as session:
-        for sym in gate_syms:
-            d4    = tv4h.get(sym, {})
-            d1    = tv1h.get(sym, {})
-            d15   = tv15m.get(sym, {})
-            price = prices.get(sym, 0.0)
-            if not price:
-                continue
-            try:
-                r = await analisar_token_async(
-                    session, sym, d4, d1, price, oi_lookup.get(sym, 0),
-                    state, exchange, candle_lock)
-                if r is None:
-                    continue
-
-                # Re-avaliacao do Check C com dados TV 15m (C1 BB)
-                if d15 and r.get("check_a_ok"):
-                    candles_15m_recheck = await fetch_klines_cached_async(
-                        session, sym, "15m", 20)
-                    if candles_15m_recheck:
-                        candles_15m_recheck = apply_candle_lock(candles_15m_recheck, candle_lock)
-                    if candles_15m_recheck:
-                        c_total, c_det = check_forca_movimento(
-                            candles_15m_recheck, d15, state, r["direction"])
-                        r["check_c_total"] = c_total
-                        r["check_c_det"]   = c_det
-                        r.update(c_det or {})
-                        thr_c = r["check_c_thr"]
-                        # Re-decide status
-                        if r["check_b_ok"]:
-                            r["status"] = "CALL" if c_total >= thr_c else "QUASE"
-                        elif c_total >= 1:
-                            r["status"] = "QUASE"
-                        else:
-                            r["status"] = "RADAR"
-                        # Recalcular trade params se virou CALL
-                        if r["status"] == "CALL" and not r.get("params"):
-                            candles_4h = await fetch_klines_cached_async(
-                                session, sym, "4H", 50)
-                            candles_1h = await fetch_klines_cached_async(
-                                session, sym, "1H", 50)
-                            if r["direction"] == "LONG":
-                                r["params"] = calc_trade_params(
-                                    sym, r["price"], r["zona_qualidade"],
-                                    c_total, candles_4h, candles_1h)
-                            else:
-                                r["params"] = calc_trade_params_short(
-                                    sym, r["price"], r["zona_qualidade"],
-                                    c_total, candles_4h, candles_1h)
-
-                if r["direction"] == "LONG":
-                    n_zona_long += 1
-                else:
-                    n_zona_short += 1
-                results.append(r)
-
-            except Exception as e:
-                LOG.warning(f"[v8] Erro em {sym}: {e}", exc_info=True)
-
-    # ── BTC 4H trend (busca independente do universo) ────────────────────────
-    btc_4h = "–"
+    # ── 2. BTC context ──────────────────────────────────────────────────
+    log_section("BTC context")
+    btc_context: dict = {"regime": "UNKNOWN", "change_pct_15m": 0.0, "atr_pct": 0.0}
     try:
         async with aiohttp.ClientSession() as session:
-            btc_tv, _ = await fetch_tv_batch_async(session, ["BTCUSDT"], COLS_4H)
-        btc_d4 = btc_tv.get("BTCUSDT", {})
-        if btc_d4:
-            btc_4h = recommendation_from_value(btc_d4.get("Recommend.All|240", 0))
+            btc_klines = await fetch_klines_cached_async(
+                session, BTC_SYMBOL, "15m", KLINE_LIMIT_15M,
+            )
+        if btc_klines:
+            df_btc = klines_to_dataframe(btc_klines)
+            if not df_btc.empty:
+                btc_context = build_btc_context(df_btc)
+                LOG.info(
+                    f"[v9] BTC: regime={btc_context['regime']} "
+                    f"change_15m={btc_context['change_pct_15m']:+.2f}%"
+                )
+    except Exception as e:
+        LOG.warning(f"[v9] Falha ao montar btc_context: {e}")
+
+    # ── 3. Open trades (para evitar duplicação em evaluate_token) ───────
+    open_symbols: list[str] = []
+    if trade_journal is not None:
+        try:
+            open_symbols = _get_open_symbols(trade_journal)
+        except Exception as e:
+            LOG.warning(f"[v9] Falha ao listar open trades: {e}")
+
+    # ── 4. Pipeline por token ───────────────────────────────────────────
+    log_section(f"Pipeline por token (concurrency={MAX_CONCURRENT_FETCHES})")
+    decisions: list = []
+    sem = asyncio.Semaphore(MAX_CONCURRENT_FETCHES)
+
+    async with aiohttp.ClientSession() as session:
+        fetch_tasks = [
+            _fetch_token_klines(session, sym, sem) for sym in symbols
+        ]
+        klines_by_token = await asyncio.gather(*fetch_tasks, return_exceptions=False)
+
+    disabled_setups = {
+        name for name, enabled in SETUPS_ENABLED.items() if not enabled
+    }
+
+    # Evaluate serial (pandas_ta não é thread-safe + logs ordenados)
+    for sym, k in zip(symbols, klines_by_token):
+        df_15m = k["df_15m"]
+        if df_15m.empty:
+            continue
+        try:
+            decision = evaluate_token(
+                symbol=sym,
+                df_15m=df_15m,
+                df_1h=k["df_1h"],
+                df_4h=k["df_4h"],
+                df_5m=k["df_5m"] if not k["df_5m"].empty else None,
+                df_1m=k["df_1m"] if not k["df_1m"].empty else None,
+                open_trades=open_symbols,
+                btc_context=btc_context,
+                disabled_setups=disabled_setups,
+            )
+            decisions.append(decision)
+        except Exception as e:
+            LOG.warning(f"[v9] evaluate_token({sym}) falhou: {e}", exc_info=False)
+
+    LOG.info(f"[v9] Avaliados: {len(decisions)}/{len(symbols)}")
+
+    # ── 5. Notificações Telegram — CALLs ────────────────────────────────
+    log_section("Telegram — CALLs")
+    for d in decisions:
+        if getattr(d, "action", None) == "CALL":
+            try:
+                notify_call(d)
+            except Exception:
+                LOG.warning(f"[v9] notify_call falhou para {d.symbol}", exc_info=True)
+
+    # ── 6. Journal — open + tracking ────────────────────────────────────
+    if trade_journal is not None:
+        log_section("Journal")
+        for d in decisions:
+            if getattr(d, "action", None) == "CALL":
+                try:
+                    trade_journal.open_trade(d, fgi=fgi)
+                except Exception:
+                    LOG.warning(f"[v9] open_trade falhou para {d.symbol}", exc_info=True)
+        try:
+            closed = trade_journal.check_open_trades()
+            if closed > 0:
+                LOG.info(f"[v9] Journal tracker: {closed} trade(s) fechado(s)")
+        except Exception:
+            LOG.warning("[v9] check_open_trades falhou", exc_info=True)
+
+    # ── 7. State update ─────────────────────────────────────────────────
+    try:
+        ts_now = datetime.now(BRT).isoformat()
+        update_setups_history(state, decisions, ts_now)
+        update_oi_history(state, perpetuals, ts_now)
+        cleanup_state(state)
+        save_state(state)
     except Exception:
-        pass
+        LOG.warning("[v9] State update falhou", exc_info=True)
 
-    # ── Notificações Telegram ─────────────────────────────────────────────────
-    log_section("Notificações Telegram")
+    # ── 8. RoundLogger commit ───────────────────────────────────────────
     elapsed = time.time() - t_start
-    tg_notify_v7(
-        results      = results,
-        fg_val       = fg_val,
-        n_univ       = len(symbols),
-        n_gate_short = n_gate_short,
-        n_gate_long  = n_gate_long,
-        n_zona_short = n_zona_short,
-        n_zona_long  = n_zona_long,
-        elapsed      = elapsed,
-        exchange     = exchange,
-        btc_4h       = btc_4h,
-    )
-
-    # ── Atualização de estado ─────────────────────────────────────────────────
-    ts_now = datetime.now().strftime("%Y-%m-%dT%H:%M")
-    update_score_history(state, results, ts_now)
-    cleanup_score_history(state)
-    save_daily_state(state)
-
-    # ── Observability: RoundLogger ────────────────────────────────────────────
     if round_log is not None:
         try:
             round_log.set_meta(
-                fgi          = fg_val,
-                btc_4h       = btc_4h,
-                exchange     = exchange,
-                candle_locked= candle_lock.get("use_prev", False),
+                fgi=fgi,
+                btc_regime=btc_context.get("regime", "UNKNOWN"),
+                btc_change_pct_15m=float(btc_context.get("change_pct_15m", 0.0) or 0.0),
+                exchange_primary=exchange,
+                setups_enabled=dict(SETUPS_ENABLED),
+                btc_filter_blocked=any(
+                    getattr(d, "skip_reason", None) == "btc_abrupt_move"
+                    for d in decisions
+                ),
             )
+            setups_triggered_total = sum(
+                1
+                for d in decisions
+                for r in getattr(d, "all_setup_results", []) or []
+                if getattr(r, "triggered", False)
+            )
+            near_misses = [_detect_near_miss(d) for d in decisions]
+            near_misses = [nm for nm in near_misses if nm is not None]
+
             round_log.set_pipeline(
-                universe      = len(symbols),
-                after_gate_4h = len(gate_syms),
-                after_gate_1h = len(gate_syms),
-                scored_15m    = len(results),
+                universe=len(symbols),
+                tokens_evaluated=len(decisions),
+                calls_emitted=sum(1 for d in decisions if d.action == "CALL"),
+                setups_triggered_total=setups_triggered_total,
+                near_misses_count=len(near_misses),
             )
-            for r in results:
-                round_log.add_token(
-                    symbol         = r["symbol"],
-                    direction      = r["direction"],
-                    status         = r["status"],
-                    zona_qualidade = r.get("zona_qualidade", ""),
-                    zona_descricao = r.get("zona_descricao", ""),
-                    check_a_ok     = r.get("check_a_ok", False),
-                    check_a_reason = r.get("check_a_reason", ""),
-                    check_a_ev     = r.get("check_a_ev", {}),
-                    check_b_ok     = r.get("check_b_ok", False),
-                    check_b_reason = r.get("check_b_reason", ""),
-                    check_b_ev     = r.get("check_b_ev", {}),
-                    check_c_total  = r.get("check_c_total", 0),
-                    check_c_thr    = r.get("check_c_thr", 0),
-                    check_c_det    = r.get("check_c_det", {}),
-                    zona_rich      = r.get("zona_rich"),
-                    # Novos campos de debug:
-                    candle_ref     = r.get("candle_ref"),
-                    price          = r.get("price"),
-                    oi_usd         = r.get("oi_usd"),
-                    rec_4h         = r.get("rec_4h"),
-                    rec_1h         = r.get("rec_1h"),
-                    gate_1h_ok     = r.get("gate_1h_ok"),
-                )
-            for r in results:
-                if r["status"] in ("CALL", "QUASE"):
-                    round_log.add_event(
-                        type           = r["status"],
-                        symbol         = r["symbol"],
-                        direction      = r["direction"],
-                        zona_qualidade = r.get("zona_qualidade", ""),
-                        check_c_total  = r.get("check_c_total", 0),
-                        check_c_thr    = r.get("check_c_thr", 0),
-                    )
             round_log.set_exec_seconds(elapsed)
+
+            for d in decisions:
+                round_log.add_token_evaluation(d)
+
+            for nm in near_misses:
+                round_log.add_near_miss(**nm)
+
+            for d in decisions:
+                if getattr(d, "action", None) == "CALL":
+                    tp = getattr(d, "trade_plan", None)
+                    round_log.add_event(
+                        type="CALL",
+                        symbol=d.symbol,
+                        direction=d.direction or "",
+                        signal_tag=d.signal_tag or "",
+                        confidence=d.confidence,
+                        leverage=float(getattr(tp, "leverage", 0.0) or 0.0),
+                    )
             round_log.commit()
         except Exception:
-            LOG.warning("[v8] RoundLogger.commit() falhou", exc_info=True)
+            LOG.warning("[v9] RoundLogger commit falhou", exc_info=True)
 
-    # ── Observability: TradeJournal ───────────────────────────────────────────
-    if trade_journal is not None:
-        try:
-            for r in results:
-                if r["status"] not in ("CALL", "QUASE"):
-                    continue
-                if r["status"] == "CALL" and not r.get("params"):
-                    continue
-                p = r.get("params") or {}
-                if not p or p.get("entry", 0) == 0:
-                    LOG.warning(
-                        f"[v8] TradeJournal: params ausente ou entry=0 para "
-                        f"{r['symbol']} {r['direction']} {r['status']} — não gravando"
-                    )
-                    continue
-                pillars = {
-                    # Checks — resultados booleanos
-                    "check_a_ok":     r.get("check_a_ok"),
-                    "check_a_reason": r.get("check_a_reason"),
-                    "check_a_ev":     r.get("check_a_ev", {}),
-                    "check_b_ok":     r.get("check_b_ok"),
-                    "check_b_reason": r.get("check_b_reason"),
-                    "check_b_ev":     r.get("check_b_ev", {}),
-                    "check_c_total":  r.get("check_c_total"),
-                    "check_c_thr":    r.get("check_c_thr"),
-                    "check_c_det":    r.get("check_c_det", {}),
-                    # Zona
-                    "zona_qualidade": r.get("zona_qualidade"),
-                    "zona_descricao": r.get("zona_descricao"),
-                    "zona_rich":      r.get("zona_rich", {}),
-                    # Contexto de mercado no momento do sinal
-                    "gate_4h":        r.get("rec_4h"),
-                    "gate_1h":        r.get("rec_1h"),
-                    "price":          r.get("price"),
-                    # Candle de referência (OHLCV completo)
-                    "candle_ref":     r.get("candle_ref", {}),
-                }
-                trade_journal.open_trade(
-                    symbol        = r["symbol"],
-                    direction     = r["direction"],
-                    type          = r["status"],
-                    score         = r.get("check_c_total", 0),
-                    entry_price   = p.get("entry", 0),
-                    sl_price      = p.get("sl", 0),
-                    tp1           = p.get("tp1", 0),
-                    tp2           = p.get("tp2", 0),
-                    tp3           = p.get("tp3", 0),
-                    fgi           = fg_val,
-                    btc_4h        = btc_4h,
-                    pillars_dict  = pillars,
-                    kline_venue   = r.get("exchange"),
-                    venue_quality = r.get("zona_qualidade"),
-                )
-        except Exception:
-            LOG.warning("[v8] TradeJournal falhou", exc_info=True)
-
-    # ── TradeJournal: tracking de trades abertos ──────────────────────────────
-    if trade_journal is not None:
-        try:
-            from journal import _fetch_klines_sync
-            updated = trade_journal.check_open_trades(
-                fetch_klines_fn=_fetch_klines_sync
-            )
-            LOG.info(f"[v8] TradeJournal tracker: {updated} trade(s) atualizados")
-        except Exception:
-            LOG.warning("[v8] TradeJournal tracker falhou", exc_info=True)
-
-    # ── Watchdog ──────────────────────────────────────────────────────────────
+    # ── 9. Telegram heartbeat ───────────────────────────────────────────
     try:
-        import json as _json
-        import os as _os
-        _wd = {"last_run": datetime.now(BRT).isoformat(), "version": f"v{VERSION}"}
-        with open("/tmp/atirador_last_run.json", "w") as _f:
-            _json.dump(_wd, _f)
+        stats = _build_round_stats(
+            decisions=decisions,
+            perpetuals=perpetuals,
+            btc_context=btc_context,
+            exchange=exchange,
+            fgi=fgi,
+            elapsed=elapsed,
+        )
+        notify_heartbeat(stats)
     except Exception:
-        pass
+        LOG.warning("[v9] notify_heartbeat falhou", exc_info=True)
 
-    n_calls = sum(1 for r in results if r["status"] == "CALL")
-    n_quase = sum(1 for r in results if r["status"] == "QUASE")
-    LOG.info(f"[v8] Rodada concluída em {elapsed:.1f}s — {n_calls} CALL, {n_quase} QUASE")
+    # ── 10. Watchdog ────────────────────────────────────────────────────
+    _write_watchdog()
 
-
-# ===========================================================================
-# Modo --analisar: análise individual de token
-# ===========================================================================
-
-def _tg_send_simple(text: str) -> None:
-    """Envia mensagem simples via Telegram. Usado pelo modo --analisar."""
-    import os
-    import requests as _req
-    token   = os.getenv("TELEGRAM_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
-        return
-    try:
-        _req.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            timeout=10,
-        )
-    except Exception:
-        pass
-
-
-async def run_analisar_async(symbol: str) -> None:
-    """
-    Pipeline de análise individual de um token.
-    Ignora o gate de universo — analisa o símbolo diretamente.
-    Não alimenta bancos SQLite (scan_log.db, journal).
-    Usado pelo modo --analisar via GitHub Actions.
-    """
-    import aiohttp
-    from state import load_daily_state
-
-    # Normaliza símbolo
-    sym = symbol.upper().strip()
-    if not sym.endswith("USDT"):
-        sym += "USDT"
-
-    LOG.info(f"[analisar] Iniciando análise de {sym}")
-
-    state = load_daily_state()
-
-    async with aiohttp.ClientSession() as session:
-        # ── Preço atual via OKX ───────────────────────────────────────────
-        perps, exchange = await fetch_perpetuals()
-        prices = {p["symbol"]: p["price"] for p in perps}
-        price  = prices.get(sym)
-
-        if not price:
-            # Tenta buscar via klines se não estiver no universo
-            candles = await fetch_klines_cached_async(session, sym, "15m", 5)
-            if candles:
-                price = candles[-1]["close"]
-            else:
-                msg = f"❌ Não foi possível obter preço para {sym}."
-                LOG.error(f"[analisar] {msg}")
-                _tg_send_simple(msg)
-                return
-
-        LOG.info(f"[analisar] {sym} preço={price} exchange={exchange}")
-
-        # ── TV 4H e 1H ───────────────────────────────────────────────────
-        tv4h, _ = await fetch_tv_batch_async(session, [sym], COLS_4H)
-        tv1h, _ = await fetch_tv_batch_async(session, [sym], COLS_1H)
-        d_4h = tv4h.get(sym, {})
-        d_1h = tv1h.get(sym, {})
-
-        # ── Fear & Greed (para contexto na mensagem) ──────────────────────
-        fg     = await fetch_fear_greed_async(session)
-        fg_val = fg.get("value") or 50
-
-        # ── BTC 4H (para contexto) ────────────────────────────────────────
-        btc_tv, _ = await fetch_tv_batch_async(session, ["BTCUSDT"], COLS_4H)
-        btc_4h = recommendation_from_value(
-            btc_tv.get("BTCUSDT", {}).get("Recommend.All|240", 0)
-        )
-
-        # ── Pipeline de análise ───────────────────────────────────────────
-        result = await analisar_token_async(
-            session, sym, d_4h, d_1h, price, 0.0, state, exchange
-        )
-
-        if result is None:
-            # Token descartado (NEUTRAL no gate 4H ou sem zona)
-            rec_4h = recommendation_from_value(d_4h.get("Recommend.All|240", 0))
-            msg = (
-                f"🔍 <b>Análise: {sym.replace('USDT','')}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"⛔ Descartado no pipeline\n"
-                f"Gate 4H: {rec_4h}\n"
-                f"(NEUTRAL ou sem zona válida)"
-            )
-            _tg_send_simple(msg)
-            return
-
-        # ── Envia resultado via Telegram ──────────────────────────────────
-        tg_notify_v7(
-            results      = [result],
-            fg_val       = fg_val,
-            n_univ       = 1,
-            n_gate_short = 1 if result["direction"] == "SHORT" else 0,
-            n_gate_long  = 1 if result["direction"] == "LONG"  else 0,
-            n_zona_short = 1 if result["direction"] == "SHORT" else 0,
-            n_zona_long  = 1 if result["direction"] == "LONG"  else 0,
-            elapsed      = 0.0,
-            exchange     = exchange,
-            btc_4h       = btc_4h,
-        )
-        LOG.info(f"[analisar] {sym} → {result['status']} enviado")
+    n_calls = sum(1 for d in decisions if getattr(d, "action", None) == "CALL")
+    LOG.info(f"[v9] Rodada concluída em {elapsed:.1f}s — {n_calls} CALL")
 
 
 # ===========================================================================
@@ -534,42 +537,37 @@ async def run_analisar_async(symbol: str) -> None:
 # ===========================================================================
 
 def main() -> None:
-    import argparse
     parser = argparse.ArgumentParser(description=f"Setup Atirador v{VERSION}")
     parser.add_argument("--once", action="store_true",
                         help="Executa uma rodada e sai (modo cron)")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Não envia Telegram, apenas loga")
-    parser.add_argument(
-        "--analisar",
-        type=str,
-        default=None,
-        metavar="SYMBOL",
-        help="Analisar um token individual (ex: BTCUSDT)",
-    )
+                        help="(reservado) Não envia Telegram")
     args = parser.parse_args()
 
     global LOG
     LOG, _, _ = setup_logger()
 
-    if args.analisar:
-        asyncio.run(run_analisar_async(args.analisar))
-        return
-
-    # modos existentes permanecem abaixo sem alteração
     if args.dry_run:
-        import os as _os
-        _os.environ["DRY_RUN"] = "1"
+        os.environ["DRY_RUN"] = "1"
 
-    LOG.info(f"[v8] Setup Atirador v{VERSION} iniciando...")
+    LOG.info(f"[v9] Setup Atirador v{VERSION} iniciando...")
 
     try:
         asyncio.run(run_scan_async())
     except KeyboardInterrupt:
-        LOG.info("[v8] Interrompido pelo usuário")
+        LOG.info("[v9] Interrompido pelo usuário")
     except Exception as e:
-        LOG.exception(f"[v8] Erro fatal: {e}")
-        raise
+        tb = traceback.format_exc()
+        LOG.exception(f"[v9] Erro fatal: {e}")
+        try:
+            notify_error(
+                title="Falha na rodada",
+                error_message=tb,
+                context={"version": VERSION, "ts": datetime.now(BRT).isoformat()},
+            )
+        except Exception:
+            LOG.warning("[v9] notify_error também falhou — sem alerta", exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

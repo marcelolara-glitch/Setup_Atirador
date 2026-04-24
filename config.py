@@ -47,6 +47,16 @@ KLINE_TOP_N         = None
 KLINE_TOP_N_LIGHT   = None
 KLINE_LIMIT         = 200         # v8 era 60 — v9 precisa mais história para indicadores
 KLINE_CACHE_TTL_H   = 1
+
+# Kline limits por timeframe — suficiente para ATR(14) + estrutura recente
+KLINE_LIMIT_15M: int = 100
+KLINE_LIMIT_1H:  int = 100
+KLINE_LIMIT_4H:  int = 100
+KLINE_LIMIT_5M:  int = 100
+KLINE_LIMIT_1M:  int = 100
+
+# Limite de fetches async concorrentes no pipeline do main v9
+MAX_CONCURRENT_FETCHES: int = 10
 TICKER_TIMEOUT      = 8
 _GATE_MULTIPLIERS_TTL = 86400
 CANDLE_15M_SECONDS  = 900
