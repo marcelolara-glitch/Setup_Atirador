@@ -112,24 +112,21 @@ def evaluate_condition(
 
 
 def calculate_setup_confidence(conditions: list[dict[str, Any]]) -> float:
-    """Score ponderado (0-100) das conditions passadas.
+    """[DEPRECATED v9.1] Confidence binária 100/0.
 
-    Parâmetros:
-        conditions: lista produzida por :func:`evaluate_condition`.
+    Mantida por compat com chamadores externos. Retorna 100.0 se TODAS
+    as conditions passaram, 0.0 caso contrário. A semântica ponderada
+    original (passed_weight/total_weight × 100) foi removida porque
+    contradizia o trigger ``all(passed)`` — produzia confidence sempre
+    igual a 100 quando triggered=True. Fundação intelectual original
+    (CLAUDE.md §2) usa sinais binários puros (NFIX7, Jesse).
 
-    Retorno:
-        Percentual arredondado a 1 casa decimal. Retorna 0.0 se a lista
-        for vazia ou se o peso total for zero.
+    Conditions individuais continuam disponíveis em ``SetupResult.evidence``
+    para observabilidade e debug (value, threshold, passed, weight).
     """
     if not conditions:
         return 0.0
-
-    total_weight = sum(c["weight"] for c in conditions)
-    if total_weight <= 0:
-        return 0.0
-
-    passed_weight = sum(c["weight"] for c in conditions if c["passed"])
-    return round((passed_weight / total_weight) * 100, 1)
+    return 100.0 if all(c["passed"] for c in conditions) else 0.0
 
 
 # ---------------------------------------------------------------------------
