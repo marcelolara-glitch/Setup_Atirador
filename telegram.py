@@ -198,7 +198,6 @@ def _fmt_call(decision: SignalDecision) -> str:
     setup_safe    = html.escape(setup_display)
     symbol_safe   = html.escape(decision.symbol)
 
-    confidence_int = int(round(decision.confidence))
     leverage_str   = f"{tp.leverage:.1f}x"
 
     if dir_ == "LONG":
@@ -217,7 +216,28 @@ def _fmt_call(decision: SignalDecision) -> str:
         f"{ico} {dir_} CALL — {symbol_safe} — {_now_brt_str()} BRT",
         "━━━━━━━━━━━━━━━━━━━━━━",
         f"📊 Setup: {setup_safe}",
-        f"   Regime: {regime_safe} · Confidence: {confidence_int}/100 · Leverage: {leverage_str}",
+        f"   Regime: {regime_safe} · Leverage: {leverage_str}",
+    ]
+
+    # Conditions detalhadas por setup triggered (diagnóstico v9.1)
+    for setup_result in decision.all_setup_results:
+        if not setup_result.triggered:
+            continue
+        lines.append("")
+        setup_name_safe = html.escape(setup_result.setup_name)
+        lines.append(f"✅ <b>{setup_name_safe}</b>:")
+        conditions = setup_result.evidence.get("conditions", [])
+        for cond in conditions:
+            name = html.escape(str(cond.get("name", "?")))
+            passed_mark = "✓" if cond.get("passed") else "✗"
+            value = float(cond.get("value", 0.0))
+            threshold = float(cond.get("threshold", 0.0))
+            operator = html.escape(str(cond.get("operator", ">")))
+            lines.append(
+                f"  • {name} {passed_mark} ({value:.2f} {operator} {threshold:.2f})"
+            )
+
+    lines.extend([
         "",
         f"📈 Níveis (ATR {_fmt_price(tp.atr_value)})",
         f"   Entrada : {_fmt_price(tp.entry_price)}",
@@ -232,7 +252,7 @@ def _fmt_call(decision: SignalDecision) -> str:
         f"   TP3 = runner ({pct3}% mantido)",
         "",
         f"🔗 <a href=\"{link_15m}\">15m</a> · <a href=\"{link_4h}\">4H</a>",
-    ]
+    ])
     return "\n".join(lines)
 
 
