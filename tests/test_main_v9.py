@@ -4,10 +4,11 @@ Cobre os helpers puros (``_detect_near_miss``, ``_build_round_stats``,
 ``_write_watchdog``, ``_get_open_symbols``) e async (``_fetch_token_klines``),
 além do wrapper global de erro que dispara ``notify_error``.
 
-IMPORTANTE: o harness do Claude Code não tem ``pandas_ta``. Instalamos um
-stub em ``sys.modules`` antes de importar ``main`` — o stub cobre os três
-módulos que importam ``pandas_ta`` no import-time (``indicators``, ``regime``,
-``setups.rev_exaust``). Os testes não chamam código que depende de ``pta.*``.
+IMPORTANTE: o harness do Claude Code não tem ``pandas_ta_classic``. Instalamos
+um stub em ``sys.modules`` antes de importar ``main`` — o stub cobre os três
+módulos que importam ``pandas_ta_classic`` no import-time (``indicators``,
+``regime``, ``setups.rev_exaust``). Os testes não chamam código que depende de
+``pta.*``.
 Validação final na VM: ``pytest tests/test_main_v9.py -v``.
 """
 
@@ -26,10 +27,10 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Stub de pandas_ta — precisa estar em sys.modules antes de importar main.
+# Stub de pandas_ta_classic — precisa estar em sys.modules antes de importar main.
 # ---------------------------------------------------------------------------
-if "pandas_ta" not in sys.modules:
-    sys.modules["pandas_ta"] = types.ModuleType("pandas_ta")
+if "pandas_ta_classic" not in sys.modules:
+    sys.modules["pandas_ta_classic"] = types.ModuleType("pandas_ta_classic")
 
 
 import main  # noqa: E402
