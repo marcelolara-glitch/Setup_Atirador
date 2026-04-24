@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from indicators import (
-    MIN_CANDLES,
+    _MIN_CANDLES_MARKET_CONTEXT,
     MarketContext,
     MultiTFContext,
     build_market_context,
@@ -369,8 +369,8 @@ def test_get_last_swing_levels():
 
 
 def test_insufficient_candles_raises():
-    """< MIN_CANDLES → ValueError."""
-    df = _make_df(_uptrend_candles(MIN_CANDLES - 1))
+    """< _MIN_CANDLES_MARKET_CONTEXT → ValueError."""
+    df = _make_df(_uptrend_candles(_MIN_CANDLES_MARKET_CONTEXT - 1))
     with pytest.raises(ValueError, match="mínimo exigido"):
         build_market_context(df, symbol="X")
 
@@ -400,3 +400,24 @@ def test_get_last_swing_levels_empty_df():
     df = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
     result = get_last_swing_levels(df)
     assert result == (None, None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# Threshold mínimo — _MIN_CANDLES_MARKET_CONTEXT
+# ---------------------------------------------------------------------------
+
+
+def test_build_market_context_threshold_reflects_constant():
+    """A constante exposta reflete o threshold real (= 50)."""
+    assert _MIN_CANDLES_MARKET_CONTEXT == 50
+
+
+def test_build_market_context_accepts_50_candles():
+    """Exatos 50 candles → sucesso. 49 → ValueError."""
+    df_ok = _make_df(_uptrend_candles(_MIN_CANDLES_MARKET_CONTEXT))
+    ctx = build_market_context(df_ok, symbol="X")
+    assert isinstance(ctx, MarketContext)
+
+    df_short = _make_df(_uptrend_candles(_MIN_CANDLES_MARKET_CONTEXT - 1))
+    with pytest.raises(ValueError, match="mínimo exigido"):
+        build_market_context(df_short, symbol="X")

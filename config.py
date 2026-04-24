@@ -48,15 +48,17 @@ KLINE_TOP_N_LIGHT   = None
 KLINE_LIMIT         = 200         # v8 era 60 — v9 precisa mais história para indicadores
 KLINE_CACHE_TTL_H   = 1
 
-# Kline limits por timeframe — suficiente para ATR(14) + estrutura recente
-KLINE_LIMIT_15M: int = 100
-KLINE_LIMIT_1H:  int = 100
-KLINE_LIMIT_4H:  int = 100
-KLINE_LIMIT_5M:  int = 100
-KLINE_LIMIT_1M:  int = 100
+# Kline limits por timeframe — buffer de 50 candles sobre mínimo real (30-40)
+# para absorver filtro OKX confirm=0 + eventuais 429 com retorno parcial
+KLINE_LIMIT_15M: int = 150
+KLINE_LIMIT_1H:  int = 150
+KLINE_LIMIT_4H:  int = 150
+KLINE_LIMIT_5M:  int = 150
+KLINE_LIMIT_1M:  int = 150
 
-# Limite de fetches async concorrentes no pipeline do main v9
-MAX_CONCURRENT_FETCHES: int = 10
+# Limite de fetches async concorrentes — reduzido de 10 para 5 para mitigar
+# rate limit da OKX (~20 req/s por IP no endpoint /market/candles)
+MAX_CONCURRENT_FETCHES: int = 5
 TICKER_TIMEOUT      = 8
 _GATE_MULTIPLIERS_TTL = 86400
 CANDLE_15M_SECONDS  = 900

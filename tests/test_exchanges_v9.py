@@ -145,3 +145,102 @@ def test_kline_cache_ttl_for_short_tfs_is_zero():
     # A linha de TTL deve testar o set completo {15m, 5m, 1m}
     assert 'granularity in ("15m", "5m", "1m")' in src
     assert "KLINE_CACHE_TTL_H" in src
+
+
+# ---------------------------------------------------------------------------
+# _parse_retry_after
+# ---------------------------------------------------------------------------
+
+
+def test_parse_retry_after_seconds():
+    assert exchanges._parse_retry_after("30", fallback=2) == 30.0
+
+
+def test_parse_retry_after_empty_uses_fallback():
+    assert exchanges._parse_retry_after("", fallback=4) == 4.0
+
+
+def test_parse_retry_after_invalid_uses_fallback():
+    assert exchanges._parse_retry_after("abc", fallback=5) == 5.0
+
+
+def test_parse_retry_after_caps_at_60():
+    assert exchanges._parse_retry_after("300", fallback=2) == 60.0
+
+
+def test_parse_retry_after_caps_at_1_minimum():
+    assert exchanges._parse_retry_after("0", fallback=2) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# api_get_async — 429 handling
+# ---------------------------------------------------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, status: int, body: bytes = b"{}", headers: dict | None = None):
+        self.status = status
+        self._body = body
+        self.headers = headers or {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def read(self):
+        return self._body
+
+
+class _FakeSession:
+    def __init__(self, responses: list[_FakeResponse]):
+        self._responses = list(responses)
+        self.calls = 0
+
+    def get(self, url, timeout=None, headers=None):
+        self.calls += 1
+        return self._responses.pop(0)
+
+
+def test_api_get_async_429_respects_retry_after(monkeypatch):
+    """429 com Retry-After=1 deve causar sleep >= 1.0 antes de retry; 200 retorna dados."""
+    slept: list[float] = []
+
+    async def _fake_sleep(delay):
+        slept.append(delay)
+
+    monkeypatch.setattr(exchanges.asyncio, "sleep", _fake_sleep)
+
+    session = _FakeSession([
+        _FakeResponse(429, b"{}", headers={"Retry-After": "1"}),
+        _FakeResponse(200, b'{"ok": true}'),
+    ])
+
+    result = asyncio.run(exchanges.api_get_async(session, "http://x/test"))
+
+    assert result == {"ok": True}
+    assert len(slept) == 1
+    assert slept[0] >= 1.0
+
+
+def test_api_get_async_429_without_retry_after_uses_exponential(monkeypatch):
+    """429 sem Retry-After deve cair no fallback exponencial (2^i, mínimo 1.0)."""
+    slept: list[float] = []
+
+    async def _fake_sleep(delay):
+        slept.append(delay)
+
+    monkeypatch.setattr(exchanges.asyncio, "sleep", _fake_sleep)
+
+    session = _FakeSession([
+        _FakeResponse(429, b"{}"),
+        _FakeResponse(200, b'{"ok": 1}'),
+    ])
+
+    result = asyncio.run(exchanges.api_get_async(session, "http://x/y"))
+
+    assert result == {"ok": 1}
+    assert len(slept) == 1
+    # Primeira tentativa i=0 → fallback 2^0=1, clamp mínimo 1.0
+    assert slept[0] == 1.0

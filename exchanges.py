@@ -83,12 +83,50 @@ def _build_venue_info(kline_venue: str | None, tv_venue: str | None) -> dict:
 # HTTP helpers
 # ===========================================================================
 
+def _parse_retry_after(value: str, fallback: float) -> float:
+    """Parse do header HTTP Retry-After.
+
+    Valor pode ser:
+    - Inteiro de segundos (ex: "120") → converte direto
+    - Data HTTP (ex: "Wed, 21 Oct 2026 07:28:00 GMT") → calcula delta
+    - Inválido ou vazio → retorna fallback
+
+    Caps: [1.0, 60.0] segundos para evitar delays absurdos.
+    """
+    if not value:
+        return max(1.0, min(fallback, 60.0))
+    try:
+        # Tenta como número de segundos
+        seconds = float(value)
+        return max(1.0, min(seconds, 60.0))
+    except (ValueError, TypeError):
+        pass
+    try:
+        # Tenta como data HTTP (fallback raramente usado pela OKX)
+        from email.utils import parsedate_to_datetime
+        target = parsedate_to_datetime(value)
+        delta = (target - pd.Timestamp.utcnow().tz_localize("UTC").to_pydatetime()).total_seconds()
+        return max(1.0, min(delta, 60.0))
+    except Exception:
+        pass
+    return max(1.0, min(fallback, 60.0))
+
+
 async def api_get_async(
     session: aiohttp.ClientSession,
     url: str,
     retries: int = 3,
     headers: dict | None = None
 ) -> dict | None:
+    """GET HTTP com retry exponencial. Respeita Retry-After em 429.
+
+    Para HTTP 429 (Too Many Requests):
+    - Lê header Retry-After; se presente e válido, usa esse valor como delay
+    - Fallback: sleep exponencial 2^i segundos (1,2,4,8...)
+    - Conta como tentativa normal no limite de `retries`
+
+    Para outros status != 200: retry exponencial sem Retry-After.
+    """
     short_url = url[:80] + ("..." if len(url) > 80 else "")
     for i in range(retries):
         try:
@@ -97,14 +135,29 @@ async def api_get_async(
                 elapsed = time.time() - t0
                 raw     = await resp.read()
                 status  = resp.status
-                if status != 200:
-                    LOG.warning(f"  ⚠️  HTTP {status} para {short_url}")
+                if status == 200:
+                    data = json.loads(raw.decode("utf-8"))
+                    return data
+
+                # HTTP 429 — respeitar Retry-After se presente
+                if status == 429:
+                    retry_after_raw = resp.headers.get("Retry-After", "")
+                    delay = _parse_retry_after(retry_after_raw, fallback=2 ** i)
+                    LOG.warning(
+                        f"  ⚠️  HTTP 429 (tentativa {i+1}/{retries}) — "
+                        f"aguardando {delay:.1f}s | {short_url}"
+                    )
                     if i < retries - 1:
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(delay)
                         continue
                     return None
-                data = json.loads(raw.decode("utf-8"))
-                return data
+
+                # Outros status != 200
+                LOG.warning(f"  ⚠️  HTTP {status} (tentativa {i+1}/{retries}) para {short_url}")
+                if i < retries - 1:
+                    await asyncio.sleep(2 ** i)
+                    continue
+                return None
         except asyncio.TimeoutError:
             LOG.warning(f"  ⏱️  Timeout (tentativa {i+1}/{retries}): {short_url}")
         except json.JSONDecodeError as e:
@@ -113,7 +166,7 @@ async def api_get_async(
         except Exception as e:
             LOG.warning(f"  ⚠️  Erro tentativa {i+1}/{retries}: {type(e).__name__}: {e}")
         if i < retries - 1:
-            await asyncio.sleep(2 ** (i + 1))
+            await asyncio.sleep(2 ** i)
     LOG.error(f"  ❌  Falha após {retries} tentativas: {short_url}")
     return None
 
