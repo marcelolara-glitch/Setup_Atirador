@@ -21,7 +21,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-import pandas_ta as pta
+import pandas_ta_classic as pta
 
 from smc_lib import detect_swing_points
 
