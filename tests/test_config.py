@@ -47,3 +47,15 @@ def test_v9_paths_isolated():
     assert config.JOURNAL_DB_V9.endswith("atirador_journal_v9.db")
     assert config.SCAN_LOG_JSONL_V9.endswith("scan_log_v9.jsonl")
     assert "_v9" in config.STATE_FILE_V9
+
+
+def test_kline_limits_are_150():
+    assert config.KLINE_LIMIT_15M == 150
+    assert config.KLINE_LIMIT_1H == 150
+    assert config.KLINE_LIMIT_4H == 150
+    assert config.KLINE_LIMIT_5M == 150
+    assert config.KLINE_LIMIT_1M == 150
+
+
+def test_max_concurrent_fetches_is_5():
+    assert config.MAX_CONCURRENT_FETCHES == 5

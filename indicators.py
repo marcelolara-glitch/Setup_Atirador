@@ -29,7 +29,7 @@ from smc_lib import detect_swing_points
 # Constantes
 # ---------------------------------------------------------------------------
 
-MIN_CANDLES: int = 100
+_MIN_CANDLES_MARKET_CONTEXT: int = 50  # ATR(14)+BBands(20)+ADX(28)+swing(20) sobrepostos
 DEFAULT_SWING_LEFT: int = 3
 DEFAULT_SWING_RIGHT: int = 3
 DEFAULT_LOOKBACK_SWING: int = 50
@@ -118,7 +118,7 @@ class MultiTFContext:
 # ---------------------------------------------------------------------------
 
 
-def _validate_df(df: pd.DataFrame, *, min_candles: int = MIN_CANDLES) -> None:
+def _validate_df(df: pd.DataFrame, *, min_candles: int = _MIN_CANDLES_MARKET_CONTEXT) -> None:
     missing = [c for c in _REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"DataFrame ausente colunas obrigatórias: {missing}")
@@ -258,8 +258,8 @@ def build_market_context(
     """Calcula todos os indicadores e retorna um :class:`MarketContext`.
 
     Parâmetros:
-        df: DataFrame OHLCV com no mínimo ``MIN_CANDLES`` (100) candles,
-            indexado por timestamp (ordem cronológica crescente).
+        df: DataFrame OHLCV com no mínimo ``_MIN_CANDLES_MARKET_CONTEXT`` (50)
+            candles, indexado por timestamp (ordem cronológica crescente).
         symbol: identificador do token (ex.: ``"BTCUSDT"``).
         timeframe: timeframe dos candles (padrão ``"15m"``).
 
@@ -268,7 +268,7 @@ def build_market_context(
 
     Exceções:
         ValueError se colunas obrigatórias estão ausentes ou
-        ``len(df) < MIN_CANDLES``.
+        ``len(df) < _MIN_CANDLES_MARKET_CONTEXT``.
     """
     _validate_df(df)
 
