@@ -37,16 +37,26 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 
 DEFAULT_ATR_PERIOD: int = 14
+
+# Guard-rails ATR — SL não pode estar mais perto que MIN, nem mais longe que MAX
+DEFAULT_SL_MIN_ATR_MULT: float = 0.8   # noise floor
+DEFAULT_SL_MAX_PCT: float = 5.0         # catastrophe ceiling
+
+# Multiplicadores ATR para SL/TP — usados como fallback quando estrutura ausente
 DEFAULT_ATR_MULT_SL: float = 1.5
-DEFAULT_ATR_MULT_TP1: float = 1.0
-DEFAULT_ATR_MULT_TP2: float = 2.0
-DEFAULT_ATR_MULT_TP3: float = 3.5
-DEFAULT_SWING_LOOKBACK: int = 20
+
+# TP escalado no SL real (R:R), não em ATR fixo — alinhamento com referências
+DEFAULT_TP1_MIN_RR: float = 1.0   # TP1 mínimo R:R 1:1 (alinhado a SMC scalping)
+DEFAULT_TP2_TARGET_RR: float = 2.0
+DEFAULT_TP3_TARGET_RR: float = 3.5
+
+DEFAULT_SWING_LOOKBACK: int = 20  # fallback quando smc_lib swings ausentes
 DEFAULT_SWING_BUFFER_ATR: float = 0.3
+
 POSITION_SPLIT: tuple[float, float, float] = (0.50, 0.30, 0.20)
 MIN_LEVERAGE: float = 3.0
 MAX_LEVERAGE: float = 15.0
-DEFAULT_MIN_RR_TP1: float = 0.8
+DEFAULT_MIN_RR_TP1: float = 1.0      # subiu de 0.8 → 1.0 (alinhado a referências)
 MAX_SL_DISTANCE_PCT: float = 10.0
 
 _REQUIRED_COLUMNS: tuple[str, ...] = ("open", "high", "low", "close")
@@ -212,31 +222,67 @@ def calculate_trade_plan(
     regime: str,
     atr_period: int = DEFAULT_ATR_PERIOD,
     atr_multiplier_sl: float = DEFAULT_ATR_MULT_SL,
-    atr_multiplier_tp1: float = DEFAULT_ATR_MULT_TP1,
-    atr_multiplier_tp2: float = DEFAULT_ATR_MULT_TP2,
-    atr_multiplier_tp3: float = DEFAULT_ATR_MULT_TP3,
+    sl_min_atr_mult: float = DEFAULT_SL_MIN_ATR_MULT,
+    sl_max_pct: float = DEFAULT_SL_MAX_PCT,
+    tp1_min_rr: float = DEFAULT_TP1_MIN_RR,
+    tp2_target_rr: float = DEFAULT_TP2_TARGET_RR,
+    tp3_target_rr: float = DEFAULT_TP3_TARGET_RR,
     swing_lookback: int = DEFAULT_SWING_LOOKBACK,
     swing_buffer_atr: float = DEFAULT_SWING_BUFFER_ATR,
+    order_blocks: Optional[list] = None,
+    breaker_blocks: Optional[list] = None,
+    fvgs: Optional[list] = None,
 ) -> TradePlan:
-    """Calcula TradePlan completo baseado em ATR e estrutura local.
+    """Calcula TradePlan híbrido estrutural (SMC) com guard-rails ATR.
 
-    SL estrutural:
-        LONG  → min(entry - atr_mult_sl * ATR, swing_low - buffer * ATR)
-        SHORT → max(entry + atr_mult_sl * ATR, swing_high + buffer * ATR)
+    SL — prioridade estrutural, com guard-rails ATR e cap absoluto:
+        1. Coleta candidatos estruturais (LONG):
+           - Swing low das últimas ``swing_lookback`` velas (sempre disponível)
+           - OB bottom de bullish OBs ativos com bottom < entry (se passados)
+           - Breaker bottom de bullish breakers ativos (se passados)
+           Cada candidato recebe buffer ``swing_buffer_atr × ATR``.
+        2. Toma o ``min`` desses candidatos (mais conservador, fora do swing).
+        3. Aplica guard-rails:
+           - sl_min = entry - sl_min_atr_mult × ATR (proteção contra noise)
+           - sl_max = entry × (1 - sl_max_pct/100) (proteção contra catástrofe)
+           - sl_estrutural é clampado em [sl_max, sl_min]
+        4. Para SHORT, lógica espelhada (max em vez de min, +buffer em vez de -).
 
-    TPs são múltiplos fixos de ATR na direção da operação.
+    TP1 — prioridade estrutural com fallback R:R:
+        1. Coleta candidatos estruturais (LONG, todos > entry):
+           - Bearish OB bottoms (próxima resistência institucional)
+           - Bearish breaker bottoms
+           - Bullish FVG tops (gaps a preencher antes)
+        2. tp1_estrutural = min desses candidatos > entry.
+        3. Calcula R:R do candidato vs SL real (sl_distance = entry - sl_price).
+        4. Se R:R >= ``tp1_min_rr``, usa o candidato; senão, fallback:
+           tp1_price = entry + tp1_min_rr × sl_distance (garante R:R mínimo).
+
+    TP2 e TP3 — escalas de R:R sobre o SL real (não ATR fixo):
+        - tp2_price = entry + tp2_target_rr × sl_distance
+        - tp3_price = entry + tp3_target_rr × sl_distance
+        Garante R:R coerente independentemente de tamanho do SL.
+
+    SHORT espelha integralmente a lógica.
 
     Parâmetros:
         df: DataFrame com OHLCV (>= atr_period + 1 velas recomendadas).
         direction: "LONG" | "SHORT".
-        entry_price: preço de entrada (usado como referência para TPs).
+        entry_price: preço de entrada.
         setup_confidence: 0-100, usado no cálculo de alavancagem.
         regime: regime corrente para ponderar alavancagem.
         atr_period: período do ATR.
-        atr_multiplier_sl: múltiplo de ATR para SL baseado em volatilidade.
-        atr_multiplier_tp1/tp2/tp3: múltiplos de ATR para os alvos.
-        swing_lookback: janela de velas para swing low/high estrutural.
-        swing_buffer_atr: buffer em ATR adicionado ao swing estrutural.
+        atr_multiplier_sl: fallback ATR quando estrutural não disponível.
+        sl_min_atr_mult: SL não pode estar mais perto que isso (noise floor).
+        sl_max_pct: SL não pode estar mais longe que isso em %.
+        tp1_min_rr: R:R mínimo aceitável para TP1.
+        tp2_target_rr: R:R alvo para TP2.
+        tp3_target_rr: R:R alvo para TP3.
+        swing_lookback: janela de swing low/high estrutural (fallback).
+        swing_buffer_atr: buffer aplicado ao swing estrutural.
+        order_blocks: lista de OrderBlock do smc_lib (opcional).
+        breaker_blocks: lista de BreakerBlock do smc_lib (opcional).
+        fvgs: lista de FairValueGap do smc_lib (opcional).
 
     Retorno:
         TradePlan populado.
@@ -252,25 +298,148 @@ def calculate_trade_plan(
     if np.isnan(atr_value) or atr_value <= 0:
         raise ValueError("ATR inválido — DataFrame muito curto ou sem variação")
 
-    # SL — menor entre ATR-based e swing estrutural (LONG) ou maior (SHORT)
+    obs = order_blocks or []
+    brks = breaker_blocks or []
+    fvgs_list = fvgs or []
+
     if direction == "LONG":
-        sl_atr = entry_price - atr_multiplier_sl * atr_value
+        # --- SL: prioridade estrutural ---
+        sl_candidates = []
+
+        # Swing estrutural (sempre disponível)
         swing_low = _last_swing_low(df, lookback=swing_lookback)
-        sl_struct = swing_low - swing_buffer_atr * atr_value
-        sl_price = min(sl_atr, sl_struct)
+        sl_candidates.append(swing_low - swing_buffer_atr * atr_value)
 
-        tp1_price = entry_price + atr_multiplier_tp1 * atr_value
-        tp2_price = entry_price + atr_multiplier_tp2 * atr_value
-        tp3_price = entry_price + atr_multiplier_tp3 * atr_value
+        # OBs bullish ativos com bottom < entry
+        for ob in obs:
+            if (
+                getattr(ob, "direction", None) == "bullish"
+                and not getattr(ob, "mitigated", True)
+                and ob.bottom < entry_price
+            ):
+                sl_candidates.append(ob.bottom - swing_buffer_atr * atr_value)
+
+        # Breakers bullish ativos com bottom < entry
+        for br in brks:
+            if (
+                getattr(br, "new_direction", None) == "bullish"
+                and not getattr(br, "invalidated", True)
+                and br.bottom < entry_price
+            ):
+                sl_candidates.append(br.bottom - swing_buffer_atr * atr_value)
+
+        sl_estrutural = min(sl_candidates) if sl_candidates else (
+            entry_price - atr_multiplier_sl * atr_value
+        )
+
+        # Guard-rails ATR
+        sl_min = entry_price - sl_min_atr_mult * atr_value
+        sl_max = entry_price * (1.0 - sl_max_pct / 100.0)
+        sl_price = max(sl_max, min(sl_estrutural, sl_min))
+
+        sl_distance = entry_price - sl_price
+
+        # --- TP1: estrutural com fallback R:R ---
+        tp1_candidates = []
+        for ob in obs:
+            if (
+                getattr(ob, "direction", None) == "bearish"
+                and not getattr(ob, "mitigated", True)
+                and ob.bottom > entry_price
+            ):
+                tp1_candidates.append(ob.bottom)
+        for br in brks:
+            if (
+                getattr(br, "new_direction", None) == "bearish"
+                and not getattr(br, "invalidated", True)
+                and br.bottom > entry_price
+            ):
+                tp1_candidates.append(br.bottom)
+        for fvg in fvgs_list:
+            if (
+                getattr(fvg, "direction", None) == "bullish"
+                and not getattr(fvg, "filled", True)
+                and fvg.top > entry_price
+            ):
+                tp1_candidates.append(fvg.top)
+
+        tp1_fallback = entry_price + tp1_min_rr * sl_distance
+        if tp1_candidates:
+            tp1_estrutural = min(tp1_candidates)
+            rr_estrutural = (tp1_estrutural - entry_price) / sl_distance
+            tp1_price = tp1_estrutural if rr_estrutural >= tp1_min_rr else tp1_fallback
+        else:
+            tp1_price = tp1_fallback
+
+        # --- TP2 e TP3: escalas R:R sobre o SL real ---
+        tp2_price = entry_price + tp2_target_rr * sl_distance
+        tp3_price = entry_price + tp3_target_rr * sl_distance
+
     else:  # SHORT
-        sl_atr = entry_price + atr_multiplier_sl * atr_value
+        # --- SL: prioridade estrutural (espelho) ---
+        sl_candidates = []
         swing_high = _last_swing_high(df, lookback=swing_lookback)
-        sl_struct = swing_high + swing_buffer_atr * atr_value
-        sl_price = max(sl_atr, sl_struct)
+        sl_candidates.append(swing_high + swing_buffer_atr * atr_value)
 
-        tp1_price = entry_price - atr_multiplier_tp1 * atr_value
-        tp2_price = entry_price - atr_multiplier_tp2 * atr_value
-        tp3_price = entry_price - atr_multiplier_tp3 * atr_value
+        for ob in obs:
+            if (
+                getattr(ob, "direction", None) == "bearish"
+                and not getattr(ob, "mitigated", True)
+                and ob.top > entry_price
+            ):
+                sl_candidates.append(ob.top + swing_buffer_atr * atr_value)
+        for br in brks:
+            if (
+                getattr(br, "new_direction", None) == "bearish"
+                and not getattr(br, "invalidated", True)
+                and br.top > entry_price
+            ):
+                sl_candidates.append(br.top + swing_buffer_atr * atr_value)
+
+        sl_estrutural = max(sl_candidates) if sl_candidates else (
+            entry_price + atr_multiplier_sl * atr_value
+        )
+
+        sl_min = entry_price + sl_min_atr_mult * atr_value
+        sl_max = entry_price * (1.0 + sl_max_pct / 100.0)
+        sl_price = min(sl_max, max(sl_estrutural, sl_min))
+
+        sl_distance = sl_price - entry_price
+
+        # --- TP1: estrutural com fallback R:R ---
+        tp1_candidates = []
+        for ob in obs:
+            if (
+                getattr(ob, "direction", None) == "bullish"
+                and not getattr(ob, "mitigated", True)
+                and ob.top < entry_price
+            ):
+                tp1_candidates.append(ob.top)
+        for br in brks:
+            if (
+                getattr(br, "new_direction", None) == "bullish"
+                and not getattr(br, "invalidated", True)
+                and br.top < entry_price
+            ):
+                tp1_candidates.append(br.top)
+        for fvg in fvgs_list:
+            if (
+                getattr(fvg, "direction", None) == "bearish"
+                and not getattr(fvg, "filled", True)
+                and fvg.bottom < entry_price
+            ):
+                tp1_candidates.append(fvg.bottom)
+
+        tp1_fallback = entry_price - tp1_min_rr * sl_distance
+        if tp1_candidates:
+            tp1_estrutural = max(tp1_candidates)
+            rr_estrutural = (entry_price - tp1_estrutural) / sl_distance
+            tp1_price = tp1_estrutural if rr_estrutural >= tp1_min_rr else tp1_fallback
+        else:
+            tp1_price = tp1_fallback
+
+        tp2_price = entry_price - tp2_target_rr * sl_distance
+        tp3_price = entry_price - tp3_target_rr * sl_distance
 
     sl_distance_pct = abs(entry_price - sl_price) / entry_price * 100.0
     tp1_distance_pct = abs(tp1_price - entry_price) / entry_price * 100.0
