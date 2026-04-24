@@ -12,11 +12,6 @@ Direções:
     SHORT — bearish breaker ativo (OB bullish mitigado) tocado por cima
             com candle de rejeição bearish.
 
-Boost de confidence:
-    Regime ``TREND_UP`` alinhado a LONG (ou ``TREND_DOWN`` a SHORT)
-    recebe ``confidence × 1.1`` (cap em 100.0) — breakers confirmam a
-    nova direção e ganham peso em tendência alinhada.
-
 Conditions (LONG — bullish breaker; espelho invertido em SHORT):
     1. Breaker ativo tocado recentemente                        (weight 3.0)
     2. Retest count razoável: ``retest_count <= 3``             (weight 1.0)
@@ -59,10 +54,6 @@ RETEST_COUNT_MAX: int = 3
 BREAK_VOLUME_MULT: float = 1.3
 WICK_REJECTION_MIN: float = 0.25
 VOLUME_RATIO_MIN: float = 1.1
-
-# Multiplicador de confidence quando regime alinha com direção
-TREND_ALIGNMENT_BOOST: float = 1.1
-CONFIDENCE_CAP: float = 100.0
 
 
 def _find_touched_breaker(
@@ -260,11 +251,6 @@ def evaluate_breaker(
 
     all_passed = all(c["passed"] for c in conditions)
     confidence = calculate_setup_confidence(conditions)
-
-    if (direction == "LONG" and regime.regime == "TREND_UP") or (
-        direction == "SHORT" and regime.regime == "TREND_DOWN"
-    ):
-        confidence = min(CONFIDENCE_CAP, round(confidence * TREND_ALIGNMENT_BOOST, 1))
 
     return SetupResult(
         setup_name=SETUP_NAME,

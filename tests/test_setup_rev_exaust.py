@@ -6,13 +6,9 @@ from dataclasses import dataclass
 from typing import Optional
 
 import pandas as pd
-import pytest
 
 from setups.base import SetupResult
-from setups.rev_exaust import (
-    NO_MULTITF_PENALTY,
-    evaluate_rev_exaust,
-)
+from setups.rev_exaust import evaluate_rev_exaust
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +218,11 @@ def test_rev_exaust_skips_without_extreme_rsi():
 
 
 def test_rev_exaust_triggers_without_5m_1m():
-    """df_5m e df_1m = None → setup avalia só no 15m e aplica penalidade."""
+    """v9.1: df_5m e df_1m = None → setup avalia só no 15m, sem penalty.
+
+    Penalidade × 0.75 removida; confidence é binária 100/0. O fato de o setup
+    ter rodado single-TF fica registrado em evidence["multi_tf_available"].
+    """
     df_15m = _make_rsi3_df(direction="down")
     ctx = _build_ctx_long()
     regime = FakeRegime(regime="RANGE")
@@ -232,8 +232,8 @@ def test_rev_exaust_triggers_without_5m_1m():
     assert result.triggered is True
     assert result.direction == "LONG"
     assert result.evidence["multi_tf_available"] is False
-    # Sem multi-TF, só 5 conditions avaliadas e todas passam → 100 × 0.75 = 75.0
-    assert result.confidence == pytest.approx(100.0 * NO_MULTITF_PENALTY, abs=0.1)
+    # Sem penalty — confidence binária 100 quando todas conditions passam
+    assert result.confidence == 100.0
     assert len(result.evidence["conditions"]) == 5
 
 
@@ -305,8 +305,12 @@ def test_rev_exaust_bb_position_filter():
 # ---------------------------------------------------------------------------
 
 
-def test_rev_exaust_confidence_penalty_without_multitf():
-    """Mesmo input de 15m → confidence sem multi-TF = confidence completo × 0.75."""
+def test_rev_exaust_no_penalty_v91():
+    """v9.1: sem penalidade single-TF. Confidence é binária 100/0.
+
+    Multi-TF e single-TF retornam 100.0 se conditions passam. O fato de ter
+    rodado single-TF permanece observável via evidence["multi_tf_available"].
+    """
     df_15m = _make_rsi3_df(direction="down")
     df_5m = _make_rsi3_df(direction="down")
     df_1m = _make_rsi3_df(direction="down")
@@ -318,9 +322,12 @@ def test_rev_exaust_confidence_penalty_without_multitf():
 
     assert result_full.triggered is True
     assert result_partial.triggered is True
-    assert result_partial.confidence == pytest.approx(
-        round(result_full.confidence * NO_MULTITF_PENALTY, 1), abs=0.1
-    )
+    # Ambos 100 — sem penalty
+    assert result_full.confidence == 100.0
+    assert result_partial.confidence == 100.0
+    # Diagnóstico preservado
+    assert result_full.evidence["multi_tf_available"] is True
+    assert result_partial.evidence["multi_tf_available"] is False
 
 
 # ---------------------------------------------------------------------------

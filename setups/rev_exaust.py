@@ -21,9 +21,10 @@ Conditions (LONG — espelho invertido em SHORT):
     5. ``wick_bottom_pct >= 0.25 AND is_bullish`` no 15m    (weight 2.0)
     6. (opcional) ``rsi_3 < 20`` no 5m E no 1m              (weight 1.5)
 
-Se ``df_5m`` ou ``df_1m`` forem ``None`` a condition 6 é omitida e a
-``confidence`` final recebe penalidade de ``× 0.75`` — isso permite fetch
-sob demanda dos TFs menores só quando o pré-filtro 15m já passou.
+Se ``df_5m`` ou ``df_1m`` forem ``None`` a condition 6 é omitida — o fetch
+sob demanda dos TFs menores só acontece quando o pré-filtro 15m já passou.
+O fato de ter rodado single-TF fica registrado em
+``evidence["multi_tf_available"]`` (diagnóstico preservado).
 
 Regras de pureza (absolutas):
     - Zero I/O (sem rede, arquivo, banco, logging persistente)
@@ -68,9 +69,6 @@ WICK_MIN: float = 0.25
 # Thresholds multi-TF
 RSI_3_MTF_LONG_MAX: float = 20.0
 RSI_3_MTF_SHORT_MIN: float = 80.0
-
-# Penalidade de confidence quando 5m/1m não disponíveis
-NO_MULTITF_PENALTY: float = 0.75
 
 
 def _rsi3_last(df: pd.DataFrame) -> float:
@@ -222,8 +220,8 @@ def evaluate_rev_exaust(
 
     Retorno:
         :class:`SetupResult`. Quando ``df_5m`` ou ``df_1m`` forem ``None``
-        a condition multi-TF é omitida e ``confidence`` recebe penalidade
-        de ``× NO_MULTITF_PENALTY``.
+        a condition multi-TF é omitida. ``evidence["multi_tf_available"]``
+        registra o fato para observabilidade.
     """
     # Pré-filtro: sem exaustão no 15m, nem vale buscar 5m/1m.
     if not _pre_filter_passes(ctx.rsi_3):
@@ -254,10 +252,6 @@ def evaluate_rev_exaust(
 
     all_passed = all(c["passed"] for c in conditions)
     confidence = calculate_setup_confidence(conditions)
-
-    if not multi_tf_available:
-        # Desconto fixo quando o setup rodou só no 15m.
-        confidence = round(confidence * NO_MULTITF_PENALTY, 1)
 
     return SetupResult(
         setup_name=SETUP_NAME,

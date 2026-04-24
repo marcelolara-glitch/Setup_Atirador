@@ -122,7 +122,8 @@ def test_format_call_long_single_setup():
     assert "Setup: cont_pull" in out
     assert " + " not in out.split("Setup: ")[1].split("\n")[0]
     assert "Regime: TREND_UP" in out
-    assert "Confidence: 87/100" in out
+    # v9.1: confidence numérica removida do CALL — conditions detalhadas substituem
+    assert "Confidence:" not in out
     assert "Leverage: 8.5x" in out
 
     assert "SL      : 66800.0000  (-0.92%)" in out
@@ -375,6 +376,59 @@ def test_format_heartbeat_btc_inf(monkeypatch):
     assert telegram.notify_heartbeat(stats) is True
     assert "BTC: TREND_UP (—)" in captured["text"]
     assert "inf" not in captured["text"].lower()
+
+
+def test_format_call_shows_conditions_v91():
+    """v9.1: CALL message lista conditions de cada setup triggered."""
+    from setups.base import SetupResult
+
+    trigger = SetupResult(
+        setup_name="cont_pull",
+        triggered=True,
+        direction="LONG",
+        confidence=100.0,
+        evidence={
+            "conditions": [
+                {
+                    "name": "ema21_touch",
+                    "value": 1.0,
+                    "threshold": 0.5,
+                    "operator": ">",
+                    "passed": True,
+                    "weight": 2.0,
+                },
+                {
+                    "name": "volume_ratio",
+                    "value": 1.3,
+                    "threshold": 1.1,
+                    "operator": ">=",
+                    "passed": True,
+                    "weight": 1.0,
+                },
+            ],
+        },
+        triggered_at=None,
+    )
+    skipped = SetupResult(
+        setup_name="rev_zone",
+        triggered=False,
+        direction=None,
+        confidence=0.0,
+        evidence={},
+        triggered_at=None,
+    )
+
+    decision = _make_decision(signal_tag="cont_pull")
+    decision.all_setup_results = [trigger, skipped]
+    out = telegram._fmt_call(decision)
+
+    assert "✅" in out
+    assert "cont_pull" in out
+    assert "ema21_touch" in out
+    assert "volume_ratio" in out
+    assert "✓" in out  # marca de passed
+    assert "conf:" not in out.lower()
+    assert "Confidence:" not in out
 
 
 def test_notify_error_no_config_returns_false(monkeypatch):

@@ -30,7 +30,7 @@ from setups.breaker import evaluate_breaker
 from setups.cont_pull import evaluate_cont_pull
 from setups.rev_exaust import evaluate_rev_exaust
 from setups.rev_zone import evaluate_rev_zone
-from smc_lib import detect_breaker_blocks, detect_order_blocks
+from smc_lib import detect_breaker_blocks, detect_fvg, detect_order_blocks
 
 __all__ = ["SignalDecision", "build_btc_context", "evaluate_token"]
 
@@ -39,9 +39,9 @@ __all__ = ["SignalDecision", "build_btc_context", "evaluate_token"]
 # Constantes
 # ---------------------------------------------------------------------------
 
-CONFLUENCE_BOOST: float = 1.15
+# CONFLUENCE_BOOST e MIN_CONFIDENCE removidos em v9.1 — confidence é binária.
+# CONFIDENCE_CAP mantido por compat com cálculos pontuais.
 CONFIDENCE_CAP: float = 100.0
-MIN_CONFIDENCE: float = 50.0
 MAX_ATR_PCT: float = 5.0
 MAX_BTC_CHANGE_PCT: float = 2.0
 
@@ -164,9 +164,10 @@ def _consolidate(
 ) -> tuple[str, float, str, list[str]]:
     """Consolida direção, confidence, signal_tag e confluent_setups.
 
-    - Single setup: confidence e setup_name vêm direto do setup.
-    - Confluência: confidence = min(CAP, max(confidences) * CONFLUENCE_BOOST);
-      signal_tag junta os nomes ordenados com ``+``.
+    Confidence é binária (100.0 quando há setup triggered, conforme v9.1).
+    Confluência fica registrada em ``confluent_setups`` e ``signal_tag`` —
+    o número de setups simultâneos é o "score" real (consagrado em
+    NFIX7/Jesse, ver CLAUDE.md §2). Sem boost numérico.
     """
     direction = triggered[0].direction
     confluent_setups = [r.setup_name for r in triggered]
@@ -174,10 +175,8 @@ def _consolidate(
     if len(triggered) == 1:
         return direction, triggered[0].confidence, triggered[0].setup_name, confluent_setups
 
-    max_conf = max(r.confidence for r in triggered)
-    confidence = min(CONFIDENCE_CAP, max_conf * CONFLUENCE_BOOST)
     signal_tag = "+".join(sorted(r.setup_name for r in triggered))
-    return direction, confidence, signal_tag, confluent_setups
+    return direction, CONFIDENCE_CAP, signal_tag, confluent_setups
 
 
 # ---------------------------------------------------------------------------
@@ -329,21 +328,12 @@ def evaluate_token(
     else:
         protection["btc_stable"] = None
 
-    if confidence < MIN_CONFIDENCE:
-        protection["confidence_threshold"] = False
-        return _skip(
-            symbol=symbol,
-            timestamp=ctx.timestamp,
-            regime_label=regime_result.regime,
-            skip_reason="low_confidence",
-            all_results=results,
-            protection=protection,
-            direction=direction,
-            signal_tag=signal_tag,
-            confluent_setups=confluent_setups,
-            confidence=confidence,
-        )
+    # Filtro confidence_threshold deprecated v9.1 — sempre passa para
+    # preservar schema dos databases e simplificar análises retroativas.
     protection["confidence_threshold"] = True
+
+    # FVGs detectados sob demanda — só usados pelo risk para alvos de TP.
+    fvgs = detect_fvg(df_15m)
 
     trade_plan = calculate_trade_plan(
         df=df_15m,
@@ -351,6 +341,9 @@ def evaluate_token(
         entry_price=ctx.close,
         setup_confidence=confidence,
         regime=regime_result.regime,
+        order_blocks=order_blocks,
+        breaker_blocks=breaker_blocks,
+        fvgs=fvgs,
     )
 
     is_valid, invalid_reason = validate_trade_plan(trade_plan)

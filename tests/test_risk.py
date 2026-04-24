@@ -97,7 +97,13 @@ def _make_plan(
 
 
 def test_calculate_trade_plan_long():
-    """LONG entry 100, ATR 2 → SL ~97, TP1 ~102, TP2 ~104, TP3 ~107."""
+    """LONG entry 100, ATR 2, sem SMC primitives → SL via swing_low - buffer.
+
+    Sem OBs/FVGs/breakers, o único candidato estrutural é o swing_low (=99
+    no DF constante). sl_estrutural = 99 - 0.3*2 = 98.4. O guard-rail
+    sl_min = 100 - 0.8*2 = 98.4 resulta em sl_price=98.4, sl_distance=1.6.
+    TP1/TP2/TP3 escalam sobre sl_distance (R:R 1.0/2.0/3.5).
+    """
     df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
     plan = calculate_trade_plan(
         df=df,
@@ -108,10 +114,13 @@ def test_calculate_trade_plan_long():
     )
     assert plan.direction == "LONG"
     assert plan.atr_value == pytest.approx(2.0, rel=1e-3)
-    assert plan.sl_price == pytest.approx(97.0, abs=0.05)
-    assert plan.tp1_price == pytest.approx(102.0, abs=0.05)
-    assert plan.tp2_price == pytest.approx(104.0, abs=0.05)
-    assert plan.tp3_price == pytest.approx(107.0, abs=0.05)
+    assert plan.sl_price == pytest.approx(98.4, abs=0.05)
+    # TP1 fallback R:R 1.0 × 1.6 = 1.6
+    assert plan.tp1_price == pytest.approx(101.6, abs=0.05)
+    # TP2 R:R 2.0 × 1.6 = 3.2
+    assert plan.tp2_price == pytest.approx(103.2, abs=0.05)
+    # TP3 R:R 3.5 × 1.6 = 5.6
+    assert plan.tp3_price == pytest.approx(105.6, abs=0.05)
     assert plan.position_split == POSITION_SPLIT
 
 
@@ -121,7 +130,11 @@ def test_calculate_trade_plan_long():
 
 
 def test_calculate_trade_plan_short():
-    """SHORT entry 100, ATR 2 → SL ~103, TP1 ~98, TP2 ~96, TP3 ~93."""
+    """SHORT entry 100, ATR 2, sem SMC primitives → SL via swing_high + buffer.
+
+    swing_high=101; sl_estrutural = 101 + 0.3*2 = 101.6. sl_min = 100 + 1.6
+    = 101.6. SL=101.6, sl_distance=1.6. TPs espelhados.
+    """
     df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
     plan = calculate_trade_plan(
         df=df,
@@ -132,10 +145,10 @@ def test_calculate_trade_plan_short():
     )
     assert plan.direction == "SHORT"
     assert plan.atr_value == pytest.approx(2.0, rel=1e-3)
-    assert plan.sl_price == pytest.approx(103.0, abs=0.05)
-    assert plan.tp1_price == pytest.approx(98.0, abs=0.05)
-    assert plan.tp2_price == pytest.approx(96.0, abs=0.05)
-    assert plan.tp3_price == pytest.approx(93.0, abs=0.05)
+    assert plan.sl_price == pytest.approx(101.6, abs=0.05)
+    assert plan.tp1_price == pytest.approx(98.4, abs=0.05)
+    assert plan.tp2_price == pytest.approx(96.8, abs=0.05)
+    assert plan.tp3_price == pytest.approx(94.4, abs=0.05)
 
 
 # ---------------------------------------------------------------------------
@@ -144,19 +157,18 @@ def test_calculate_trade_plan_short():
 
 
 def test_sl_structural_long():
-    """Quando swing low é mais baixo que ATR-based SL, estrutural domina (min).
+    """Swing low moderado domina — sem catástrofe clamp.
 
-    ATR ~2 → atr_sl = 100 - 1.5*2 = 97.
-    Swing low profundo em 95 dentro da janela → struct_sl = 95 - 0.3*2 = 94.4.
-    min(97, 94.4) = 94.4 → estrutural domina.
+    Swing low em 97.5 (a 2.5% de entry=100, dentro do cap de 5%).
+    sl_estrutural = 97.5 - 0.3*ATR. Esperado: SL um pouco abaixo de 97.5.
     """
     candles = []
     # 40 candles estáveis (ATR ~2)
     for _ in range(40):
         candles.append(_candle(100, 101, 99, 100))
-    # candle com swing low profundo em 95 (dentro da janela de 20)
-    candles.append(_candle(100, 101, 95, 99))
-    # mais 15 candles estáveis — o swing low de 95 ainda está na janela
+    # candle com swing low moderado em 97.5 (~2.5%, dentro do sl_max)
+    candles.append(_candle(100, 101, 97.5, 99))
+    # mais 15 candles estáveis — o swing low ainda está na janela de 20
     for _ in range(15):
         candles.append(_candle(100, 101, 99, 100))
 
@@ -169,9 +181,11 @@ def test_sl_structural_long():
         regime="TREND_UP",
         swing_lookback=20,
     )
-    # SL estrutural deve dominar (ATR dá ~97, estrutural dá ~94.4)
-    assert plan.sl_price < 97.0, f"SL estrutural deveria ser < 97, got {plan.sl_price}"
-    assert plan.sl_price == pytest.approx(95.0 - 0.3 * plan.atr_value, abs=0.1)
+    # SL estrutural (swing - buffer) domina, pois está além do sl_min e dentro
+    # do sl_max. ATR ~ 2 (com leve bump), então expected ~97.5 - 0.3*2 ~ 96.9.
+    expected = 97.5 - 0.3 * plan.atr_value
+    assert plan.sl_price == pytest.approx(expected, abs=0.15)
+    assert plan.sl_price < 97.5
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +335,7 @@ def test_risk_reward_calculation():
 
 
 def test_validate_trade_plan_bad_rr():
-    """R:R TP1 < 0.8 → invalid."""
+    """R:R TP1 < min_rr_tp1 → invalid."""
     # risk = 10, tp1 = entry + 5 → r1 = 0.5
     plan = _make_plan(
         direction="LONG",
@@ -332,7 +346,8 @@ def test_validate_trade_plan_bad_rr():
         tp3=115,
         leverage=10.0,
     )
-    is_valid, reason = validate_trade_plan(plan, min_rr_tp1=0.8)
+    # Default v9.1: DEFAULT_MIN_RR_TP1 = 1.0 — R:R 0.5 é inválido
+    is_valid, reason = validate_trade_plan(plan)
     assert is_valid is False
     assert "R:R" in reason or "R/R" in reason or "rr" in reason.lower()
 
@@ -394,3 +409,177 @@ def test_update_trade_state_closed_is_noop():
     result = update_trade_state(closed, _candle(100, 200, 50, 150))
     assert result.status == "LOSS_SL"
     assert result is closed  # retorno direto, sem reconstrução
+
+
+# ---------------------------------------------------------------------------
+# SMC structural — testes novos v9.1
+# ---------------------------------------------------------------------------
+
+
+from dataclasses import dataclass as _dc  # noqa: E402 — helpers locais
+
+
+@_dc
+class _FakeOB:
+    direction: str
+    top: float
+    bottom: float
+    mitigated: bool = False
+
+
+@_dc
+class _FakeBreaker:
+    new_direction: str
+    top: float
+    bottom: float
+    invalidated: bool = False
+
+
+@_dc
+class _FakeFVG:
+    direction: str
+    top: float
+    bottom: float
+    filled: bool = False
+
+
+def test_calculate_trade_plan_estrutural_long_with_obs():
+    """SL estrutural usa bottom do bullish OB quando mais distante que swing."""
+    df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
+    # OB bullish com bottom 97 (abaixo de swing_low=99, ainda dentro do sl_max=95)
+    ob_bullish = _FakeOB(direction="bullish", top=99.5, bottom=97.0, mitigated=False)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        order_blocks=[ob_bullish],
+    )
+    # sl_candidates = [swing_low(=99)-0.6, ob.bottom(=97)-0.6] = [98.4, 96.4]
+    # sl_estrutural = 96.4. sl_min = 98.4 (mais perto do entry). min(96.4, 98.4) = 96.4.
+    # sl_max = 95.0. max(95, 96.4) = 96.4.
+    assert plan.sl_price == pytest.approx(96.4, abs=0.05)
+    assert plan.sl_price < 98.4  # mais distante que o fallback de swing
+
+
+def test_calculate_trade_plan_tp1_estrutural_with_fvg():
+    """TP1 usa bullish FVG top quando R:R é viável."""
+    df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
+    # FVG bullish com top 102 — R:R com SL ~ 98.4 é (102-100)/(100-98.4) = 1.25 >= 1.0
+    fvg = _FakeFVG(direction="bullish", top=102.0, bottom=101.5, filled=False)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        fvgs=[fvg],
+    )
+    # sl_distance = 100 - 98.4 = 1.6; rr_estrutural = 2.0 / 1.6 = 1.25 >= 1.0
+    assert plan.tp1_price == pytest.approx(102.0, abs=0.01)
+
+
+def test_calculate_trade_plan_tp1_fallback_when_no_structure():
+    """Sem SMC primitives, TP1 cai no fallback R:R 1:1 sobre sl_distance."""
+    df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+    )
+    sl_distance = 100.0 - plan.sl_price
+    expected_tp1 = 100.0 + 1.0 * sl_distance
+    assert plan.tp1_price == pytest.approx(expected_tp1, abs=0.01)
+
+
+def test_calculate_trade_plan_tp2_tp3_scaled_by_sl():
+    """TP2 e TP3 escalam sobre sl_distance (R:R 2.0 e 3.5)."""
+    df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+    )
+    sl_distance = 100.0 - plan.sl_price
+    expected_tp2 = 100.0 + 2.0 * sl_distance
+    expected_tp3 = 100.0 + 3.5 * sl_distance
+    assert plan.tp2_price == pytest.approx(expected_tp2, abs=0.01)
+    assert plan.tp3_price == pytest.approx(expected_tp3, abs=0.01)
+
+
+def test_calculate_trade_plan_sl_clamped_min():
+    """SL não pode estar mais perto do entry que sl_min_atr_mult × ATR.
+
+    Swing low muito próximo de entry (99.8) → sl_estrutural = 99.2; porém
+    sl_min = entry - 0.8*ATR = 98.4. clamp puxa SL para 98.4.
+    """
+    candles = []
+    # 40 candles com low=99
+    for _ in range(40):
+        candles.append(_candle(100, 101, 99, 100))
+    # 20 candles com low=99.8 (swing_low raso, < sl_min_atr_mult * ATR)
+    for _ in range(20):
+        candles.append(_candle(100, 101, 99.8, 100))
+
+    df = _make_df(candles)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        swing_lookback=20,
+    )
+    # sl_estrutural = 99.8 - 0.3*ATR ≈ 99.2. sl_min = 100 - 0.8*ATR ≈ 98.4.
+    # min(99.2, 98.4) = 98.4. max(sl_max=95, 98.4) = 98.4.
+    assert plan.sl_price == pytest.approx(100.0 - 0.8 * plan.atr_value, abs=0.1)
+
+
+def test_calculate_trade_plan_sl_clamped_max():
+    """SL não pode estar mais longe que sl_max_pct."""
+    candles = []
+    # 40 candles estáveis
+    for _ in range(40):
+        candles.append(_candle(100, 101, 99, 100))
+    # candle com swing low a 90 (10% abaixo — bem além do sl_max_pct=5%)
+    candles.append(_candle(100, 101, 90.0, 99))
+    # mais 15 candles estáveis
+    for _ in range(15):
+        candles.append(_candle(100, 101, 99, 100))
+
+    df = _make_df(candles)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        swing_lookback=20,
+    )
+    # sl_estrutural = 90 - buffer (bem fundo). sl_max = 100 * 0.95 = 95.
+    # max(95, sl_estrutural) → clamp ao sl_max.
+    assert plan.sl_price == pytest.approx(95.0, abs=0.05)
+
+
+def test_calculate_trade_plan_estrutural_short_with_obs():
+    """Espelho SHORT — bearish OB top define SL acima do swing_high."""
+    df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
+    # OB bearish com top 103 (acima de swing_high=101, ainda dentro do sl_max=105)
+    ob_bearish = _FakeOB(direction="bearish", top=103.0, bottom=102.5, mitigated=False)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="SHORT",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        order_blocks=[ob_bearish],
+    )
+    # sl_candidates = [swing_high(=101)+0.6, ob.top(=103)+0.6] = [101.6, 103.6]
+    # sl_estrutural = max = 103.6. sl_min = 101.6 (mais perto). max(103.6, 101.6) = 103.6.
+    # sl_max = 105.0. min(105, 103.6) = 103.6.
+    assert plan.sl_price == pytest.approx(103.6, abs=0.05)
