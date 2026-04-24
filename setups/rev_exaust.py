@@ -36,7 +36,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
-import pandas_ta as pta
+import pandas_ta_classic as pta
 
 from setups.base import (
     SetupResult,
