@@ -1,13 +1,22 @@
-# telegram.py — Módulo de notificações Telegram para Setup Atirador v8
-# Extração pura das funções de formatação e envio de mensagens do monolito v7.
+# telegram.py — Módulo de notificações Telegram para Setup Atirador v9.
+#
+# Apresentação pura: monta strings HTML a partir de dataclasses tipados e
+# despacha via Bot API. Sem I/O persistente (banco, journal) e sem cálculo
+# de risco/confidence — tudo chega pronto em SignalDecision / TradePlan /
+# RoundStats.
+
+from __future__ import annotations
 
 import html
 import json
 import logging
 import math
 import os
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
 import requests
-from datetime import datetime, timezone, timedelta
 
 from config import (
     TELEGRAM_CONFIG_FILE,
@@ -15,9 +24,21 @@ from config import (
     TELEGRAM_HEARTBEAT,
     VERSION,
 )
+from risk import TradePlan
+from signals import SignalDecision
+
+__all__ = [
+    "RoundStats",
+    "notify_call",
+    "notify_error",
+    "notify_heartbeat",
+    "save_telegram_config",
+]
 
 LOG = logging.getLogger("atirador")
 _BRT = timezone(timedelta(hours=-3))
+
+_ERROR_MAX_CHARS = 1000
 
 # ---------------------------------------------------------------------------
 # Estado privado do módulo — não exportar
@@ -26,16 +47,42 @@ _TELEGRAM_TOKEN: str = ""
 _TELEGRAM_CHAT_ID: str = ""
 
 
+# ---------------------------------------------------------------------------
+# Dataclass de entrada — heartbeat
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RoundStats:
+    """Estatísticas consolidadas de uma rodada — consumidas pelo heartbeat.
+
+    Produzida por main.py v9 ao fim de cada rodada. ``setups_counter``
+    conta tokens distintos por setup considerando todos os setups
+    triggered (inclusive os que viraram near-miss).
+    """
+
+    n_universe: int
+    n_regime_eligible: int
+    n_triggered: int
+    n_calls: int
+    n_near_miss: int
+    setups_counter: dict
+    fgi: Optional[int]
+    btc_regime: str
+    btc_change_pct_15m: float
+    elapsed_seconds: float
+    exchange: str
+
+
+# ---------------------------------------------------------------------------
+# Configuração — preservada do v8
+# ---------------------------------------------------------------------------
+
 def _ensure_config() -> None:
     """Garante que token e chat_id estão carregados."""
     global _TELEGRAM_TOKEN, _TELEGRAM_CHAT_ID
     if not _TELEGRAM_TOKEN or not _TELEGRAM_CHAT_ID:
         _TELEGRAM_TOKEN, _TELEGRAM_CHAT_ID = _load_telegram_config()
 
-
-# ---------------------------------------------------------------------------
-# Configuração
-# ---------------------------------------------------------------------------
 
 def _load_telegram_config() -> tuple[str, str]:
     for cfg_path, is_legacy in [
@@ -91,7 +138,7 @@ def save_telegram_config(token: str, chat_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Utilitários de envio e formatação
+# Transporte e helpers — preservados do v8
 # ---------------------------------------------------------------------------
 
 def _tg_send(text: str) -> bool:
@@ -131,268 +178,196 @@ def _tv_links(symbol: str) -> tuple[str, str]:
     return link_15m, link_4h
 
 
-def _chk(passed: bool) -> str:
-    return "✅" if passed else "❌"
+def _now_brt_str() -> str:
+    return datetime.now(_BRT).strftime("%d/%m %H:%M")
 
 
 # ---------------------------------------------------------------------------
-# Formatação de mensagens
+# Formatação pura — retornam strings; não fazem I/O
 # ---------------------------------------------------------------------------
 
-def _fmt_ev(val, suffix: str = "", scale: float = 1.0) -> str:
-    """Formata valor de evidência para exibição inline. Retorna '' se None."""
-    if val is None:
-        return ""
-    v = val * scale
-    if suffix == '%':
-        return f"({v:.0f}%)"
-    if suffix == '×':
-        return f"({v:.1f}×)"
-    if suffix == '/4':
-        return f"({int(v)}/4)"
-    return f"({v})"
+def _fmt_call(decision: SignalDecision) -> str:
+    """Monta a mensagem HTML de uma CALL a partir do SignalDecision."""
+    tp  = decision.trade_plan
+    dir_ = tp.direction
+
+    ico = "🟢" if dir_ == "LONG" else "🔴"
+
+    setup_display = (decision.signal_tag or "").replace("+", " + ")
+    regime_safe   = html.escape(decision.regime)
+    setup_safe    = html.escape(setup_display)
+    symbol_safe   = html.escape(decision.symbol)
+
+    confidence_int = int(round(decision.confidence))
+    leverage_str   = f"{tp.leverage:.1f}x"
+
+    if dir_ == "LONG":
+        sign_sl, sign_tp = "-", "+"
+    else:
+        sign_sl, sign_tp = "+", "-"
+
+    split = tp.position_split
+    pct1 = int(round(split[0] * 100))
+    pct2 = int(round(split[1] * 100))
+    pct3 = int(round(split[2] * 100))
+
+    link_15m, link_4h = _tv_links(decision.symbol)
+
+    lines = [
+        f"{ico} {dir_} CALL — {symbol_safe} — {_now_brt_str()} BRT",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"📊 Setup: {setup_safe}",
+        f"   Regime: {regime_safe} · Confidence: {confidence_int}/100 · Leverage: {leverage_str}",
+        "",
+        f"📈 Níveis (ATR {_fmt_price(tp.atr_value)})",
+        f"   Entrada : {_fmt_price(tp.entry_price)}",
+        f"   SL      : {_fmt_price(tp.sl_price)}  ({sign_sl}{tp.sl_distance_pct:.2f}%)",
+        f"   TP1 {pct1}% : {_fmt_price(tp.tp1_price)}  ({sign_tp}{tp.tp1_distance_pct:.2f}%  R:R {tp.risk_reward_tp1:.2f})",
+        f"   TP2 {pct2}% : {_fmt_price(tp.tp2_price)}  ({sign_tp}{tp.tp2_distance_pct:.2f}%  R:R {tp.risk_reward_tp2:.2f})",
+        f"   TP3 {pct3}% : {_fmt_price(tp.tp3_price)}  ({sign_tp}{tp.tp3_distance_pct:.2f}%  R:R {tp.risk_reward_tp3:.2f})",
+        "",
+        "🛡 Gestão dinâmica",
+        "   TP1 hit → SL move para BE",
+        "   TP2 hit → SL move para TP1",
+        f"   TP3 = runner ({pct3}% mantido)",
+        "",
+        f"🔗 <a href=\"{link_15m}\">15m</a> · <a href=\"{link_4h}\">4H</a>",
+    ]
+    return "\n".join(lines)
 
 
-def _fmt_zona_ev(zona_rich: dict | None) -> str:
-    """Formata bloco de evidências de zona. Retorna '' se None."""
-    if not zona_rich:
-        return ""
-    ev = zona_rich.get("evidencias", {})
-    lines = []
-    ob4 = ev.get("ob_4h")
-    if ob4:
-        lines.append(
-            f"   OB 4H: {_fmt_price(ob4['low'])}–{_fmt_price(ob4['high'])}"
-            f"  imp {ob4['impulso_pct']}%  dist {ob4['distancia_pct']:.2f}%"
+def _fmt_heartbeat(stats: RoundStats) -> str:
+    """Monta o heartbeat de fim de rodada."""
+    if stats.setups_counter:
+        items = sorted(
+            stats.setups_counter.items(),
+            key=lambda kv: (-kv[1], kv[0]),
         )
-    ob1 = ev.get("ob_1h")
-    if ob1:
-        lines.append(
-            f"   OB 1H: {_fmt_price(ob1['low'])}–{_fmt_price(ob1['high'])}"
-            f"  imp {ob1['impulso_pct']}%  dist {ob1['distancia_pct']:.2f}%"
-        )
-    sr4 = ev.get("sr_4h")
-    if sr4:
-        lines.append(
-            f"   S/R 4H: {_fmt_price(sr4['price'])}"
-            f"  dist {sr4['distancia_pct']:.2f}%"
-        )
-    sr1 = ev.get("sr_1h")
-    if sr1:
-        lines.append(
-            f"   S/R 1H: {_fmt_price(sr1['price'])}"
-            f"  dist {sr1['distancia_pct']:.2f}%"
-        )
-    if not lines:
-        return ""
-    return "\n".join(lines) + "\n"
+        setups_line = " · ".join(f"{html.escape(str(name))}:{int(count)}" for name, count in items)
+    else:
+        setups_line = "—"
+
+    fgi_str = "—" if stats.fgi is None else str(int(stats.fgi))
+
+    pct = stats.btc_change_pct_15m
+    sign = "+" if pct >= 0 else ""
+    btc_regime_safe = html.escape(stats.btc_regime)
+
+    exchange_safe = html.escape(stats.exchange)
+
+    lines = [
+        f"💓 Atirador v{VERSION} — {_now_brt_str()} BRT",
+        "━━━━━━━━━━━━━━━━━━━",
+        f"🌍 Universo       : {stats.n_universe} tokens",
+        f"🎯 Regime OK      : {stats.n_regime_eligible} tokens",
+        f"⚡ Com setup      : {stats.n_triggered} tokens",
+        f"📤 CALLs emitidos : {stats.n_calls} · Near-miss: {stats.n_near_miss}",
+        f"🎪 Setups         : {setups_line}",
+        "━━━━━━━━━━━━━━━━━━━",
+        f"📊 FGI: {fgi_str} · BTC: {btc_regime_safe} ({sign}{pct:.2f}%)",
+        f"⏱ Exec: {int(round(stats.elapsed_seconds))}s · Exchange: {exchange_safe}",
+    ]
+    return "\n".join(lines)
 
 
-def _tg_call_v7(r: dict, direction: str, fg_val: int) -> str:
-    """Mensagem de CALL v7.0.0."""
-    sym      = r.get("base_coin") or r["symbol"].replace("USDT", "")
-    zona_q   = r.get("zona_qualidade", "?")
-    zona_d   = r.get("zona_descricao", "")
-    s4h      = r.get("summary_4h", "?")
-    s1h      = r.get("summary_1h", "?")
-    ca_razao = r.get("check_a_razao", "")
-    cb_razao = r.get("check_b_razao", "")
-    cc_total = r.get("check_c_total", 0)
-    det      = r.get("check_c_detalhes", {})
+def _fmt_error(title: str, error_message: str, context: Optional[dict] = None) -> str:
+    """Monta mensagem de erro crítico. Trunca detalhes em 1000 chars."""
+    title_safe = html.escape(title)
 
-    _cr      = r.get("candle_ref") or {}
-    _cr_ts   = _cr.get("ts") if isinstance(_cr, dict) else None
-    _cr_str  = ""
-    if _cr_ts:
-        try:
-            _cr_dt  = datetime.fromtimestamp(_cr_ts / 1000, tz=_BRT)
-            _cr_str = f"  [candle: {_cr_dt.strftime('%d/%m %H:%M')} BRT]"
-        except Exception:
-            pass
+    msg = error_message if isinstance(error_message, str) else str(error_message)
+    if len(msg) > _ERROR_MAX_CHARS:
+        msg = msg[:_ERROR_MAX_CHARS] + "\n... [truncado]"
+    msg_safe = html.escape(msg)
 
-    ico = "🔴" if direction == "SHORT" else "🟢"
+    lines = [
+        "🚨 ERRO — Setup Atirador",
+        "━━━━━━━━━━━━━━━━━━━",
+        f"📍 Título: {title_safe}",
+        f"⏰ Timestamp: {_now_brt_str()} BRT",
+        "",
+        "💥 Detalhes:",
+        f"<pre>{msg_safe}</pre>",
+    ]
 
-    t = r.get("trade") or r.get("trade_short")
-    link_15m, link_4h = _tv_links(r["symbol"])
+    if context:
+        lines.append("")
+        lines.append("🔍 Contexto:")
+        for k, v in context.items():
+            lines.append(f"  {html.escape(str(k))}: {html.escape(str(v))}")
 
-    niveis = ""
-    if t:
-        entry = _fmt_price(t["entry"])
-        sl    = _fmt_price(t["sl"])
-        tp1   = _fmt_price(t["tp1"])
-        tp2   = _fmt_price(t["tp2"])
-        tp3   = _fmt_price(t["tp3"])
-        slpct = t["sl_distance_pct"]
-        if direction == "SHORT":
-            sign_sl, sign_tp = "+", "-"
-        else:
-            sign_sl, sign_tp = "-", "+"
-        niveis = (
-            f"\n📈 Níveis\n"
-            f"   Entrada : {entry}\n"
-            f"   SL      : {sl} ({sign_sl}{slpct:.2f}%)\n"
-            f"   TP1     : {tp1} ({sign_tp}{slpct:.2f}%)\n"
-            f"   TP2     : {tp2} ({sign_tp}{slpct*2:.2f}%)\n"
-            f"   TP3     : {tp3} ({sign_tp}{slpct*3:.2f}%)"
-        )
-
-    msg = (
-        f"{ico} {direction} CALL — {sym}USDT — {datetime.now(_BRT).strftime('%d/%m %H:%M')} BRT\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📍 Zona: {html.escape(zona_d)} [{zona_q}]\n"
-        f"{_fmt_zona_ev(r.get('zona_rich'))}"
-        f"\n⚡ Confirmação 15m{_cr_str}\n"
-        f"   A — Rejeição: {_chk(True)} {html.escape(ca_razao)}\n"
-        f"   B — Estrutura: {_chk(True)} {html.escape(cb_razao)}\n"
-        f"   C — Força: {cc_total}/4\n"
-        f"      BB: {det.get('c1_bb', '—')}  {_fmt_ev(det.get('c1_bb_pos'), '%', scale=100)}\n"
-        f"      Volume: {det.get('c2_vol', '—')}  {_fmt_ev(det.get('c2_vol_ratio'), '×')}\n"
-        f"      CVD: {det.get('c3_cvd', '—')}  {_fmt_ev(det.get('c3_cvd_ratio'), '%', scale=100)}\n"
-        f"      OI: {det.get('c4_oi', '—')}  {det.get('c4_reason', '')}\n"
-        f"\n📊 Contexto\n"
-        f"   4H: {s4h} | 1H: {s1h} | FGI: {fg_val}"
-        f"{niveis}\n"
-        f"\n🔗 <a href=\"{link_15m}\">15m</a> · <a href=\"{link_4h}\">4H</a>"
-    )
-    vi = r.get("venue_info", {})
-    if vi.get("mixed"):
-        msg += f"\n⚠️ Venue mista (klines: {vi.get('kline_venue')} | TV: {vi.get('tv_venue')})"
-    return msg
-
-
-def _tg_quase_v7(r: dict, direction: str, fg_val: int) -> str:
-    """Mensagem de QUASE v7.0.0."""
-    sym      = r["symbol"].replace("USDT", "")
-    zona_q   = r.get("zona_qualidade", "?")
-    zona_d   = r.get("zona_descricao", "")
-    s4h      = r.get("rec_4h", "?")
-    s1h      = r.get("rec_1h", "?")
-    ca       = r.get("check_a_ok", False)
-    ca_razao = r.get("check_a_reason", "")
-    cb       = r.get("check_b_ok")
-    cb_razao = r.get("check_b_reason", "não avaliado")
-    cc_total = r.get("check_c_total", 0) or 0
-    det      = r.get("check_c_det", {}) or {}
-
-    _cr      = r.get("candle_ref") or {}
-    _cr_ts   = _cr.get("ts") if isinstance(_cr, dict) else None
-    _cr_str  = ""
-    if _cr_ts:
-        try:
-            _cr_dt  = datetime.fromtimestamp(_cr_ts / 1000, tz=_BRT)
-            _cr_str = f"  [candle: {_cr_dt.strftime('%d/%m %H:%M')} BRT]"
-        except Exception:
-            pass
-
-    ico = "🟡"
-    link_15m, link_4h = _tv_links(r["symbol"])
-
-    cb_line = (
-        f"   B — Estrutura: {_chk(cb)} {html.escape(cb_razao or '')}"
-        if cb is not None
-        else "   B — Estrutura: — (não avaliado — Check A falhou)"
-    )
-
-    msg = (
-        f"{ico} {direction} QUASE — {sym}USDT — {datetime.now(_BRT).strftime('%d/%m %H:%M')} BRT\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📍 Zona: {html.escape(zona_d)} [{zona_q}]\n"
-        f"{_fmt_zona_ev(r.get('zona_rich'))}"
-        f"\n⚡ Confirmação 15m{_cr_str}\n"
-        f"   A — Rejeição: {_chk(ca)} {html.escape(ca_razao)}\n"
-        f"{cb_line}\n"
-        f"   C — Força: {cc_total}/4\n"
-        f"      BB: {det.get('c1_bb', '—')}  {_fmt_ev(det.get('c1_bb_pos'), '%', scale=100)}\n"
-        f"      Volume: {det.get('c2_vol', '—')}  {_fmt_ev(det.get('c2_vol_ratio'), '×')}\n"
-        f"      CVD: {det.get('c3_cvd', '—')}  {_fmt_ev(det.get('c3_cvd_ratio'), '%', scale=100)}\n"
-        f"      OI: {det.get('c4_oi', '—')}  {det.get('c4_reason', '')}\n"
-        f"\n📊 Contexto\n"
-        f"   4H: {s4h} | 1H: {s1h} | FGI: {fg_val}\n"
-        f"\n🔗 <a href=\"{link_15m}\">15m</a> · <a href=\"{link_4h}\">4H</a>"
-    )
-    vi = r.get("venue_info", {})
-    if vi.get("mixed"):
-        msg += f"\n⚠️ Venue mista (klines: {vi.get('kline_venue')} | TV: {vi.get('tv_venue')})"
-    return msg
-
-
-def _tg_heartbeat_v7(
-    n_univ: int,
-    n_gate_short: int,
-    n_gate_long: int,
-    n_zona_short: int,
-    n_zona_long: int,
-    n_calls: int,
-    n_quase: int,
-    fg_val: int,
-    btc_4h: str,
-    elapsed: float,
-    exchange: str,
-) -> str:
-    return (
-        f"💓 <b>Atirador v{VERSION}</b> — {datetime.now(_BRT).strftime('%d/%m %H:%M')} BRT\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
-        f"🌍 Universo  : {n_univ} tokens\n"
-        f"🔽 Gate 4H   : {n_gate_short} SHORT | {n_gate_long} LONG\n"
-        f"🎯 Em zona   : {n_zona_short} SHORT  | {n_zona_long} LONG\n"
-        f"⚡ Com sinal : {n_calls} CALL   | {n_quase} QUASE\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
-        f"📊 FGI: {fg_val} | BTC 4H: {html.escape(btc_4h)}\n"
-        f"⏱ Exec: {elapsed:.0f}s | Exchange: {exchange}"
-    )
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# Notificação principal
+# API pública — três notificações tipadas
 # ---------------------------------------------------------------------------
 
-def tg_notify_v7(
-    results: list[dict],
-    fg_val: int,
-    n_univ: int,
-    n_gate_short: int,
-    n_gate_long: int,
-    n_zona_short: int,
-    n_zona_long: int,
-    elapsed: float,
-    exchange: str,
-    btc_4h: str,
-) -> None:
-    """Envia heartbeat → QUASEs → CALLs."""
+def notify_call(decision: SignalDecision) -> bool:
+    """Envia mensagem de CALL. Retorna True se enviada com sucesso."""
+    if getattr(decision, "action", None) != "CALL":
+        return False
+    if getattr(decision, "trade_plan", None) is None:
+        LOG.warning("  ⚠️  notify_call: SignalDecision.action=CALL sem trade_plan — ignorado")
+        return False
+
     _ensure_config()
     if not _TELEGRAM_TOKEN or not _TELEGRAM_CHAT_ID:
-        LOG.debug("  📵  Telegram não configurado — notificações desativadas")
-        return
+        LOG.debug("  📵  Telegram não configurado — notify_call ignorado")
+        return False
 
-    calls   = [r for r in results if r.get("status") == "CALL"]
-    quases  = [r for r in results if r.get("status") == "QUASE"]
-    n_calls = len(calls)
-    n_quase = len(quases)
-    n_env   = 0
+    try:
+        text = _fmt_call(decision)
+    except Exception as e:
+        LOG.warning(f"  ⚠️  notify_call: falha ao formatar — {type(e).__name__}: {e}")
+        return False
 
-    # 1. Heartbeat
-    if TELEGRAM_HEARTBEAT:
-        hb = _tg_heartbeat_v7(n_univ, n_gate_short, n_gate_long,
-                               n_zona_short, n_zona_long,
-                               n_calls, n_quase,
-                               fg_val, btc_4h, elapsed, exchange)
-        if _tg_send(hb):
-            n_env += 1
-            LOG.info("  📲  Telegram heartbeat: enviado ✅")
+    ok = _tg_send(text)
+    if ok:
+        LOG.info(f"  📲  Telegram CALL {decision.trade_plan.direction} {decision.symbol}: enviado ✅")
+    return ok
 
-    # 2. QUASEs
-    for r in quases:
-        msg = _tg_quase_v7(r, r["direction"], fg_val)
-        if _tg_send(msg):
-            n_env += 1
-            LOG.info(f"  📲  Telegram QUASE {r['direction']} {r['symbol']}: enviado ✅")
 
-    # 3. CALLs
-    for r in calls:
-        msg = _tg_call_v7(r, r["direction"], fg_val)
-        if _tg_send(msg):
-            n_env += 1
-            LOG.info(f"  📲  Telegram CALL {r['direction']} {r.get('base_coin') or r['symbol'].replace('USDT', '')}: enviado ✅")
+def notify_heartbeat(stats: RoundStats) -> bool:
+    """Envia heartbeat de fim de rodada. No-op se TELEGRAM_HEARTBEAT=False."""
+    if not TELEGRAM_HEARTBEAT:
+        LOG.debug("  📵  TELEGRAM_HEARTBEAT=False — notify_heartbeat ignorado")
+        return False
 
-    total = (1 if TELEGRAM_HEARTBEAT else 0) + n_quase + n_calls
-    LOG.info(f"  📲  Telegram: {n_env}/{total} mensagens enviadas")
+    _ensure_config()
+    if not _TELEGRAM_TOKEN or not _TELEGRAM_CHAT_ID:
+        LOG.debug("  📵  Telegram não configurado — notify_heartbeat ignorado")
+        return False
+
+    try:
+        text = _fmt_heartbeat(stats)
+    except Exception as e:
+        LOG.warning(f"  ⚠️  notify_heartbeat: falha ao formatar — {type(e).__name__}: {e}")
+        return False
+
+    ok = _tg_send(text)
+    if ok:
+        LOG.info("  📲  Telegram heartbeat: enviado ✅")
+    return ok
+
+
+def notify_error(
+    title: str,
+    error_message: str,
+    context: Optional[dict] = None,
+) -> bool:
+    """Envia alerta de erro crítico. Independente de estado de rodada."""
+    _ensure_config()
+    if not _TELEGRAM_TOKEN or not _TELEGRAM_CHAT_ID:
+        LOG.warning("  ⚠️  notify_error: Telegram não configurado — alerta não enviado")
+        return False
+
+    try:
+        text = _fmt_error(title, error_message, context)
+    except Exception as e:
+        LOG.warning(f"  ⚠️  notify_error: falha ao formatar — {type(e).__name__}: {e}")
+        return False
+
+    ok = _tg_send(text)
+    if ok:
+        LOG.info(f"  📲  Telegram ERRO «{title}»: enviado ✅")
+    return ok
