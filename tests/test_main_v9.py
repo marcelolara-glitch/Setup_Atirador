@@ -49,12 +49,14 @@ def _make_setup_result(
     direction: str = "LONG",
     conditions: list | None = None,
 ) -> SimpleNamespace:
+    # Conditions vivem em evidence["conditions"] no SetupResult real
+    # (setups/base.py). Fixture refletindo a estrutura de produção.
     return SimpleNamespace(
         setup_name=name,
         triggered=triggered,
         confidence=confidence,
         direction=direction,
-        conditions=conditions or [],
+        evidence={"conditions": list(conditions or [])},
     )
 
 
@@ -133,6 +135,94 @@ def test_detect_near_miss_skip_no_triggered():
         skip_reason="no_setup_triggered",
     )
     assert main._detect_near_miss(d) is None
+
+
+def test_near_miss_conditions_not_empty():
+    """Setup com conditions reais → near_miss carrega array preenchido.
+
+    Regressão do bug v9.1: ``conditions`` chegava ``[]`` em 100% dos near_misses
+    porque main.py lia ``closest.conditions`` (atributo inexistente em
+    ``SetupResult``). Conditions vivem em ``evidence["conditions"]``.
+    """
+    cond_dicts = [
+        {"name": "price_in_bearish_ob", "value": 1.0, "threshold": 0.5,
+         "operator": ">", "passed": True, "weight": 3.0},
+        {"name": "ob_strength_atr", "value": 1.72, "threshold": 0.5,
+         "operator": ">=", "passed": True, "weight": 1.5},
+        {"name": "rsi_oversold", "value": 28.0, "threshold": 30.0,
+         "operator": "<", "passed": True, "weight": 1.0},
+        {"name": "volume_above_avg", "value": 1.4, "threshold": 1.2,
+         "operator": ">=", "passed": True, "weight": 1.0},
+        {"name": "macd_bullish", "value": 0.5, "threshold": 0.0,
+         "operator": ">", "passed": False, "weight": 1.0},
+    ]
+    results = [
+        _make_setup_result(
+            name="rev_zone", triggered=True, confidence=80.0,
+            conditions=cond_dicts,
+        ),
+    ]
+    d = _make_decision(
+        action="SKIP",
+        triggered_setups=results,
+        skip_reason="trade_already_open",
+    )
+    nm = main._detect_near_miss(d)
+    assert nm is not None
+    conds = nm["conditions"]
+    assert isinstance(conds, list)
+    assert len(conds) == 5
+    # Array contém objetos completos com passed boolean correto.
+    passed_flags = [c["passed"] for c in conds]
+    assert passed_flags == [True, True, True, True, False]
+    # Campos obrigatórios da spec.
+    expected_keys = {"name", "value", "threshold", "operator", "passed", "weight"}
+    for c in conds:
+        assert expected_keys <= set(c.keys())
+    assert conds[0]["name"] == "price_in_bearish_ob"
+    assert conds[0]["weight"] == 3.0
+
+
+def test_near_miss_conditions_matches_setup():
+    """Conditions gravadas correspondem ao setup em ``closest_setup_name``.
+
+    Quando vários setups disparam, o near_miss deve carregar as conditions
+    do setup com maior confidence (= ``closest_setup_name``), não as de
+    outro setup avaliado no mesmo token.
+    """
+    cont_pull_conds = [
+        {"name": "ema_aligned", "value": 1.0, "threshold": 0.5,
+         "operator": ">", "passed": True, "weight": 2.0},
+    ]
+    rev_zone_conds = [
+        {"name": "price_in_bearish_ob", "value": 1.0, "threshold": 0.5,
+         "operator": ">", "passed": True, "weight": 3.0},
+        {"name": "ob_strength_atr", "value": 1.72, "threshold": 0.5,
+         "operator": ">=", "passed": True, "weight": 1.5},
+    ]
+    results = [
+        _make_setup_result(
+            name="cont_pull", triggered=True, confidence=55.0,
+            conditions=cont_pull_conds,
+        ),
+        _make_setup_result(
+            name="rev_zone", triggered=True, confidence=85.0,
+            conditions=rev_zone_conds,
+        ),
+    ]
+    d = _make_decision(
+        action="SKIP",
+        triggered_setups=results,
+        skip_reason="conflicting_setups",
+    )
+    nm = main._detect_near_miss(d)
+    assert nm is not None
+    assert nm["closest_setup_name"] == "rev_zone"  # maior confidence
+    conds = nm["conditions"]
+    # As 2 conditions de rev_zone, não a 1 de cont_pull.
+    assert len(conds) == 2
+    names = [c["name"] for c in conds]
+    assert names == ["price_in_bearish_ob", "ob_strength_atr"]
 
 
 # ---------------------------------------------------------------------------

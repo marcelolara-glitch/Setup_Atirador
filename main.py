@@ -156,15 +156,23 @@ def _detect_near_miss(decision) -> Optional[dict]:
 
     closest = max(triggered, key=lambda r: getattr(r, "confidence", 0.0) or 0.0)
 
-    conditions = list(getattr(closest, "conditions", []) or [])
+    # Conditions vivem em SetupResult.evidence["conditions"] (não no top-level
+    # do dataclass) e são dicts produzidos por setups.base.evaluate_condition.
+    # Bug pré-PR3: lia `closest.conditions` (atributo inexistente) → 100% vazio.
+    evidence = getattr(closest, "evidence", {}) or {}
+    raw = evidence.get("conditions", []) if isinstance(evidence, dict) else []
     conditions_serialized = []
-    for c in conditions:
+    for c in raw:
+        if not isinstance(c, dict):
+            continue
         try:
             conditions_serialized.append({
-                "name":   getattr(c, "name", None),
-                "value":  float(getattr(c, "value", 0.0) or 0.0),
-                "passed": bool(getattr(c, "passed", False)),
-                "weight": float(getattr(c, "weight", 0.0) or 0.0),
+                "name":      c.get("name"),
+                "value":     float(c.get("value", 0.0) or 0.0),
+                "threshold": float(c.get("threshold", 0.0) or 0.0),
+                "operator":  c.get("operator"),
+                "passed":    bool(c.get("passed", False)),
+                "weight":    float(c.get("weight", 0.0) or 0.0),
             })
         except Exception:
             pass
