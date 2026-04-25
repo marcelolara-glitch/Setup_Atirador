@@ -100,6 +100,11 @@ class TradePlan:
     leverage: float = MIN_LEVERAGE
     tp1_source: str = "fallback_1r"
     sl_source: str = "structural_swing"
+    # Diagnósticos do caminho de decisão (instrumentação para auditoria).
+    # Defaults vazios preservam compat com TradePlan reconstruído de DB legado
+    # (journal._plan_from_row).
+    tp1_diagnostics: dict = field(default_factory=dict)
+    sl_diagnostics: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -347,7 +352,8 @@ def calculate_trade_plan(
                     (br.bottom - swing_buffer_atr * atr_value, "structural_breaker")
                 )
 
-        sl_estrutural, sl_source = min(sl_candidates, key=lambda c: c[0])
+        sl_estrutural, sl_winner_source = min(sl_candidates, key=lambda c: c[0])
+        sl_source = sl_winner_source
 
         # Guard-rails ATR
         sl_min = entry_price - sl_min_atr_mult * atr_value
@@ -355,37 +361,73 @@ def calculate_trade_plan(
         sl_price = max(sl_max, min(sl_estrutural, sl_min))
 
         # Detecta clamp e atualiza source_tag
+        clamp_applied = None
         if sl_price != sl_estrutural:
             if sl_price == sl_min:
                 sl_source = "clamp_atr_min"
+                clamp_applied = "atr_min"
             elif sl_price == sl_max:
                 sl_source = "clamp_pct_max"
+                clamp_applied = "pct_max"
+
+        sl_diag = {
+            "sl_estrutural_pre_clamp": float(sl_estrutural),
+            "sl_min_atr": float(sl_min),
+            "sl_max_pct": float(sl_max),
+            "clamp_applied": clamp_applied,
+            "candidates_count": len(sl_candidates),
+            "winner_source": sl_winner_source,
+        }
 
         sl_distance = entry_price - sl_price
 
-        # --- TP1: estrutural com fallback R:R ---
-        tp1_candidates: list[tuple[float, str]] = []
+        # --- TP1: estrutural com fallback R:R + diagnostics ---
+        tp1_diag: dict = {
+            "candidates_total": len(obs) + len(brks) + len(fvgs_list),
+            "candidates_after_direction": 0,
+            "candidates_after_mitigated": 0,
+            "candidates_after_rr": 0,
+            "best_candidate_rr": None,
+            "best_candidate_source": None,
+            "fallback_reason": None,
+        }
+        # Filtro 1: tipo certo + lado certo do entry
+        direction_ok: list[tuple[float, str, bool]] = []
         for ob in obs:
-            if (
-                getattr(ob, "direction", None) == "bearish"
-                and not getattr(ob, "mitigated", True)
-                and ob.bottom > entry_price
-            ):
-                tp1_candidates.append((ob.bottom, "structural_ob"))
+            if getattr(ob, "direction", None) == "bearish" and ob.bottom > entry_price:
+                direction_ok.append(
+                    (ob.bottom, "structural_ob", not getattr(ob, "mitigated", True))
+                )
         for br in brks:
-            if (
-                getattr(br, "new_direction", None) == "bearish"
-                and not getattr(br, "invalidated", True)
-                and br.bottom > entry_price
-            ):
-                tp1_candidates.append((br.bottom, "structural_breaker"))
+            if getattr(br, "new_direction", None) == "bearish" and br.bottom > entry_price:
+                direction_ok.append(
+                    (br.bottom, "structural_breaker", not getattr(br, "invalidated", True))
+                )
         for fvg in fvgs_list:
-            if (
-                getattr(fvg, "direction", None) == "bullish"
-                and not getattr(fvg, "filled", True)
-                and fvg.top > entry_price
-            ):
-                tp1_candidates.append((fvg.top, "structural_fvg"))
+            if getattr(fvg, "direction", None) == "bullish" and fvg.top > entry_price:
+                direction_ok.append(
+                    (fvg.top, "structural_fvg", not getattr(fvg, "filled", True))
+                )
+        tp1_diag["candidates_after_direction"] = len(direction_ok)
+
+        # Filtro 2: ainda ativos (não mitigated/invalidated/filled)
+        tp1_candidates: list[tuple[float, str]] = [
+            (price, source) for price, source, active in direction_ok if active
+        ]
+        tp1_diag["candidates_after_mitigated"] = len(tp1_candidates)
+
+        # Best R:R entre candidatos ativos (mesmo se rejeitado pela decisão)
+        if tp1_candidates:
+            rrs = [
+                (price, source, (price - entry_price) / sl_distance)
+                for price, source in tp1_candidates
+            ]
+            best_price, best_src, best_rr = max(rrs, key=lambda c: c[2])
+            tp1_diag["best_candidate_rr"] = float(best_rr)
+            tp1_diag["best_candidate_source"] = best_src
+            tp1_diag["candidates_after_rr"] = sum(
+                1 for _, _, rr in rrs if rr >= tp1_min_rr
+            )
 
         tp1_fallback = entry_price + tp1_min_rr * sl_distance
         if tp1_candidates:
@@ -393,7 +435,10 @@ def calculate_trade_plan(
                 tp1_candidates, key=lambda c: c[0]
             )
             rr_estrutural = (tp1_estrutural - entry_price) / sl_distance
-            if rr_estrutural >= tp1_min_rr:
+            # Aceita estrutural só se R:R no intervalo [tp1_min_rr, tp2_target_rr).
+            # Quando o alvo estrutural fica além de tp2 (R:R > tp2_target_rr), usar
+            # o estrutural como TP1 violaria a ordenação tp1 < tp2 (= entry + 2R).
+            if tp1_min_rr <= rr_estrutural < tp2_target_rr:
                 tp1_price = tp1_estrutural
                 tp1_source = tp1_candidate_source
             else:
@@ -402,6 +447,16 @@ def calculate_trade_plan(
         else:
             tp1_price = tp1_fallback
             tp1_source = "fallback_1r"
+
+        if tp1_source == "fallback_1r":
+            if tp1_diag["candidates_total"] == 0:
+                tp1_diag["fallback_reason"] = "no_candidates_input"
+            elif tp1_diag["candidates_after_direction"] == 0:
+                tp1_diag["fallback_reason"] = "no_candidates_after_direction"
+            elif tp1_diag["candidates_after_mitigated"] == 0:
+                tp1_diag["fallback_reason"] = "no_candidates_after_mitigated"
+            else:
+                tp1_diag["fallback_reason"] = "best_rr_below_min"
 
         # --- TP2 e TP3: escalas R:R sobre o SL real ---
         tp2_price = entry_price + tp2_target_rr * sl_distance
@@ -434,43 +489,77 @@ def calculate_trade_plan(
                     (br.top + swing_buffer_atr * atr_value, "structural_breaker")
                 )
 
-        sl_estrutural, sl_source = max(sl_candidates, key=lambda c: c[0])
+        sl_estrutural, sl_winner_source = max(sl_candidates, key=lambda c: c[0])
+        sl_source = sl_winner_source
 
         sl_min = entry_price + sl_min_atr_mult * atr_value
         sl_max = entry_price * (1.0 + sl_max_pct / 100.0)
         sl_price = min(sl_max, max(sl_estrutural, sl_min))
 
+        clamp_applied = None
         if sl_price != sl_estrutural:
             if sl_price == sl_min:
                 sl_source = "clamp_atr_min"
+                clamp_applied = "atr_min"
             elif sl_price == sl_max:
                 sl_source = "clamp_pct_max"
+                clamp_applied = "pct_max"
+
+        sl_diag = {
+            "sl_estrutural_pre_clamp": float(sl_estrutural),
+            "sl_min_atr": float(sl_min),
+            "sl_max_pct": float(sl_max),
+            "clamp_applied": clamp_applied,
+            "candidates_count": len(sl_candidates),
+            "winner_source": sl_winner_source,
+        }
 
         sl_distance = sl_price - entry_price
 
-        # --- TP1: estrutural com fallback R:R ---
-        tp1_candidates: list[tuple[float, str]] = []
+        # --- TP1: estrutural com fallback R:R + diagnostics ---
+        tp1_diag: dict = {
+            "candidates_total": len(obs) + len(brks) + len(fvgs_list),
+            "candidates_after_direction": 0,
+            "candidates_after_mitigated": 0,
+            "candidates_after_rr": 0,
+            "best_candidate_rr": None,
+            "best_candidate_source": None,
+            "fallback_reason": None,
+        }
+        direction_ok: list[tuple[float, str, bool]] = []
         for ob in obs:
-            if (
-                getattr(ob, "direction", None) == "bullish"
-                and not getattr(ob, "mitigated", True)
-                and ob.top < entry_price
-            ):
-                tp1_candidates.append((ob.top, "structural_ob"))
+            if getattr(ob, "direction", None) == "bullish" and ob.top < entry_price:
+                direction_ok.append(
+                    (ob.top, "structural_ob", not getattr(ob, "mitigated", True))
+                )
         for br in brks:
-            if (
-                getattr(br, "new_direction", None) == "bullish"
-                and not getattr(br, "invalidated", True)
-                and br.top < entry_price
-            ):
-                tp1_candidates.append((br.top, "structural_breaker"))
+            if getattr(br, "new_direction", None) == "bullish" and br.top < entry_price:
+                direction_ok.append(
+                    (br.top, "structural_breaker", not getattr(br, "invalidated", True))
+                )
         for fvg in fvgs_list:
-            if (
-                getattr(fvg, "direction", None) == "bearish"
-                and not getattr(fvg, "filled", True)
-                and fvg.bottom < entry_price
-            ):
-                tp1_candidates.append((fvg.bottom, "structural_fvg"))
+            if getattr(fvg, "direction", None) == "bearish" and fvg.bottom < entry_price:
+                direction_ok.append(
+                    (fvg.bottom, "structural_fvg", not getattr(fvg, "filled", True))
+                )
+        tp1_diag["candidates_after_direction"] = len(direction_ok)
+
+        tp1_candidates: list[tuple[float, str]] = [
+            (price, source) for price, source, active in direction_ok if active
+        ]
+        tp1_diag["candidates_after_mitigated"] = len(tp1_candidates)
+
+        if tp1_candidates:
+            rrs = [
+                (price, source, (entry_price - price) / sl_distance)
+                for price, source in tp1_candidates
+            ]
+            best_price, best_src, best_rr = max(rrs, key=lambda c: c[2])
+            tp1_diag["best_candidate_rr"] = float(best_rr)
+            tp1_diag["best_candidate_source"] = best_src
+            tp1_diag["candidates_after_rr"] = sum(
+                1 for _, _, rr in rrs if rr >= tp1_min_rr
+            )
 
         tp1_fallback = entry_price - tp1_min_rr * sl_distance
         if tp1_candidates:
@@ -478,7 +567,9 @@ def calculate_trade_plan(
                 tp1_candidates, key=lambda c: c[0]
             )
             rr_estrutural = (entry_price - tp1_estrutural) / sl_distance
-            if rr_estrutural >= tp1_min_rr:
+            # Espelho do LONG: estrutural só é aceito se cabe entre tp1_min_rr
+            # e tp2_target_rr (exclusive), preservando tp1 > tp2 > tp3.
+            if tp1_min_rr <= rr_estrutural < tp2_target_rr:
                 tp1_price = tp1_estrutural
                 tp1_source = tp1_candidate_source
             else:
@@ -487,6 +578,16 @@ def calculate_trade_plan(
         else:
             tp1_price = tp1_fallback
             tp1_source = "fallback_1r"
+
+        if tp1_source == "fallback_1r":
+            if tp1_diag["candidates_total"] == 0:
+                tp1_diag["fallback_reason"] = "no_candidates_input"
+            elif tp1_diag["candidates_after_direction"] == 0:
+                tp1_diag["fallback_reason"] = "no_candidates_after_direction"
+            elif tp1_diag["candidates_after_mitigated"] == 0:
+                tp1_diag["fallback_reason"] = "no_candidates_after_mitigated"
+            else:
+                tp1_diag["fallback_reason"] = "best_rr_below_min"
 
         tp2_price = entry_price - tp2_target_rr * sl_distance
         tp3_price = entry_price - tp3_target_rr * sl_distance
@@ -533,6 +634,8 @@ def calculate_trade_plan(
         leverage=float(leverage),
         tp1_source=tp1_source,
         sl_source=sl_source,
+        tp1_diagnostics=tp1_diag,
+        sl_diagnostics=sl_diag,
     )
 
 
@@ -732,7 +835,9 @@ def validate_trade_plan(
     else:
         return False, f"Direção inválida: {d!r}"
 
-    if trade_plan.risk_reward_tp1 < min_rr_tp1:
+    # Tolerância numérica: protege contra falso negativo quando rr_tp1 cai em
+    # MIN_RR_TP1 - épsilon por arredondamento de float (ex: 0.99999...).
+    if trade_plan.risk_reward_tp1 < min_rr_tp1 - 1e-9:
         return False, (
             f"R:R TP1 abaixo do mínimo ({trade_plan.risk_reward_tp1:.2f} < {min_rr_tp1})"
         )

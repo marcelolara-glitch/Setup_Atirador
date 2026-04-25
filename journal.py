@@ -503,6 +503,8 @@ class TradeJournalV9:
         evidence = {
             "tp1_source": tp1_source,
             "sl_source": sl_source,
+            "tp1_diagnostics": getattr(trade_plan, "tp1_diagnostics", {}) or {},
+            "sl_diagnostics": getattr(trade_plan, "sl_diagnostics", {}) or {},
             "setups": setups_payload,
         }
 
