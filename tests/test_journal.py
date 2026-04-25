@@ -212,11 +212,14 @@ def test_open_trade_basic_call_persists_all_fields(tmp_journal):
         assert row["status"] == "OPEN"
         assert row["context_fgi"] == 55
         assert row["timeout_hours"] == 48
-        # Evidence contém apenas setups triggered
+        # Evidence é dict top-level com tp1_source/sl_source + setups triggered
         evidence = _json.loads(row["evidence_json"])
-        assert isinstance(evidence, list)
-        assert len(evidence) == 1
-        assert evidence[0]["setup_name"] == "cont_pull"
+        assert isinstance(evidence, dict)
+        assert "tp1_source" in evidence
+        assert "sl_source" in evidence
+        assert isinstance(evidence["setups"], list)
+        assert len(evidence["setups"]) == 1
+        assert evidence["setups"][0]["setup_name"] == "cont_pull"
     finally:
         conn.close()
 

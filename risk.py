@@ -69,7 +69,18 @@ _REQUIRED_COLUMNS: tuple[str, ...] = ("open", "high", "low", "close")
 
 @dataclass
 class TradePlan:
-    """Plano completo de um trade — preços, risco e alavancagem."""
+    """Plano completo de um trade — preços, risco e alavancagem.
+
+    ``tp1_source`` e ``sl_source`` registram a origem do alvo/stop para
+    observabilidade (auditoria SMC vs fallback). Defaults preservam compat
+    com reconstrução a partir de DB legado (``journal._plan_from_row``).
+
+    Valores possíveis:
+        tp1_source: "structural_ob" | "structural_fvg" | "structural_breaker"
+                    | "fallback_1r"
+        sl_source:  "structural_swing" | "structural_ob" | "structural_breaker"
+                    | "clamp_atr_min" | "clamp_pct_max"
+    """
 
     direction: str
     entry_price: float
@@ -87,6 +98,8 @@ class TradePlan:
     atr_value: float
     position_split: tuple = field(default_factory=lambda: POSITION_SPLIT)
     leverage: float = MIN_LEVERAGE
+    tp1_source: str = "fallback_1r"
+    sl_source: str = "structural_swing"
 
 
 @dataclass
@@ -304,11 +317,13 @@ def calculate_trade_plan(
 
     if direction == "LONG":
         # --- SL: prioridade estrutural ---
-        sl_candidates = []
+        sl_candidates: list[tuple[float, str]] = []
 
         # Swing estrutural (sempre disponível)
         swing_low = _last_swing_low(df, lookback=swing_lookback)
-        sl_candidates.append(swing_low - swing_buffer_atr * atr_value)
+        sl_candidates.append(
+            (swing_low - swing_buffer_atr * atr_value, "structural_swing")
+        )
 
         # OBs bullish ativos com bottom < entry
         for ob in obs:
@@ -317,7 +332,9 @@ def calculate_trade_plan(
                 and not getattr(ob, "mitigated", True)
                 and ob.bottom < entry_price
             ):
-                sl_candidates.append(ob.bottom - swing_buffer_atr * atr_value)
+                sl_candidates.append(
+                    (ob.bottom - swing_buffer_atr * atr_value, "structural_ob")
+                )
 
         # Breakers bullish ativos com bottom < entry
         for br in brks:
@@ -326,50 +343,65 @@ def calculate_trade_plan(
                 and not getattr(br, "invalidated", True)
                 and br.bottom < entry_price
             ):
-                sl_candidates.append(br.bottom - swing_buffer_atr * atr_value)
+                sl_candidates.append(
+                    (br.bottom - swing_buffer_atr * atr_value, "structural_breaker")
+                )
 
-        sl_estrutural = min(sl_candidates) if sl_candidates else (
-            entry_price - atr_multiplier_sl * atr_value
-        )
+        sl_estrutural, sl_source = min(sl_candidates, key=lambda c: c[0])
 
         # Guard-rails ATR
         sl_min = entry_price - sl_min_atr_mult * atr_value
         sl_max = entry_price * (1.0 - sl_max_pct / 100.0)
         sl_price = max(sl_max, min(sl_estrutural, sl_min))
 
+        # Detecta clamp e atualiza source_tag
+        if sl_price != sl_estrutural:
+            if sl_price == sl_min:
+                sl_source = "clamp_atr_min"
+            elif sl_price == sl_max:
+                sl_source = "clamp_pct_max"
+
         sl_distance = entry_price - sl_price
 
         # --- TP1: estrutural com fallback R:R ---
-        tp1_candidates = []
+        tp1_candidates: list[tuple[float, str]] = []
         for ob in obs:
             if (
                 getattr(ob, "direction", None) == "bearish"
                 and not getattr(ob, "mitigated", True)
                 and ob.bottom > entry_price
             ):
-                tp1_candidates.append(ob.bottom)
+                tp1_candidates.append((ob.bottom, "structural_ob"))
         for br in brks:
             if (
                 getattr(br, "new_direction", None) == "bearish"
                 and not getattr(br, "invalidated", True)
                 and br.bottom > entry_price
             ):
-                tp1_candidates.append(br.bottom)
+                tp1_candidates.append((br.bottom, "structural_breaker"))
         for fvg in fvgs_list:
             if (
                 getattr(fvg, "direction", None) == "bullish"
                 and not getattr(fvg, "filled", True)
                 and fvg.top > entry_price
             ):
-                tp1_candidates.append(fvg.top)
+                tp1_candidates.append((fvg.top, "structural_fvg"))
 
         tp1_fallback = entry_price + tp1_min_rr * sl_distance
         if tp1_candidates:
-            tp1_estrutural = min(tp1_candidates)
+            tp1_estrutural, tp1_candidate_source = min(
+                tp1_candidates, key=lambda c: c[0]
+            )
             rr_estrutural = (tp1_estrutural - entry_price) / sl_distance
-            tp1_price = tp1_estrutural if rr_estrutural >= tp1_min_rr else tp1_fallback
+            if rr_estrutural >= tp1_min_rr:
+                tp1_price = tp1_estrutural
+                tp1_source = tp1_candidate_source
+            else:
+                tp1_price = tp1_fallback
+                tp1_source = "fallback_1r"
         else:
             tp1_price = tp1_fallback
+            tp1_source = "fallback_1r"
 
         # --- TP2 e TP3: escalas R:R sobre o SL real ---
         tp2_price = entry_price + tp2_target_rr * sl_distance
@@ -377,9 +409,11 @@ def calculate_trade_plan(
 
     else:  # SHORT
         # --- SL: prioridade estrutural (espelho) ---
-        sl_candidates = []
+        sl_candidates: list[tuple[float, str]] = []
         swing_high = _last_swing_high(df, lookback=swing_lookback)
-        sl_candidates.append(swing_high + swing_buffer_atr * atr_value)
+        sl_candidates.append(
+            (swing_high + swing_buffer_atr * atr_value, "structural_swing")
+        )
 
         for ob in obs:
             if (
@@ -387,56 +421,72 @@ def calculate_trade_plan(
                 and not getattr(ob, "mitigated", True)
                 and ob.top > entry_price
             ):
-                sl_candidates.append(ob.top + swing_buffer_atr * atr_value)
+                sl_candidates.append(
+                    (ob.top + swing_buffer_atr * atr_value, "structural_ob")
+                )
         for br in brks:
             if (
                 getattr(br, "new_direction", None) == "bearish"
                 and not getattr(br, "invalidated", True)
                 and br.top > entry_price
             ):
-                sl_candidates.append(br.top + swing_buffer_atr * atr_value)
+                sl_candidates.append(
+                    (br.top + swing_buffer_atr * atr_value, "structural_breaker")
+                )
 
-        sl_estrutural = max(sl_candidates) if sl_candidates else (
-            entry_price + atr_multiplier_sl * atr_value
-        )
+        sl_estrutural, sl_source = max(sl_candidates, key=lambda c: c[0])
 
         sl_min = entry_price + sl_min_atr_mult * atr_value
         sl_max = entry_price * (1.0 + sl_max_pct / 100.0)
         sl_price = min(sl_max, max(sl_estrutural, sl_min))
 
+        if sl_price != sl_estrutural:
+            if sl_price == sl_min:
+                sl_source = "clamp_atr_min"
+            elif sl_price == sl_max:
+                sl_source = "clamp_pct_max"
+
         sl_distance = sl_price - entry_price
 
         # --- TP1: estrutural com fallback R:R ---
-        tp1_candidates = []
+        tp1_candidates: list[tuple[float, str]] = []
         for ob in obs:
             if (
                 getattr(ob, "direction", None) == "bullish"
                 and not getattr(ob, "mitigated", True)
                 and ob.top < entry_price
             ):
-                tp1_candidates.append(ob.top)
+                tp1_candidates.append((ob.top, "structural_ob"))
         for br in brks:
             if (
                 getattr(br, "new_direction", None) == "bullish"
                 and not getattr(br, "invalidated", True)
                 and br.top < entry_price
             ):
-                tp1_candidates.append(br.top)
+                tp1_candidates.append((br.top, "structural_breaker"))
         for fvg in fvgs_list:
             if (
                 getattr(fvg, "direction", None) == "bearish"
                 and not getattr(fvg, "filled", True)
                 and fvg.bottom < entry_price
             ):
-                tp1_candidates.append(fvg.bottom)
+                tp1_candidates.append((fvg.bottom, "structural_fvg"))
 
         tp1_fallback = entry_price - tp1_min_rr * sl_distance
         if tp1_candidates:
-            tp1_estrutural = max(tp1_candidates)
+            tp1_estrutural, tp1_candidate_source = max(
+                tp1_candidates, key=lambda c: c[0]
+            )
             rr_estrutural = (entry_price - tp1_estrutural) / sl_distance
-            tp1_price = tp1_estrutural if rr_estrutural >= tp1_min_rr else tp1_fallback
+            if rr_estrutural >= tp1_min_rr:
+                tp1_price = tp1_estrutural
+                tp1_source = tp1_candidate_source
+            else:
+                tp1_price = tp1_fallback
+                tp1_source = "fallback_1r"
         else:
             tp1_price = tp1_fallback
+            tp1_source = "fallback_1r"
 
         tp2_price = entry_price - tp2_target_rr * sl_distance
         tp3_price = entry_price - tp3_target_rr * sl_distance
@@ -481,6 +531,8 @@ def calculate_trade_plan(
         atr_value=float(atr_value),
         position_split=POSITION_SPLIT,
         leverage=float(leverage),
+        tp1_source=tp1_source,
+        sl_source=sl_source,
     )
 
 
