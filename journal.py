@@ -469,6 +469,8 @@ class TradeJournalV9:
             leverage = float(getattr(trade_plan, "leverage"))
             atr_value = float(getattr(trade_plan, "atr_value", 0.0) or 0.0)
             position_split = list(getattr(trade_plan, "position_split", (0.5, 0.3, 0.2)))
+            tp1_source = str(getattr(trade_plan, "tp1_source", "fallback_1r"))
+            sl_source = str(getattr(trade_plan, "sl_source", "structural_swing"))
         except Exception as e:
             LOG.warning(f"[TradeJournalV9] trade_plan inválido para {symbol}: {e}")
             return None
@@ -479,10 +481,10 @@ class TradeJournalV9:
         confidence = float(getattr(decision, "confidence", 0.0) or 0.0)
         regime = getattr(decision, "regime", "UNKNOWN") or "UNKNOWN"
 
-        # Monta evidence a partir dos setups que triggered
+        # Monta evidence (top-level dict para observabilidade SMC v9.1)
         try:
             all_results = list(getattr(decision, "all_setup_results", []) or [])
-            evidence = [
+            setups_payload = [
                 {
                     "setup_name": getattr(r, "setup_name", None),
                     "evidence": getattr(r, "evidence", {}) or {},
@@ -491,7 +493,12 @@ class TradeJournalV9:
                 if getattr(r, "triggered", False)
             ]
         except Exception:
-            evidence = []
+            setups_payload = []
+        evidence = {
+            "tp1_source": tp1_source,
+            "sl_source": sl_source,
+            "setups": setups_payload,
+        }
 
         # Persiste
         try:

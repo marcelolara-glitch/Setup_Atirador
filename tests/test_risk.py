@@ -583,3 +583,90 @@ def test_calculate_trade_plan_estrutural_short_with_obs():
     # sl_estrutural = max = 103.6. sl_min = 101.6 (mais perto). max(103.6, 101.6) = 103.6.
     # sl_max = 105.0. min(105, 103.6) = 103.6.
     assert plan.sl_price == pytest.approx(103.6, abs=0.05)
+
+
+# ---------------------------------------------------------------------------
+# tp1_source / sl_source — observabilidade v9.1.1
+# ---------------------------------------------------------------------------
+
+
+def test_tp1_source_structural_ob():
+    """TP1 ancorado em bearish OB com R:R viável → tp1_source='structural_ob'."""
+    df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
+    # Bearish OB com bottom=102 (acima de entry=100) → R:R = (102-100)/1.6 = 1.25 ≥ 1.0
+    ob_bearish = _FakeOB(direction="bearish", top=102.5, bottom=102.0, mitigated=False)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        order_blocks=[ob_bearish],
+    )
+    assert plan.tp1_price == pytest.approx(102.0, abs=0.05)
+    assert plan.tp1_source == "structural_ob"
+
+
+def test_tp1_source_fallback_1r():
+    """Sem candidatos estruturais, TP1 cai no fallback 1R e tp1_source='fallback_1r'."""
+    df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+    )
+    sl_distance = 100.0 - plan.sl_price
+    expected_tp1 = 100.0 + 1.0 * sl_distance
+    assert plan.tp1_price == pytest.approx(expected_tp1, abs=0.01)
+    assert plan.tp1_source == "fallback_1r"
+
+
+def test_sl_source_clamp_pct_max():
+    """Swing estrutural distante demais → SL clampado em entry × (1 − sl_max_pct)."""
+    candles = []
+    for _ in range(40):
+        candles.append(_candle(100, 101, 99, 100))
+    # Candle catastrófico: low=90 (10% abaixo, bem além de sl_max_pct=5%)
+    candles.append(_candle(100, 101, 90.0, 99))
+    for _ in range(15):
+        candles.append(_candle(100, 101, 99, 100))
+
+    df = _make_df(candles)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        swing_lookback=20,
+    )
+    # sl_max = 100 × 0.95 = 95.0
+    assert plan.sl_price == pytest.approx(95.0, abs=0.05)
+    assert plan.sl_source == "clamp_pct_max"
+
+
+def test_sl_source_clamp_atr_min():
+    """Swing estrutural próximo demais → SL clampado em entry − 0.8×ATR."""
+    candles = []
+    # 40 candles base (swing_low=99)
+    for _ in range(40):
+        candles.append(_candle(100, 101, 99, 100))
+    # 20 candles com swing_low=99.8 (raso → sl_estrutural mais perto que sl_min)
+    for _ in range(20):
+        candles.append(_candle(100, 101, 99.8, 100))
+
+    df = _make_df(candles)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        swing_lookback=20,
+    )
+    # sl_min = entry − 0.8 × ATR
+    expected_sl = 100.0 - 0.8 * plan.atr_value
+    assert plan.sl_price == pytest.approx(expected_sl, abs=0.1)
+    assert plan.sl_source == "clamp_atr_min"
