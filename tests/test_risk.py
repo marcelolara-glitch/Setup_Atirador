@@ -670,3 +670,175 @@ def test_sl_source_clamp_atr_min():
     expected_sl = 100.0 - 0.8 * plan.atr_value
     assert plan.sl_price == pytest.approx(expected_sl, abs=0.1)
     assert plan.sl_source == "clamp_atr_min"
+
+
+# ---------------------------------------------------------------------------
+# v9.1.2 — fixes de borda em validate_trade_plan
+# ---------------------------------------------------------------------------
+
+
+def test_validate_trade_plan_rr_exact_min():
+    """R:R exatamente igual a MIN_RR_TP1 (1.0) deve passar."""
+    plan = _make_plan(direction="LONG", entry=100, sl=98, tp1=102, tp2=104, tp3=107)
+    # rr1 = (102-100)/2 = 1.0 exato
+    assert plan.risk_reward_tp1 == pytest.approx(1.0)
+    is_valid, reason = validate_trade_plan(plan)
+    assert is_valid is True, f"R:R = 1.0 (== min) deveria passar; reason={reason!r}"
+
+
+def test_validate_trade_plan_rr_just_below_epsilon():
+    """R:R em MIN_RR_TP1 − 5e-10 (dentro da tolerância 1e-9) passa."""
+    plan = _make_plan(direction="LONG", entry=100, sl=98, tp1=102, tp2=104, tp3=107)
+    # Força rr_tp1 levemente abaixo de 1.0, dentro do épsilon (1e-9)
+    plan.risk_reward_tp1 = 1.0 - 5e-10
+    is_valid, reason = validate_trade_plan(plan)
+    assert is_valid is True, f"R:R no épsilon deveria passar; reason={reason!r}"
+
+
+def test_validate_trade_plan_rr_below_min_real():
+    """R:R claramente abaixo do mínimo (0.95) deve falhar com motivo R:R."""
+    plan = _make_plan(direction="LONG", entry=100, sl=98, tp1=101.9, tp2=104, tp3=107)
+    # rr1 = 1.9/2 = 0.95
+    is_valid, reason = validate_trade_plan(plan)
+    assert is_valid is False
+    assert "R:R" in reason
+
+
+def test_calculate_trade_plan_avoids_incoherent_prices_long():
+    """OB estrutural com R:R muito alto (>= tp2_target_rr) cai em fallback,
+    preservando tp1 < tp2 < tp3 — protege contra 'Preços incoerentes'."""
+    df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
+    # Bearish OB com bottom 105 → R:R = (105-100)/1.6 = 3.125 (>= tp2_target_rr=2.0)
+    ob_far = _FakeOB(direction="bearish", top=106.0, bottom=105.0, mitigated=False)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        order_blocks=[ob_far],
+    )
+    is_valid, reason = validate_trade_plan(plan)
+    assert is_valid is True, f"Plano deveria ser válido; reason={reason!r}"
+    assert plan.tp1_price < plan.tp2_price < plan.tp3_price
+    # Fallback foi acionado
+    assert plan.tp1_source == "fallback_1r"
+
+
+def test_calculate_trade_plan_avoids_incoherent_prices_short():
+    """Espelho SHORT — bullish OB com R:R alto cai em fallback."""
+    df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
+    # Bullish OB com top 95 → R:R = (100-95)/1.6 = 3.125 (>= tp2_target_rr)
+    ob_far = _FakeOB(direction="bullish", top=95.0, bottom=94.0, mitigated=False)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="SHORT",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        order_blocks=[ob_far],
+    )
+    is_valid, reason = validate_trade_plan(plan)
+    assert is_valid is True, f"Plano deveria ser válido; reason={reason!r}"
+    assert plan.tp1_price > plan.tp2_price > plan.tp3_price
+    assert plan.tp1_source == "fallback_1r"
+
+
+# ---------------------------------------------------------------------------
+# v9.1.2 — instrumentação tp1_diagnostics / sl_diagnostics
+# ---------------------------------------------------------------------------
+
+
+def test_tp1_diagnostics_no_candidates_input():
+    """obs/brks/fvgs vazios → fallback_reason = no_candidates_input."""
+    df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+    )
+    assert plan.tp1_diagnostics["candidates_total"] == 0
+    assert plan.tp1_diagnostics["fallback_reason"] == "no_candidates_input"
+    assert plan.tp1_source == "fallback_1r"
+
+
+def test_tp1_diagnostics_no_candidates_after_direction():
+    """OBs todos do lado errado → fallback_reason = no_candidates_after_direction."""
+    df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
+    # Bearish OB com bottom < entry (lado errado para TP1 LONG)
+    ob_wrong = _FakeOB(direction="bearish", top=99.0, bottom=98.5, mitigated=False)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        order_blocks=[ob_wrong],
+    )
+    assert plan.tp1_diagnostics["candidates_total"] == 1
+    assert plan.tp1_diagnostics["candidates_after_direction"] == 0
+    assert plan.tp1_diagnostics["fallback_reason"] == "no_candidates_after_direction"
+
+
+def test_tp1_diagnostics_best_rr_below_min():
+    """OB do lado certo mas R:R 0.5 → fallback_reason = best_rr_below_min."""
+    df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
+    # sl_distance ~ 1.6; OB.bottom = 100.8 → R:R = 0.8/1.6 = 0.5
+    ob_close = _FakeOB(direction="bearish", top=100.9, bottom=100.8, mitigated=False)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        order_blocks=[ob_close],
+    )
+    assert plan.tp1_diagnostics["candidates_after_mitigated"] == 1
+    assert plan.tp1_diagnostics["fallback_reason"] == "best_rr_below_min"
+    assert plan.tp1_diagnostics["best_candidate_rr"] == pytest.approx(0.5, abs=0.05)
+    assert plan.tp1_diagnostics["best_candidate_source"] == "structural_ob"
+
+
+def test_tp1_diagnostics_structural_winner():
+    """OB do lado certo com R:R 1.25 → tp1_source=structural_ob, fallback_reason=None."""
+    df = _constant_atr_df(atr_target=2.0, n=60, base_price=100.0)
+    # OB.bottom = 102 → R:R = 2/1.6 = 1.25
+    ob_ok = _FakeOB(direction="bearish", top=102.5, bottom=102.0, mitigated=False)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        order_blocks=[ob_ok],
+    )
+    assert plan.tp1_source == "structural_ob"
+    assert plan.tp1_diagnostics["fallback_reason"] is None
+    assert plan.tp1_diagnostics["candidates_after_rr"] >= 1
+
+
+def test_sl_diagnostics_clamp_pct_max_recorded():
+    """Swing distante força clamp em pct_max — sl_diagnostics registra estado."""
+    candles = []
+    for _ in range(40):
+        candles.append(_candle(100, 101, 99, 100))
+    candles.append(_candle(100, 101, 90.0, 99))  # low catastrófico
+    for _ in range(15):
+        candles.append(_candle(100, 101, 99, 100))
+
+    df = _make_df(candles)
+    plan = calculate_trade_plan(
+        df=df,
+        direction="LONG",
+        entry_price=100.0,
+        setup_confidence=100.0,
+        regime="RANGE",
+        swing_lookback=20,
+    )
+    assert plan.sl_diagnostics["clamp_applied"] == "pct_max"
+    # pré-clamp: swing_low (90) - buffer (~0.6) ~ 89.4
+    assert plan.sl_diagnostics["sl_estrutural_pre_clamp"] < 95.0
+    assert plan.sl_diagnostics["sl_max_pct"] == pytest.approx(95.0, abs=0.05)
+    assert plan.sl_diagnostics["winner_source"] == "structural_swing"
