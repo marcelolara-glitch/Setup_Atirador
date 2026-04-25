@@ -765,3 +765,100 @@ def test_get_performance_by_setup_splits_confluences(tmp_journal):
     # DB vazio → dict vazio
     j2 = TradeJournalV9(":memory:")
     assert j2.get_performance_by_setup() == {}
+
+
+# ---------------------------------------------------------------------------
+# Trailing SL history — sl_moved_to_be_at / sl_moved_to_tp1_at (v9.1.1)
+# ---------------------------------------------------------------------------
+
+
+def _read_sl_moves(db_path: str, trade_id: str) -> dict:
+    """Lê os dois timestamps de trailing do trade."""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT sl_moved_to_be_at, sl_moved_to_tp1_at, current_sl "
+            "FROM trades WHERE id=?",
+            (trade_id,),
+        ).fetchone()
+        return dict(row) if row else {}
+    finally:
+        conn.close()
+
+
+def test_sl_moved_to_be_at_recorded(tmp_journal):
+    """TP1 hit → sl_moved_to_be_at ISO 8601 preenchido, current_sl == entry."""
+    j = TradeJournalV9(tmp_journal["db_path"])
+    decision = FakeSignalDecision()
+    trade_id, ts_ms = _open_trade_and_get_ts_ms(j, decision)
+
+    candles = [_make_candle(0, 100, 102.5, 99.8, 102.3)]
+    klines = _klines_sequence(ts_ms, candles)
+    fetcher = lambda symbol: klines  # noqa: E731
+    j.check_open_trades(fetch_klines_fn=fetcher)
+
+    moves = _read_sl_moves(tmp_journal["db_path"], trade_id)
+    assert moves["sl_moved_to_be_at"] is not None
+    # ISO 8601 parseável
+    datetime.fromisoformat(moves["sl_moved_to_be_at"])
+    assert moves["sl_moved_to_tp1_at"] is None
+    assert moves["current_sl"] == pytest.approx(100.0)  # breakeven = entry
+
+
+def test_sl_moved_to_tp1_at_recorded(tmp_journal):
+    """TP1 + TP2 hit → ambos timestamps preenchidos, current_sl == tp1."""
+    j = TradeJournalV9(tmp_journal["db_path"])
+    decision = FakeSignalDecision()
+    trade_id, ts_ms = _open_trade_and_get_ts_ms(j, decision)
+
+    # Um candle atinge TP1 e TP2 sequencialmente
+    candles = [_make_candle(0, 100, 104.5, 99.8, 104.3)]
+    klines = _klines_sequence(ts_ms, candles)
+    fetcher = lambda symbol: klines  # noqa: E731
+    j.check_open_trades(fetch_klines_fn=fetcher)
+
+    moves = _read_sl_moves(tmp_journal["db_path"], trade_id)
+    assert moves["sl_moved_to_be_at"] is not None
+    assert moves["sl_moved_to_tp1_at"] is not None
+    datetime.fromisoformat(moves["sl_moved_to_be_at"])
+    datetime.fromisoformat(moves["sl_moved_to_tp1_at"])
+    assert moves["current_sl"] == pytest.approx(102.0)  # = tp1_price
+
+
+def test_sl_moved_at_is_idempotent(tmp_journal):
+    """Re-chamar tracker após TP1 não sobrescreve sl_moved_to_be_at."""
+    j = TradeJournalV9(tmp_journal["db_path"])
+    decision = FakeSignalDecision()
+    trade_id, ts_ms = _open_trade_and_get_ts_ms(j, decision)
+
+    candles = [_make_candle(0, 100, 102.5, 99.8, 102.3)]
+    klines = _klines_sequence(ts_ms, candles)
+    fetcher = lambda symbol: klines  # noqa: E731
+
+    j.check_open_trades(fetch_klines_fn=fetcher)
+    first = _read_sl_moves(tmp_journal["db_path"], trade_id)["sl_moved_to_be_at"]
+    assert first is not None
+
+    # Segunda chamada — guard SQL `WHERE col IS NULL` deve preservar valor.
+    # Mesmo um _record_sl_move direto não deve sobrescrever.
+    j._record_sl_move(trade_id, "sl_moved_to_be_at", "1999-01-01T00:00:00")
+    second = _read_sl_moves(tmp_journal["db_path"], trade_id)["sl_moved_to_be_at"]
+    assert second == first
+
+
+def test_sl_moved_at_null_when_not_triggered(tmp_journal):
+    """Trade sem TP hit → ambos timestamps NULL."""
+    j = TradeJournalV9(tmp_journal["db_path"])
+    decision = FakeSignalDecision()
+    trade_id, ts_ms = _open_trade_and_get_ts_ms(j, decision)
+
+    # Candles oscilando entre entry e SL — nenhum TP hit
+    candles = [_make_candle(0, 100, 101.0, 99.0, 100.5)]
+    klines = _klines_sequence(ts_ms, candles)
+    fetcher = lambda symbol: klines  # noqa: E731
+    j.check_open_trades(fetch_klines_fn=fetcher)
+
+    moves = _read_sl_moves(tmp_journal["db_path"], trade_id)
+    assert moves["sl_moved_to_be_at"] is None
+    assert moves["sl_moved_to_tp1_at"] is None
