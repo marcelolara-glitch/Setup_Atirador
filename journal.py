@@ -388,6 +388,12 @@ class TradeJournalV9:
             conn = self._connect()
             try:
                 conn.executescript(_DDL_V9)
+                # Migration v9.1.1: trailing SL history (idempotente)
+                for col in ("sl_moved_to_be_at", "sl_moved_to_tp1_at"):
+                    try:
+                        conn.execute(f"ALTER TABLE trades ADD COLUMN {col} TEXT")
+                    except sqlite3.OperationalError:
+                        pass  # coluna já existe
                 conn.commit()
             finally:
                 conn.close()
@@ -767,7 +773,17 @@ class TradeJournalV9:
             if state.status != "OPEN":
                 break  # não processa candles após saída
 
-        # --- 6. Persistência -------------------------------------------------
+        # --- 6. Trailing SL — registra timestamps idempotentes ---------------
+        # SL→BE acontece quando TP1 hit (current_sl = entry).
+        # SL→TP1 acontece quando TP2 hit (current_sl = tp1_price).
+        # Só registra transições NESTA rodada (initial_* False → state.* True).
+        # Idempotência adicional via guard SQL `WHERE col IS NULL`.
+        if state.tp1_hit and not initial_tp1:
+            self._record_sl_move(trade_id, "sl_moved_to_be_at", now.isoformat())
+        if state.tp2_hit and not initial_tp2:
+            self._record_sl_move(trade_id, "sl_moved_to_tp1_at", now.isoformat())
+
+        # --- 7. Persistência -------------------------------------------------
         if state.status != "OPEN":
             # Status final: calcula exit_price + pnl
             exit_price = self._exit_price_for_status(state, plan, row)
@@ -1071,4 +1087,34 @@ class TradeJournalV9:
             return True
         except Exception as e:
             LOG.warning(f"[TradeJournalV9] Falha em _update_partial({trade_id}): {e}")
+            return False
+
+    def _record_sl_move(self, trade_id: str, column: str, ts_iso: str) -> bool:
+        """Persiste o timestamp de uma transição do trailing SL.
+
+        ``column`` é ``"sl_moved_to_be_at"`` (após TP1) ou
+        ``"sl_moved_to_tp1_at"`` (após TP2). O guard ``WHERE col IS NULL``
+        garante que double-call (race entre rodadas) não sobrescreve o
+        timestamp original.
+
+        Falhas silenciosas — warning no LOG.
+        """
+        if column not in ("sl_moved_to_be_at", "sl_moved_to_tp1_at"):
+            return False
+        try:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    f"UPDATE trades SET {column}=? "
+                    f"WHERE id=? AND {column} IS NULL",
+                    (ts_iso, trade_id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            return True
+        except Exception as e:
+            LOG.warning(
+                f"[TradeJournalV9] Falha em _record_sl_move({trade_id}, {column}): {e}"
+            )
             return False
