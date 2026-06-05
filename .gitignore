@@ -30,6 +30,9 @@ logs/*.db
 journal/*.db
 logs/saude_*.txt
 
+# Backtest — candles_v9.db gerado/populado na VM no PR-2; nao versionar
+backtest/*.db
+
 # IDE
 .idea/
 .vscode/
