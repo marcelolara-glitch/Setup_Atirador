@@ -96,24 +96,35 @@ async def main_async(days: int, db_path: str) -> int:
         start_ms = end_ms - days * 24 * 60 * 60 * 1000
         windows[tf_label] = (bar, bar_ms, start_ms, end_ms)
 
+    total = len(PILOT_TOKENS) * len(TIMEFRAMES)
+    print(f"[backfill] iniciando: {len(PILOT_TOKENS)} tokens x {len(TIMEFRAMES)} TFs "
+          f"= {total} jobs | janela {days}d", file=sys.stderr, flush=True)
+    t0 = time.time()
+    conn = connect(db_path)
     sem = asyncio.Semaphore(MAX_CONCURRENT_FETCHES)
+    failed = 0
+    done = 0
     async with aiohttp.ClientSession() as session:
         jobs = [
             _fetch_job(session, sem, symbol, tf_label, bar, start_ms, end_ms)
             for symbol in PILOT_TOKENS
             for tf_label, (bar, bar_ms, start_ms, end_ms) in windows.items()
         ]
-        results = await asyncio.gather(*jobs)
-
-    conn = connect(db_path)
-    failed = 0
-    for symbol, tf_label, klines, err in results:
-        if err:
-            failed += 1
-            print(f"[backfill] FAIL {symbol} {tf_label}: {err}", file=sys.stderr)
-            continue
-        n = upsert_candles(conn, symbol, tf_label, klines)
-        print(f"[backfill] {symbol:<10s} {tf_label:<3s} {n:>6d} candles", file=sys.stderr)
+        # as_completed = feedback AO VIVO: imprime cada job assim que termina,
+        # nao no fim. Grava progressivamente (idempotente) -> se interromper,
+        # re-rodar continua. flush=True garante a linha na hora no terminal SSH.
+        for fut in asyncio.as_completed(jobs):
+            symbol, tf_label, klines, err = await fut
+            done += 1
+            if err:
+                failed += 1
+                print(f"[backfill] ({done}/{total}) FALHOU {symbol} {tf_label}: {err}",
+                      file=sys.stderr, flush=True)
+                continue
+            n = upsert_candles(conn, symbol, tf_label, klines)
+            print(f"[backfill] ({done}/{total}) {symbol:<10s} {tf_label:<3s} "
+                  f"{n:>6d} candles | {time.time() - t0:5.0f}s",
+                  file=sys.stderr, flush=True)
 
     print("\n[backfill] === COVERAGE ===", file=sys.stderr)
     for tf_label, (bar, bar_ms, start_ms, end_ms) in windows.items():
@@ -122,8 +133,8 @@ async def main_async(days: int, db_path: str) -> int:
             print(f"  {tf_label:<3s} {r['symbol']:<10s} {r['count']:>6d}/{r['expected']:<6d} "
                   f"{r['pct']:>5.1f}%{flag}", file=sys.stderr)
     conn.close()
-    print(f"\n[backfill] concluido | {len(PILOT_TOKENS)} tokens x {len(TIMEFRAMES)} TFs | "
-          f"{failed} jobs falharam", file=sys.stderr)
+    print(f"\n[backfill] concluido em {time.time() - t0:.0f}s | "
+          f"{total} jobs | {failed} falharam", file=sys.stderr)
     return 0
 
 
