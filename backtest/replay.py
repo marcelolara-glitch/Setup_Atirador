@@ -32,22 +32,33 @@ def _tail(rows: list, n: int) -> list:
 
 def find_entry_bar(conn, symbol: str, journal_ts_iso: str,
                    entry_price: float) -> Optional[int]:
-    """ts (epoch-ms, abertura) do bar de entrada, ancorado pelo entry_price.
+    """ts (epoch-ms, abertura) do bar de entrada, ancorado pelo TIMESTAMP.
 
-    O timestamp do journal e hora de LOG (BRT, ~2min apos o fechamento do bar),
-    nao o bar. Numa janela ao redor do timestamp, pega o candle cujo close mais
-    se aproxima do entry_price. Retorna None se nada plausivel for achado.
+    Bug corrigido: ancorar pelo entry_price e ambiguo -- em mercado lateral
+    varios bars fecham no mesmo valor, e a busca por close-mais-proximo pinava
+    vizinhos 1-2 bars off (candle errado, mesmo close). O log sai ~2min apos o
+    fechamento do bar avaliado: floor_15m(log_utc) e o fechamento do bar de
+    entrada, -1 bar e sua abertura. O entry_price vira VERIFICACAO do close,
+    nao chave de busca. Fallback estreito (+/-2 bars) cobre rodada anomala que
+    cruze o grid (raro: rodadas sao 116-129s). Retorna None se nada plausivel.
     """
     loc = int(datetime.fromisoformat(journal_ts_iso)
               .astimezone(timezone.utc).timestamp() * 1000)
-    lo, hi = loc - 60 * 60 * 1000, loc + BAR_15M_MS   # ~1h atras ate 1 bar a frente
-    cands = read_candles(conn, symbol, "15m", start_ms=lo, end_ms=hi)
-    if not cands:
-        return None
-    best = min(cands, key=lambda k: abs(k["close"] - entry_price))
-    if entry_price and abs(best["close"] - entry_price) / entry_price > _PRICE_TOL:
-        return None
-    return best["ts"]
+    bar_ts = (loc // BAR_15M_MS) * BAR_15M_MS - BAR_15M_MS   # ultimo bar fechado (abertura)
+
+    def _matches(ts: int) -> bool:
+        c = read_candles(conn, symbol, "15m", start_ms=ts, end_ms=ts)
+        if not c or not entry_price:
+            return False
+        return abs(c[0]["close"] - entry_price) / entry_price <= _PRICE_TOL
+
+    if _matches(bar_ts):
+        return bar_ts
+    for d in (-1, 1, -2, 2):                  # rodada anomala: bar real costuma ficar atras
+        ts = bar_ts + d * BAR_15M_MS
+        if _matches(ts):
+            return ts
+    return None
 
 
 def replay_signal(conn, symbol: str, entry_bar_ts: int):
