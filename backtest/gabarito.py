@@ -22,15 +22,17 @@ FIDELITY_TARGET = 95.0
 _MISS_SAMPLE = 8   # quantos misses de cada tipo imprimir pra diagnostico
 
 
-def _load_trades(journal_db: str, symbols: set) -> list:
+def _load_trades(journal_db: str, symbols: set, since: str = "") -> list:
     c = sqlite3.connect(journal_db)
     ph = ",".join("?" * len(symbols))
-    rows = c.execute(
-        f"SELECT id, timestamp, symbol, direction, setup_name, entry_price "
-        f"FROM trades WHERE symbol IN ({ph}) AND entry_price IS NOT NULL "
-        f"ORDER BY timestamp",
-        tuple(symbols),
-    ).fetchall()
+    q = (f"SELECT id, timestamp, symbol, direction, setup_name, entry_price "
+         f"FROM trades WHERE symbol IN ({ph}) AND entry_price IS NOT NULL")
+    params = list(symbols)
+    if since:
+        q += " AND timestamp >= ?"   # ISO ordena lexicograficamente; floor por data funciona
+        params.append(since)
+    q += " ORDER BY timestamp"
+    rows = c.execute(q, params).fetchall()
     c.close()
     return [
         {"id": r[0], "timestamp": r[1], "symbol": r[2], "direction": r[3],
@@ -59,10 +61,10 @@ def _classify(store_conn, t: dict) -> tuple:
     return "match", ""
 
 
-def main_run(store_db: str, journal_db: str) -> int:
+def main_run(store_db: str, journal_db: str, since: str = "") -> int:
     store_conn = store_connect(store_db)
     symbols = {r[0] for r in store_conn.execute("SELECT DISTINCT symbol FROM candles")}
-    trades = _load_trades(journal_db, symbols)
+    trades = _load_trades(journal_db, symbols, since)
     if not trades:
         print("[gabarito] nenhum trade nos simbolos do store", file=sys.stderr)
         return 1
@@ -94,6 +96,8 @@ def main_run(store_db: str, journal_db: str) -> int:
 
     pct = 100.0 * matches / total
     print("\n========== GABARITO ==========")
+    if since:
+        print(f"janela          : timestamp >= {since}")
     print(f"trades testados : {total}")
     print(f"match           : {matches} ({pct:.1f}%)")
     status = "OK" if pct >= FIDELITY_TARGET else "ABAIXO DO ALVO"
@@ -126,13 +130,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Gabarito: fidelidade do replay vs journal")
     ap.add_argument("--store", default=str(ROOT / "backtest" / "candles_v9.db"))
     ap.add_argument("--journal", default="")
+    ap.add_argument("--since", default="", help="floor de data ISO, ex. 2026-04-26")
     args = ap.parse_args()
     journal = args.journal
     if not journal:
         cands = glob.glob(str(ROOT / "**" / "atirador_journal_v9.db"), recursive=True)
         journal = cands[0] if cands else str(ROOT / "journal" / "atirador_journal_v9.db")
     print(f"[gabarito] store={args.store} journal={journal}", file=sys.stderr)
-    return main_run(args.store, journal)
+    return main_run(args.store, journal, args.since)
 
 
 if __name__ == "__main__":
