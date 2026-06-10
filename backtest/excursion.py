@@ -94,11 +94,11 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str):
         hi = max(c["high"] for c in win)
         lo = min(c["low"] for c in win)
         if is_long:
-            mfe[h] = (hi - entry) / atr
-            mae[h] = (entry - lo) / atr
+            mfe[h] = max(0.0, (hi - entry) / atr)
+            mae[h] = max(0.0, (entry - lo) / atr)
         else:
-            mfe[h] = (entry - lo) / atr
-            mae[h] = (hi - entry) / atr
+            mfe[h] = max(0.0, (entry - lo) / atr)
+            mae[h] = max(0.0, (hi - entry) / atr)
     return {"symbol": symbol, "bar_ts": bar_ts, "direction": direction,
             "atr": atr, "mfe": mfe, "mae": mae}
 
