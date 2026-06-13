@@ -90,7 +90,12 @@ def build_null_pool(conn, symbol: str, timeline: dict, regime: str,
     """Pool da celula (simbolo, regime, direcao): candidatos = bars cujo regime
     bate; amostra ate max_n, mede excursao em cada (descarta None) e acumula
     (mfe[H]-mae[H]) por horizonte. Pre-medido 1x; o bootstrap reamostra dele."""
-    bars = [ts for ts, reg in timeline.items() if reg == regime]
+    # casa a densidade de selecao da receita: 1 evento por janela de SEP_BARS.
+    # sem isso, trechos longos super-representam o nulo (peso por contagem) e o
+    # teeth-check vaza edge falso (receita 48-espacada vs nulo nao-espacado).
+    bars_all = sorted(ts for ts, reg in timeline.items() if reg == regime)
+    sigs = [{"bar_ts": ts, "direction": direction} for ts in bars_all]
+    bars = [s["bar_ts"] for s in collapse_events(sigs, SEP_BARS)]
     if len(bars) > max_n:
         bars = random.sample(bars, max_n)
     pool = {h: [] for h in HORIZONS}
