@@ -29,6 +29,7 @@ from regime import MIN_CANDLES, classify_regime                       # noqa: E4
 from backtest.candle_store import connect as store_connect, read_candles  # noqa: E402
 from backtest.excursion import HORIZONS, collapse_events, measure_event   # noqa: E402
 from backtest.sweep import TIER1, sweep_symbol                         # noqa: E402
+from backtest.raschke import raschke_detector                         # noqa: E402
 
 SEP_BARS = max(HORIZONS)        # 48 — separacao p/ janelas forward nao sobrepostas
 _WINDOW = 150                   # velas p/ classificar regime (>= MIN_CANDLES)
@@ -149,9 +150,12 @@ def run(store_db: str, symbols: list, start_iso: str, end_iso: str, setup: str,
     cell_pools: dict = {}
     for sym in symbols:
         timeline = regime_timeline(conn, sym, start_ms, end_ms)
-        evs = (random_detector(conn, sym, timeline, start_ms, end_ms, n_random)
-               if detector == "random"
-               else get_events(conn, sym, start_ms, end_ms, setup))
+        if detector == "random":
+            evs = random_detector(conn, sym, timeline, start_ms, end_ms, n_random)
+        elif detector == "raschke":
+            evs = raschke_detector(conn, sym, timeline, start_ms, end_ms)
+        else:
+            evs = get_events(conn, sym, start_ms, end_ms, setup)
         kept = 0
         for ev in evs:
             reg = timeline.get(ev["bar_ts"])
@@ -180,8 +184,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="Veredito de edge: receita vs nulo casado (simbolo x regime x dir)")
     ap.add_argument("--setup", default="cont_pull", help="setup a julgar")
-    ap.add_argument("--detector", choices=["real", "random"], default="real",
-                    help="real=setup; random=teeth-check (edge esperado ~0)")
+    ap.add_argument("--detector", choices=["real", "random", "raschke"],
+                    default="real",
+                    help="real=setup; random=teeth-check; raschke=detector Raschke")
     ap.add_argument("--start", required=True, help="data ISO, ex. 2026-05-15")
     ap.add_argument("--end", required=True, help="data ISO, ex. 2026-05-22")
     ap.add_argument("--n-boot", type=int, default=1000, help="iteracoes bootstrap")
@@ -201,7 +206,12 @@ def main() -> int:
     r = run(args.store, args.symbols, args.start, args.end, args.setup,
             args.detector, args.n_boot, args.max_null, args.n_random)
 
-    tag = "TEETH-CHECK (random)" if args.detector == "random" else args.setup
+    if args.detector == "random":
+        tag = "TEETH-CHECK (random)"
+    elif args.detector == "raschke":
+        tag = "RASCHKE (canonico)"
+    else:
+        tag = args.setup
     print(f"\n========== VEREDITO {tag} ==========")
     print(f"eventos totais : {r['n_total']}")
     print(f"\n--- edge por horizonte (em ATR) ---")
