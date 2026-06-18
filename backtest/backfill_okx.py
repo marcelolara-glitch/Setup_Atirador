@@ -87,18 +87,20 @@ async def _fetch_job(session, sem, symbol, tf_label, bar, start_ms, end_ms):
             return symbol, tf_label, [], f"{type(e).__name__}: {e}"
 
 
-async def main_async(days: int, db_path: str) -> int:
+async def main_async(days: int, db_path: str, tfs: list) -> int:
     now_ms = int(time.time() * 1000)
     # janela por TF, calculada UMA vez (todas as moedas do mesmo TF compartilham)
+    sel = {k: TIMEFRAMES[k] for k in tfs}
     windows = {}  # tf_label -> (bar, bar_ms, start_ms, end_ms)
-    for tf_label, (bar, bar_ms) in TIMEFRAMES.items():
+    for tf_label, (bar, bar_ms) in sel.items():
         end_ms = (now_ms // bar_ms) * bar_ms - bar_ms        # ultima vela fechada
         start_ms = end_ms - days * 24 * 60 * 60 * 1000
         windows[tf_label] = (bar, bar_ms, start_ms, end_ms)
 
-    total = len(PILOT_TOKENS) * len(TIMEFRAMES)
-    print(f"[backfill] iniciando: {len(PILOT_TOKENS)} tokens x {len(TIMEFRAMES)} TFs "
-          f"= {total} jobs | janela {days}d", file=sys.stderr, flush=True)
+    total = len(PILOT_TOKENS) * len(sel)
+    print(f"[backfill] iniciando: {len(PILOT_TOKENS)} tokens x {len(sel)} TFs "
+          f"= {total} jobs | janela {days}d | TFs={','.join(sel)}",
+          file=sys.stderr, flush=True)
     t0 = time.time()
     conn = connect(db_path)
     sem = asyncio.Semaphore(MAX_CONCURRENT_FETCHES)
@@ -142,8 +144,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Backfill historico OKX para backtest offline")
     ap.add_argument("--days", type=int, default=DEFAULT_DAYS)
     ap.add_argument("--db", type=str, default=str(ROOT / "backtest" / "candles_v9.db"))
+    ap.add_argument("--timeframes", type=str, default=",".join(TIMEFRAMES),
+                    help="TFs a backfillar, separados por virgula (default: todos)")
     args = ap.parse_args()
-    return asyncio.run(main_async(args.days, args.db))
+    tfs = [t.strip() for t in args.timeframes.split(",") if t.strip()]
+    bad = [t for t in tfs if t not in TIMEFRAMES]
+    if bad:
+        ap.error(f"TF invalido: {bad}; validos: {list(TIMEFRAMES)}")
+    return asyncio.run(main_async(args.days, args.db, tfs))
 
 
 if __name__ == "__main__":
