@@ -71,7 +71,10 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str):
     """Mede excursao forward de UM evento, em ATR. Entry = close da barra do
     sinal (bar_ts); forward = barras bar_ts+1 ... bar_ts+48 (nunca a propria
     barra do sinal). atr<=0 -> None. Borda direita do store (< 48 barras
-    forward) -> None. Retorna {symbol, bar_ts, direction, atr, mfe{H}, mae{H}}."""
+    forward) -> None. Retorna {symbol, bar_ts, direction, atr, entry,
+    mfe{H}, mae{H}, ret{H}}. `entry` e o close da barra de entrada; `ret[H]`
+    e o retorno terminal (close da H-esima barra forward) em ATR, com sinal
+    pela direcao. Chaves aditivas — callers que so leem mfe/mae/atr seguem ok."""
     ctx = read_candles(conn, symbol, "15m", end_ms=bar_ts)
     if not ctx:
         return None
@@ -88,19 +91,22 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str):
         return None
 
     is_long = (direction or "").upper() == "LONG"
-    mfe, mae = {}, {}
+    mfe, mae, ret = {}, {}, {}
     for h in HORIZONS:
         win = fwd[:h]
         hi = max(c["high"] for c in win)
         lo = min(c["low"] for c in win)
+        term = (fwd[h - 1]["close"] - entry) / atr   # retorno terminal em ATR
         if is_long:
             mfe[h] = max(0.0, (hi - entry) / atr)
             mae[h] = max(0.0, (entry - lo) / atr)
+            ret[h] = term
         else:
             mfe[h] = max(0.0, (entry - lo) / atr)
             mae[h] = max(0.0, (hi - entry) / atr)
+            ret[h] = -term
     return {"symbol": symbol, "bar_ts": bar_ts, "direction": direction,
-            "atr": atr, "mfe": mfe, "mae": mae}
+            "atr": atr, "entry": entry, "mfe": mfe, "mae": mae, "ret": ret}
 
 
 def run(store_db: str, symbols: list, start_iso: str, end_iso: str,
