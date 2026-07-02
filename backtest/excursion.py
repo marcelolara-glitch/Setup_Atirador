@@ -71,7 +71,9 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str):
     """Mede excursao forward de UM evento, em ATR. Entry = close da barra do
     sinal (bar_ts); forward = barras bar_ts+1 ... bar_ts+48 (nunca a propria
     barra do sinal). atr<=0 -> None. Borda direita do store (< 48 barras
-    forward) -> None. Retorna {symbol, bar_ts, direction, atr, mfe{H}, mae{H}}."""
+    forward) -> None. Retorna {symbol, bar_ts, direction, atr, mfe{H}, mae{H},
+    entry, fwd{H}} — fwd = retorno forward ASSINADO no fechamento de cada
+    horizonte, em ATR, sem piso (pode ser negativo)."""
     ctx = read_candles(conn, symbol, "15m", end_ms=bar_ts)
     if not ctx:
         return None
@@ -99,8 +101,11 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str):
         else:
             mfe[h] = max(0.0, (entry - lo) / atr)
             mae[h] = max(0.0, (hi - entry) / atr)
+    sign = 1.0 if is_long else -1.0
+    fwd_atr = {h: sign * (fwd[h - 1]["close"] - entry) / atr for h in HORIZONS}
     return {"symbol": symbol, "bar_ts": bar_ts, "direction": direction,
-            "atr": atr, "mfe": mfe, "mae": mae}
+            "atr": atr, "mfe": mfe, "mae": mae,
+            "entry": entry, "fwd": fwd_atr}
 
 
 def run(store_db: str, symbols: list, start_iso: str, end_iso: str,
