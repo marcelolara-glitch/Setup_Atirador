@@ -72,8 +72,9 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str):
     sinal (bar_ts); forward = barras bar_ts+1 ... bar_ts+48 (nunca a propria
     barra do sinal). atr<=0 -> None. Borda direita do store (< 48 barras
     forward) -> None. Retorna {symbol, bar_ts, direction, atr, mfe{H}, mae{H},
-    entry, fwd{H}} — fwd = retorno forward ASSINADO no fechamento de cada
-    horizonte, em ATR, sem piso (pode ser negativo)."""
+    entry, fwd{H}, fav, adv} — fwd = retorno forward ASSINADO no fechamento de
+    cada horizonte, em ATR, sem piso (pode ser negativo); fav/adv = excursao
+    favoravel/adversa POR BARRA (listas de 48, em ATR, sem piso)."""
     ctx = read_candles(conn, symbol, "15m", end_ms=bar_ts)
     if not ctx:
         return None
@@ -101,11 +102,20 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str):
         else:
             mfe[h] = max(0.0, (entry - lo) / atr)
             mae[h] = max(0.0, (hi - entry) / atr)
+    # excursao POR BARRA, sem piso (valores podem ser negativos) — caminho
+    # consumido pelo bracket (primeiro toque exato); mfe/mae permanecem como
+    # reguas de reconciliacao.
+    if is_long:
+        fav = [(c["high"] - entry) / atr for c in fwd]
+        adv = [(entry - c["low"]) / atr for c in fwd]
+    else:
+        fav = [(entry - c["low"]) / atr for c in fwd]
+        adv = [(c["high"] - entry) / atr for c in fwd]
     sign = 1.0 if is_long else -1.0
     fwd_atr = {h: sign * (fwd[h - 1]["close"] - entry) / atr for h in HORIZONS}
     return {"symbol": symbol, "bar_ts": bar_ts, "direction": direction,
             "atr": atr, "mfe": mfe, "mae": mae,
-            "entry": entry, "fwd": fwd_atr}
+            "entry": entry, "fwd": fwd_atr, "fav": fav, "adv": adv}
 
 
 def run(store_db: str, symbols: list, start_iso: str, end_iso: str,
