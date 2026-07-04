@@ -81,15 +81,27 @@ Caveats: melhor-de-36 ⇒ p_corr≈.07; janela única (regime atual); símbolos
 correlacionados. Gradiente monotônico até a borda ⇒ ótimo fora da caixa.
 Convergência com juice: dois instrumentos independentes apontam hold 12–16h.
 
+## 2026-07-04 — OOS juice 4h, 4 janelas @0bps — GATE PASSOU (3/4)
+Janelas iguais 2024-05-22→2026-06-21. Log: juice_oos4_20260704_1335.
+H=4 bruto: W1 +0.902 (p.000) | W2 +0.122 (p.373) | W3 −0.051 (p.612) |
+W4 +0.303 (p.050). Critério pré-registrado (sinal ≥3/4): PASSA na margem.
+Estrutura: ~69% do agregado vem de W1; W2+W3 (um ano) ≈ ruído; perfil de
+horizonte inverte entre janelas (W4: H=32 +2.16 p.000, H=48 +1.73 p.001;
+W2/W3: longos fortemente negativos). Leitura: beta de tendência condicional
+a regime; H=4 é o menos regime-sensível, não o mais forte. TON 0/0/0/9
+confirma história curta (fecha a correção de 04/07).
+Exploratório anotado (não primário): holds longos fortes no regime atual.
+
 ## PENDENTES (pré-registrados)
-- OOS juice 4h, 4 janelas @0bps — EM EXECUÇÃO. Critério: H=4 bruto>0 em
-  ≥3/4 ⇒ Estágio 1 no 4h (nulo casado + block bootstrap + multiplicidade;
-  primários pré-registrados: bracket S=1.5/T=6.0 e temporal H=4; resto
-  exploratório; requer PR-4 parametrizando excursion/bracket por TF).
-  Senão ⇒ candidato morre; eixo = detector TSMOM canônico multi-lookback.
-- Estágio 2 (condicional): shadow execution p/ premissa maker (fill rate,
-  seleção adversa).
-- Auditoria de indexação posicional (replay/sweep/null_model): conclusões
-  15m pré-reparo com asterisco até verificar.
-- Hardening: guarda de contiguidade por timestamp no juice (gap-frágil).
+- PR-4: parametrizar tf em excursion.measure_event + bracket (--tf).
+  Pré-registro 4h: GRID_H=(4,8,16); célula PRIMÁRIA = S=1.5/T=6.0/H=4;
+  resto exploratório. Regressão obrigatória: 15m byte-idêntico ao log
+  bracket_exato_20260703_1135 antes de rodar 4h.
+- Rodada bracket 4h (2024-05-22→2026-06-21, custos 12/6) após PR-4.
+- PR-5 — Estágio 1: nulo casado + bootstrap por bloco temporal +
+  correção de multiplicidade sobre os primários. Spec após inspeção
+  de null_model.py.
+- Estágio 2 (condicional): shadow execution p/ premissa maker.
+- Auditoria de indexação posicional (replay/sweep/null_model).
+- Hardening: guarda de contiguidade por timestamp no juice.
 - Backfill 15m profundo: só se Estágio 1 passar.
