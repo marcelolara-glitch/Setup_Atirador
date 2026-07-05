@@ -23,8 +23,11 @@ from backtest.candle_store import connect as store_connect, read_candles  # noqa
 from backtest.replay import BAR_15M_MS                                    # noqa: E402
 from backtest.sweep import TIER1, sweep_symbol                            # noqa: E402
 
-HORIZONS = [4, 8, 16, 32, 48]   # barras 15m = 1h, 2h, 4h, 8h, 12h
+HORIZONS = [4, 8, 16, 32, 48]   # BARRAS do tf medido (15m: 1h..12h)
 _CTX_BARS = 30                  # historico p/ ancorar entry + ATR
+# Duracao de barra por tf. Copia LOCAL: juice importa HORIZONS deste modulo,
+# entao excursion NAO pode importar de juice (circularidade).
+_BAR_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000}
 
 
 def _iso_to_ms(iso: str) -> int:
@@ -67,15 +70,19 @@ def collapse_events(signals: list, cooldown_bars: int) -> list:
     return out
 
 
-def measure_event(conn, symbol: str, bar_ts: int, direction: str):
-    """Mede excursao forward de UM evento, em ATR. Entry = close da barra do
-    sinal (bar_ts); forward = barras bar_ts+1 ... bar_ts+48 (nunca a propria
-    barra do sinal). atr<=0 -> None. Borda direita do store (< 48 barras
-    forward) -> None. Retorna {symbol, bar_ts, direction, atr, mfe{H}, mae{H},
-    entry, fwd{H}, fav, adv} — fwd = retorno forward ASSINADO no fechamento de
-    cada horizonte, em ATR, sem piso (pode ser negativo); fav/adv = excursao
-    favoravel/adversa POR BARRA (listas de 48, em ATR, sem piso)."""
-    ctx = read_candles(conn, symbol, "15m", end_ms=bar_ts)
+def measure_event(conn, symbol: str, bar_ts: int, direction: str,
+                  tf: str = "15m"):
+    """Mede excursao forward de UM evento, em ATR, no timeframe `tf`
+    (default "15m"; tf invalido -> KeyError). Entry = close da barra do
+    sinal (bar_ts); forward = barras bar_ts+1 ... bar_ts+48 do MESMO tf
+    (nunca a propria barra do sinal). atr<=0 -> None. Borda direita do
+    store (< 48 barras forward) -> None. Retorna {symbol, bar_ts,
+    direction, atr, mfe{H}, mae{H}, entry, fwd{H}, fav, adv} — fwd =
+    retorno forward ASSINADO no fechamento de cada horizonte, em ATR, sem
+    piso (pode ser negativo); fav/adv = excursao favoravel/adversa POR
+    BARRA (listas de 48, em ATR, sem piso). HORIZONS sao BARRAS do tf."""
+    bar = _BAR_MS[tf]
+    ctx = read_candles(conn, symbol, tf, end_ms=bar_ts)
     if not ctx:
         return None
     ctx = ctx[-_CTX_BARS:]
@@ -84,9 +91,9 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str):
     if atr <= 0:
         return None
 
-    fwd = read_candles(conn, symbol, "15m",
-                       start_ms=bar_ts + BAR_15M_MS,
-                       end_ms=bar_ts + max(HORIZONS) * BAR_15M_MS)
+    fwd = read_candles(conn, symbol, tf,
+                       start_ms=bar_ts + bar,
+                       end_ms=bar_ts + max(HORIZONS) * bar)
     if len(fwd) < max(HORIZONS):   # exclusao de borda direita — regra travada
         return None
 
