@@ -92,16 +92,41 @@ a regime; H=4 é o menos regime-sensível, não o mais forte. TON 0/0/0/9
 confirma história curta (fecha a correção de 04/07).
 Exploratório anotado (não primário): holds longos fortes no regime atual.
 
+## 2026-07-05/06 — PR-4 (#139) validado — regressão 15m byte-idêntica
+Pipeline pr4_pipeline_20260705_1634: rerun 15m pós-parametrização reproduziu
+bracket_exato_20260703_1135 byte a byte (da zona de custo em diante) antes
+de liberar o 4h. Instrumento multi-tf validado em produção.
+
+## 2026-07-05 — PRÉ-REGISTRO Estágio 1 (travado ANTES da leitura do 4h)
+Nulo por deslocamento circular (R=1000; preserva contagem, espaçamento,
+sequência de direções/tilt e clustering por símbolo; destrói só o
+alinhamento com preço). Block bootstrap temporal (bins de 14 dias-
+calendário, 2000 réplicas). Gates @6bps, Bonferroni ×2 embutido:
+MONEY = percentil 2,5 do block bootstrap do líquido > 0;
+SKILL = p do nulo circular < 0,025.
+Vereditos: FORTE (algum primário passa em ambos) / BETA (algum passa só
+MONEY; avança ao Estágio 2 com anotação "valor no tilt/regime, não no
+timing") / MORTO (nenhum passa MONEY).
+Primários imutáveis: temporal H=4 | bracket S=1.5/T=6.0/H=4 (tf 4h).
+
+## 2026-07-06 — bracket exato 4h (janela cheia) — CANDIDATO-TAKER*
+Config: tf=4h, TIER1(20), 2024-05-22→2026-06-21, n=1365 (borda: 15).
+Log: pr4_pipeline_20260705_1634 (VM).
+36/36 células EV>0 nos dois custos (contraste 15m: 1/36 @12). lo95(iid)>0:
+12 células @6, 3 @12. Sweet spot H=4–8 (16–32h); H=16 enfraquece.
+CÉLULA PRIMÁRIA S=1.5/T=6.0/H=4: @6 EV +24.6, lo95 +3.6, p=.010 (iid);
+@12 EV +18.6, lo95 −2.4, p=.047. Anatomia 77/21/1.7 (flat/stop/alvo) =
+temporal H=4 com stop-desastre; custo do seguro ≈2.6 bps vs juice @6.
+*As 3 células do veredito automático (1.0/4.0/8; 1.0/6.0/4; 1.5/4.0/8) são
+melhor-de-36 → EXPLORATÓRIAS, não promovíveis. Gate final = Estágio 1
+(block + shift); iid é referência otimista por construção.
+
 ## PENDENTES (pré-registrados)
-- PR-4: parametrizar tf em excursion.measure_event + bracket (--tf).
-  Pré-registro 4h: GRID_H=(4,8,16); célula PRIMÁRIA = S=1.5/T=6.0/H=4;
-  resto exploratório. Regressão obrigatória: 15m byte-idêntico ao log
-  bracket_exato_20260703_1135 antes de rodar 4h.
-- Rodada bracket 4h (2024-05-22→2026-06-21, custos 12/6) após PR-4.
-- PR-5 — Estágio 1: nulo casado + bootstrap por bloco temporal +
-  correção de multiplicidade sobre os primários. Spec após inspeção
-  de null_model.py.
-- Estágio 2 (condicional): shadow execution p/ premissa maker.
+- PR-5 `stage1.py`: branch no remoto aguardando relatório/review/merge.
+- Rodada stage1 4h janela cheia → VEREDITO Estágio 1 (FORTE/BETA/MORTO).
+- Estágio 2 (condicional): shadow execution p/ premissa maker/taker.
 - Auditoria de indexação posicional (replay/sweep/null_model).
 - Hardening: guarda de contiguidade por timestamp no juice.
 - Backfill 15m profundo: só se Estágio 1 passar.
+- Higiene (baixa): ~45 logs v8 commitados + whitelist do .gitignore.
+
