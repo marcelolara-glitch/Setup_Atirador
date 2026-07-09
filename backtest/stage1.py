@@ -29,6 +29,26 @@ BLOCK_DAYS = 14                            # bin de calendario
 SEED = 1337
 
 
+def tsmom_entries(closes, tss, lookback, sep_bars, bar_ms):
+    """Entradas TSMOM canonicas (pre-registro 08/07): sinal por barra =
+    closes[i]/closes[i-lookback] - 1 (LONG>0, SHORT<0, ==0 sem sinal).
+    Espacamento por direcao em TEMPO, identico a _trend_entries
+    (last persiste entre clusters; 1a barra de cada troca entra se o gap
+    da MESMA direcao permitir)."""
+    last = {"LONG": None, "SHORT": None}
+    out = []
+    for i in range(lookback, len(closes)):
+        r = closes[i] / closes[i - lookback] - 1.0
+        if r == 0.0:
+            continue
+        d = "LONG" if r > 0 else "SHORT"
+        ts = tss[i]
+        if last[d] is None or ts - last[d] >= sep_bars * bar_ms:
+            out.append({"bar_ts": ts, "direction": d})
+            last[d] = ts
+    return out
+
+
 def shift_idx(i: int, offset: int, n: int) -> int:
     """Deslocamento circular de indice dentro de n barras elegiveis."""
     return (i + offset) % n
@@ -39,48 +59,64 @@ def bin_of(ts: int, t0: int, block_ms: int) -> int:
     return (ts - t0) // block_ms
 
 
-def run(store, symbols, start_iso, end_iso, tf):
+def run(store, symbols, start_iso, end_iso, tf,
+        detector="classifier", lookback=84, hold=48):
     """Pre-computa barras elegiveis (measure_event LONG) por simbolo, deriva os
-    dois primarios por entrada TREND-aligned e roda os gates MONEY/SKILL."""
-    from backtest.candle_store import connect                        # noqa: E402
+    dois primarios por entrada e roda os gates MONEY/SKILL. `detector` escolhe
+    o gerador de entradas: classifier (regime TREND-aligned, intocado) ou tsmom
+    (momentum time-series, pre-registro 08/07)."""
+    from backtest.candle_store import connect, read_candles          # noqa: E402
     from backtest.excursion import _iso_to_ms, measure_event         # noqa: E402
     from backtest.juice import (_boot_mean, _regime_timeline,        # noqa: E402
-                                 _trend_entries)
+                                 _trend_entries, SEP_BARS, _BAR_MS)
     from backtest.bracket import first_touch                         # noqa: E402
     conn = connect(store)
     start_ms, end_ms = _iso_to_ms(start_iso), _iso_to_ms(end_iso)
     block_ms = BLOCK_DAYS * 86_400_000
     gc = GATE_COST / 1e4
+    # perfil de horizontes: classifier mantem o pre-registro (H=4); tsmom usa
+    # o hold escolhido nos dois primarios. S/T ficam PRIM_S/PRIM_T sempre.
+    temp_h = TEMP_H if detector == "classifier" else hold
+    brk_h = PRIM_H if detector == "classifier" else hold
 
     def vals(entry, direction):
         """(temporal_ATR, bracket_ATR, atr_pct) da barra, simetria p/ SHORT."""
-        atr_pct, fwd4, fav4, adv4 = entry
+        atr_pct, fwdh, favh, advh = entry
         if direction == "SHORT":
-            fwd4, fav4, adv4 = -fwd4, adv4, fav4
-        brk, _c = first_touch(fav4, adv4, fwd4, PRIM_S, PRIM_T, PRIM_H)
-        return fwd4, brk, atr_pct
+            fwdh, favh, advh = -fwdh, advh, favh
+        brk, _c = first_touch(favh, advh, fwdh, PRIM_S, PRIM_T, brk_h)
+        return fwdh, brk, atr_pct
     elig, entries, excluida = {}, [], 0
     for sym in symbols:
-        tl = _regime_timeline(conn, sym, tf, start_ms, end_ms)
-        cache, tss = [], []
-        for ts in sorted(tl):
+        if detector == "classifier":
+            tl = _regime_timeline(conn, sym, tf, start_ms, end_ms)
+            cand_ts = sorted(tl)
+            evs = _trend_entries(tl, tf)
+        else:
+            cndl = read_candles(conn, sym, tf, start_ms=start_ms, end_ms=end_ms)
+            closes = [c["close"] for c in cndl]
+            tss = [c["ts"] for c in cndl]
+            cand_ts = tss[lookback:]
+            evs = tsmom_entries(closes, tss, lookback, SEP_BARS, _BAR_MS[tf])
+        cache, cts = [], []
+        for ts in cand_ts:
             m = measure_event(conn, sym, ts, "LONG", tf=tf)
             if m is None:
                 continue
-            e = (m["atr"] / m["entry"], m["fwd"][TEMP_H],
-                 m["fav"][:PRIM_H], m["adv"][:PRIM_H])
+            e = (m["atr"] / m["entry"], m["fwd"][temp_h],
+                 m["fav"][:brk_h], m["adv"][:brk_h])
             if not cache:   # guarda de simetria na 1a barra elegivel do simbolo
                 ms = measure_event(conn, sym, ts, "SHORT", tf=tf)
-                assert abs(ms["fwd"][TEMP_H] + e[1]) < 1e-9 and all(
-                    abs(a - b) < 1e-9 for a, b in zip(ms["fav"][:PRIM_H], e[3])
+                assert abs(ms["fwd"][temp_h] + e[1]) < 1e-9 and all(
+                    abs(a - b) < 1e-9 for a, b in zip(ms["fav"][:brk_h], e[3])
                 ) and all(
-                    abs(a - b) < 1e-9 for a, b in zip(ms["adv"][:PRIM_H], e[2])
+                    abs(a - b) < 1e-9 for a, b in zip(ms["adv"][:brk_h], e[2])
                 ), f"simetria quebrada em {sym}"
             cache.append(e)
-            tss.append(ts)
+            cts.append(ts)
         elig[sym] = cache
-        pos = {t: i for i, t in enumerate(tss)}
-        for ev in _trend_entries(tl, tf):
+        pos = {t: i for i, t in enumerate(cts)}
+        for ev in evs:
             i = pos.get(ev["bar_ts"])
             if i is None:
                 excluida += 1
@@ -144,7 +180,8 @@ def run(store, symbols, start_iso, end_iso, tf):
               ps_brk, ps_brk < 0.025)]
     return {"tf": tf, "start": start_iso, "end": end_iso,
             "n_symbols": len(symbols), "n_entries": len(entries),
-            "excluida": excluida, "table": table, "gates": gates}
+            "excluida": excluida, "table": table, "gates": gates,
+            "detector": detector, "lookback": lookback, "hold": hold}
 
 
 def main() -> int:
@@ -155,19 +192,32 @@ def main() -> int:
     ap.add_argument("--end", required=True, help="data ISO, ex. 2026-06-21")
     ap.add_argument("--store", default=str(ROOT / "backtest" / "candles_v9.db"))
     ap.add_argument("--symbols", nargs="+", default=None, help="default: TIER1")
+    ap.add_argument("--detector", choices=["classifier", "tsmom"],
+                    default="classifier")
+    ap.add_argument("--lookback", type=int, choices=[42, 84, 168], default=84,
+                    help="efeito apenas com --detector tsmom")
+    ap.add_argument("--hold", type=int, choices=[16, 32, 48], default=48,
+                    help="efeito apenas com --detector tsmom")
     args = ap.parse_args()
     from backtest.sweep import TIER1        # noqa: E402
     symbols = args.symbols if args.symbols else TIER1
     random.seed(SEED)
+    suffix = (f" detector=tsmom L={args.lookback} H={args.hold}"
+              if args.detector == "tsmom" else "")
     print(f"[stage1] tf={args.tf} janela {args.start}->{args.end} "
-          f"symbols={len(symbols)}", file=sys.stderr)
-    r = run(args.store, symbols, args.start, args.end, args.tf)
+          f"symbols={len(symbols)}{suffix}", file=sys.stderr)
+    r = run(args.store, symbols, args.start, args.end, args.tf,
+            detector=args.detector, lookback=args.lookback, hold=args.hold)
 
     print(f"\n===== STAGE1 (nulo circular + block bootstrap, {r['tf']}) =====")
     print(f"janela {r['start']} -> {r['end']} | {r['n_symbols']} simbolos | "
           f"entradas: {r['n_entries']} | excluidas_borda: {r['excluida']}")
-    print(f"primarios: temporal H={TEMP_H} | "
-          f"bracket S={PRIM_S} T={PRIM_T} H={PRIM_H}")
+    if r["detector"] == "tsmom":
+        print(f"primarios: TSMOM L={r['lookback']} | temporal H={r['hold']} | "
+              f"bracket S={PRIM_S} T={PRIM_T} H={r['hold']}")
+    else:
+        print(f"primarios: temporal H={TEMP_H} | "
+              f"bracket S={PRIM_S} T={PRIM_T} H={PRIM_H}")
     print(f"\n{'primario':>9} | {'custo':>5} | {'n':>5} | {'EV(bps)':>8} | "
           f"{'iid_p':>6}   (tabela informativa)")
     for name, cost, n, ev, p in r["table"]:
@@ -178,17 +228,23 @@ def main() -> int:
         print(f"{name:>9} | {ev6:>9.1f} | {bp:>9.1f} | "
               f"{('sim' if money else 'nao'):>5} | {ps:>7.3f} | "
               f"{('sim' if skill else 'nao'):>5}")
-    forte = [g[0] for g in r["gates"] if g[3] and g[5]]
-    money = [g[0] for g in r["gates"] if g[3]]
-    print("\n===== VEREDITO (regras pre-registradas) =====")
-    if forte:
-        print(f"FORTE: {', '.join(forte)} com MONEY e SKILL — edge apos custo, "
-              "presente no timing.")
-    elif money:
-        print(f"BETA: {', '.join(money)} com MONEY, nenhum com SKILL — avanca "
-              "com anotacao: valor no tilt/regime, nao no timing.")
+    exploratorio = (r["detector"] == "tsmom"
+                    and (r["lookback"], r["hold"]) != (84, 48))
+    if exploratorio:
+        print(f"\nEXPLORATORIO (L={r['lookback']}, H={r['hold']}): celulas nao "
+              "promoviveis (pre-registro 08/07) — gates acima sao informativos.")
     else:
-        print("MORTO: nenhum primario com MONEY.")
+        forte = [g[0] for g in r["gates"] if g[3] and g[5]]
+        money = [g[0] for g in r["gates"] if g[3]]
+        print("\n===== VEREDITO (regras pre-registradas) =====")
+        if forte:
+            print(f"FORTE: {', '.join(forte)} com MONEY e SKILL — edge apos custo, "
+                  "presente no timing.")
+        elif money:
+            print(f"BETA: {', '.join(money)} com MONEY, nenhum com SKILL — avanca "
+                  "com anotacao: valor no tilt/regime, nao no timing.")
+        else:
+            print("MORTO: nenhum primario com MONEY.")
     print("caveat: agregado 2a (OOS ja aprovado no gate anterior); correlacao "
           "cross-symbol tratada por bins de calendario; skill-null preserva "
           "tilt.")
