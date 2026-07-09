@@ -178,13 +178,34 @@ REGRA DO CEMITÉRIO (nova, permanente): toda rodada do stage1 —
 exploratória ou não — ganha entrada no ledger ANTES do teste seguinte.
 A família de testes cresce ⇒ a correção cresce junto.
 
+## 2026-07-09 — CORREÇÃO de instrumentação: wrapper do pipeline PR-6
+`bash -c '...' _ "$OLD"` entrega $OLD em $1, e o script lia "$2" → o diff
+comparou VAZIO × rerun ("0a1,19") e o guard, corretamente fail-closed,
+bloqueou o TSMOM. A regressão em si PASSOU: o rerun reproduziu o log MORTO
+número a número (PR-6/#141 validado em produção). Bug do wrapper — autoria
+do revisor, não do Code. Lição permanente: wrapper de shell é código;
+testa-se antes de emitir.
+
+## 2026-07-09 — FASE A: TSMOM canônico L=84/H=48, TIER1 — VEREDITO: MORTO
+Config: 4h, 2024-05-22→2026-06-21, n=2374 (borda 27), gates de 08/07.
+Log: faseA_tsmom_20260709_2013 (VM).
+  temporal H=48:    EV@6 +32.9 | blockP2.5 −58.4 → MONEY NÃO | p_shift 0.075 → SKILL NÃO
+  bracket 1.5/6/48: EV@6 +16.0 | blockP2.5 −40.4 → MONEY NÃO | p_shift 0.318 → SKILL NÃO
+MORTO nos dois gates — mais morto que o classifier (SKILL 0.004 lá).
+Achado comparativo: em majors, o timing do classificador de regime BATE o
+TSMOM canônico (0.004 vs 0.075). EV pontual maior (32.9) mas variância de
+hold 8d ~3× engole o CI; bins 14d vs hold 8d tendem a lisonjear o gate ⇒
+falha a fortiori. Stop 1.5 ATR em 8d custa ~17 bps (16.0 vs 32.9).
+Fase B (alts) segue por pré-registro — independe de A.
+
 ## PENDENTES (pré-registrados)
-- Marcelo: travar ou contestar o pré-registro acima.
-- PR-6: detector plugável no stage1 (--detector classifier|tsmom,
-  --lookback); regressão obrigatória: caminho classifier reproduz o log
-  MORTO byte a byte antes de qualquer rodada tsmom.
-- Rodada Fase A (TIER1). Depois: backfill TIER2 (snapshot no ledger) →
-  Fase B.
+- Exploratórios Fase A: batch único, 8 combos L×H da família registrada.
+  RULING cemitério: família declarada em bloco ⇒ 1 entrada consolidada
+  (não há seleção sequencial entre elas).
+- Snapshot TIER2 (40 perps USDT por volume 24h, ex-TIER1, ≥400d 4h)
+  congelado no ledger → backfill 4h → FASE B (mesmos gates/primários).
+- Se Fase B MORTO ⇒ programa TSMOM morre; próximo do menu 01/07
+  (Donchian/Turtle) exige novo pré-registro.
 - Auditoria de indexação posicional (replay/sweep/null_model).
 - Hardening: guarda de contiguidade por timestamp no juice.
 - Higiene (baixa): ~45 logs v8 + whitelist do .gitignore.
