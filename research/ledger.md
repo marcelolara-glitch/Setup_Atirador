@@ -121,12 +121,29 @@ temporal H=4 com stop-desastre; custo do seguro ≈2.6 bps vs juice @6.
 melhor-de-36 → EXPLORATÓRIAS, não promovíveis. Gate final = Estágio 1
 (block + shift); iid é referência otimista por construção.
 
+## 2026-07-08 — ESTÁGIO 1 (stage1.py, 4h, janela cheia) — VEREDITO: MORTO
+Config: tf=4h, TIER1(20), 2024-05-22→2026-06-21, n=1365 (borda 15).
+Log: mais recente logs/stage1_*.log (VM). Gates pré-registrados @6bps, ×2:
+  temporal H=4:      EV@6 +27.7 | blockP2.5 −13.3 → MONEY NÃO | p_shift 0.004 → SKILL SIM
+  bracket 1.5/6/4:   EV@6 +24.6 | blockP2.5 −17.7 → MONEY NÃO | p_shift 0.004 → SKILL SIM
+MORTO: nenhum primário com MONEY. Primários NÃO avançam ao Estágio 2.
+Quadrante inédito SKILL-sim/MONEY-não: timing do classificador bate colocação
+cega com mesmo tilt (1º positivo Bonferroni-robusto da campanha), mas a média
+líquida through-cycle não é distinguível de zero sob bootstrap por bloco —
+lucro concentrado em janelas trending; iid p=0.009 era lisonja (N efetivo
+≈ blocos, não trades). Reconciliações: temporal 27.7 ↔ juice 27.2 (15 bordas);
+bracket 24.6 ↔ célula primária do bracket4h. Efeito real, episódico, pequeno
+demais para promover. MORTO ≠ provado-zero.
+Nits do PR-5 (não-bloqueantes): n=0 degrada p/ MORTO sem abort; frase BETA
+imprecisa no caso cruzado SKILL-só/MONEY-só; p_shift sem correção +1.
+
 ## PENDENTES (pré-registrados)
-- PR-5 `stage1.py`: branch no remoto aguardando relatório/review/merge.
-- Rodada stage1 4h janela cheia → VEREDITO Estágio 1 (FORTE/BETA/MORTO).
-- Estágio 2 (condicional): shadow execution p/ premissa maker/taker.
+- Rota pós-MORTO (registrada 04/07): detector TSMOM canônico.
+  Sequência: (1) PRÉ-REGISTRO do programa TSMOM (lookbacks, hold, universo,
+  critérios de morte/promoção) antes de qualquer código; (2) PR-6:
+  plugabilidade de detector no stage1 — trocar o payload, manter o juiz
+  calibrado; (3) backfill 4h de alts em paralelo (flanco não testado).
+- Estágio 2: N/A para os primários mortos.
 - Auditoria de indexação posicional (replay/sweep/null_model).
 - Hardening: guarda de contiguidade por timestamp no juice.
-- Backfill 15m profundo: só se Estágio 1 passar.
 - Higiene (baixa): ~45 logs v8 commitados + whitelist do .gitignore.
-
