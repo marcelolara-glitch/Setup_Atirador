@@ -137,13 +137,54 @@ demais para promover. MORTO ≠ provado-zero.
 Nits do PR-5 (não-bloqueantes): n=0 degrada p/ MORTO sem abort; frase BETA
 imprecisa no caso cruzado SKILL-só/MONEY-só; p_shift sem correção +1.
 
+## 2026-07-08 — PRÉ-REGISTRO: programa TSMOM canônico (rota pós-MORTO)
+Travado antes de qualquer código ou rodada. Juiz: stage1 (calibrado 07/07,
+oracle + controle morto), INALTERADO — PR-6 troca só o gerador de entradas.
+
+SINAL (canônico, sem classificador): a cada barra 4h,
+ret_L = close_t/close_{t−L} − 1; LONG se >0, SHORT se <0; sem skip.
+Entradas: primeira barra de cada troca de sinal + reentrada a cada 48
+barras enquanto o sinal persiste (semântica idêntica a _trend_entries —
+premissas de espaçamento/clustering do juiz preservadas).
+Elegibilidade: L barras de história + 48 forward (measure_event).
+
+PRIMÁRIOS (Bonferroni ×2 por fase, imutáveis):
+  P1 temporal: L=84 (2 semanas), H=48 (8 dias)
+  P2 bracket:  L=84, S=1.5/T=6.0, H=48
+EXPLORATÓRIOS (reportados, jamais promovíveis nesta rodada):
+  L ∈ {42, 168} × H ∈ {16, 32} × ambos os exits.
+Limite de instrumento registrado: holds > 48 barras (8d) exigem cirurgia
+em HORIZONS/excursion — fora deste programa; se vier, é novo pré-registro.
+
+FASES (famílias separadas; B roda independente do veredito de A):
+  A: TIER1 (20 majors) — dados existentes, roda imediato pós-PR-6.
+  B: TIER2 = 40 perps USDT seguintes por volume 24h (snapshot congelado
+     no ledger no dia do backfill), história 4h ≥ 400 dias, ex-TIER1.
+     Caveat registrado: snapshot atual carrega viés de sobrevivência
+     (flatteia a perna LONG) — a leitura desconta isso explicitamente.
+
+GATES por fase (custo 6 bps, mesmos limiares de 05/07):
+  MONEY = blockP2.5 (bins 14d, 2000 réplicas) do líquido > 0
+  SKILL = p do nulo circular < 0.025
+  Vereditos FORTE / BETA / MORTO com semântica inalterada.
+OOS 4 janelas @0bps: DIAGNÓSTICO reportado, NÃO gate — o block bootstrap
+é o teste through-cycle. Fixado agora para não re-litigar após os números.
+
+MORTE DO PROGRAMA: A MORTO e B MORTO ⇒ TSMOM canônico morre; o candidato
+seguinte do menu de 01/07 (Donchian/Turtle) exige novo pré-registro.
+PROMOÇÃO: FORTE ou BETA em qualquer fase ⇒ Estágio 2 (shadow execution).
+
+REGRA DO CEMITÉRIO (nova, permanente): toda rodada do stage1 —
+exploratória ou não — ganha entrada no ledger ANTES do teste seguinte.
+A família de testes cresce ⇒ a correção cresce junto.
+
 ## PENDENTES (pré-registrados)
-- Rota pós-MORTO (registrada 04/07): detector TSMOM canônico.
-  Sequência: (1) PRÉ-REGISTRO do programa TSMOM (lookbacks, hold, universo,
-  critérios de morte/promoção) antes de qualquer código; (2) PR-6:
-  plugabilidade de detector no stage1 — trocar o payload, manter o juiz
-  calibrado; (3) backfill 4h de alts em paralelo (flanco não testado).
-- Estágio 2: N/A para os primários mortos.
+- Marcelo: travar ou contestar o pré-registro acima.
+- PR-6: detector plugável no stage1 (--detector classifier|tsmom,
+  --lookback); regressão obrigatória: caminho classifier reproduz o log
+  MORTO byte a byte antes de qualquer rodada tsmom.
+- Rodada Fase A (TIER1). Depois: backfill TIER2 (snapshot no ledger) →
+  Fase B.
 - Auditoria de indexação posicional (replay/sweep/null_model).
 - Hardening: guarda de contiguidade por timestamp no juice.
-- Higiene (baixa): ~45 logs v8 commitados + whitelist do .gitignore.
+- Higiene (baixa): ~45 logs v8 + whitelist do .gitignore.
