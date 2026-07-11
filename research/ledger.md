@@ -198,14 +198,28 @@ hold 8d ~3× engole o CI; bins 14d vs hold 8d tendem a lisonjear o gate ⇒
 falha a fortiori. Stop 1.5 ATR em 8d custa ~17 bps (16.0 vs 32.9).
 Fase B (alts) segue por pré-registro — independe de A.
 
+## 2026-07-11 — FASE A exploratórios: família TSMOM L×H, TIER1 — CONSOLIDADO
+8 rodadas (batch único, ruling de família declarada): L∈{42,84,168} ×
+H∈{16,32,48} menos a primária. Log: faseA_explor_20260711_0145 (VM).
+MONEY: 0 de 16 células (blockP2.5 −16 a −81) — somado às 2 primárias,
+18/18 negativo ⇒ o MORTO da Fase A vale para a FAMÍLIA, não para a célula.
+Estrutura: L=42 morto; L=168 fraco/negativo (bracket <0 em todos os holds);
+L=84 domina (EV@6 27–33 nos três holds) ⇒ pré-registro escolheu o L certo.
+Único SKILL: L=84/H=16 p_shift 0.020 — melhor-de-16, não sobrevive a
+correção, MONEY negativo ⇒ observação, não candidato. Custo do stop cresce
+com hold (gap bracket−temporal: 1.8→6.9→16.9 bps em H 16→32→48).
+Nota de família ampliada: programa paralelo (SMC_Monitor) soma à contagem
+de hipóteses do pesquisador — p marginais de ambos leem-se com isso.
+
 ## PENDENTES (pré-registrados)
-- Exploratórios Fase A: batch único, 8 combos L×H da família registrada.
-  RULING cemitério: família declarada em bloco ⇒ 1 entrada consolidada
-  (não há seleção sequencial entre elas).
-- Snapshot TIER2 (40 perps USDT por volume 24h, ex-TIER1, ≥400d 4h)
-  congelado no ledger → backfill 4h → FASE B (mesmos gates/primários).
-- Se Fase B MORTO ⇒ programa TSMOM morre; próximo do menu 01/07
-  (Donchian/Turtle) exige novo pré-registro.
+- Snapshot TIER2 CORRIGIDO (emenda: subjacente cripto, ex-TradFi
+  XAU/XAG/XAUT/PAXG) → congelar no ledger com os 2 asteriscos declarados
+  (sobrevivência flatteia LONG; custo executável de memes > 6bps ⇒
+  FORTE/BETA na Fase B nasce condicionado ao Estágio 2).
+- PR-7 (--symbols no backfill_okx): despachar/revisar/mergear.
+- Backfill TIER2 4h ≥400d (CPU livre agora) → FASE B: primários L=84/H=48
+  inalterados; grade exploratória idem; gates idem. Se MORTO ⇒ programa
+  TSMOM morre; próximo do menu 01/07 (Donchian/Turtle) com novo pré-registro.
 - Auditoria de indexação posicional (replay/sweep/null_model).
 - Hardening: guarda de contiguidade por timestamp no juice.
 - Higiene (baixa): ~45 logs v8 + whitelist do .gitignore.
