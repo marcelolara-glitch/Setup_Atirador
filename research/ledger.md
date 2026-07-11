@@ -211,15 +211,33 @@ com hold (gap bracket−temporal: 1.8→6.9→16.9 bps em H 16→32→48).
 Nota de família ampliada: programa paralelo (SMC_Monitor) soma à contagem
 de hipóteses do pesquisador — p marginais de ambos leem-se com isso.
 
+## 2026-07-11 — TIER2 CONGELADA (snapshot 21:00 UTC) — FASE B LIBERADA
+Critérios: 40 perps USDT por notional 24h, ex-TIER1, ex-TradFi (emenda
+XAU/XAG/XAUT/PAXG), listTime ≥ 400d, live. 155 elegíveis. UNIVERSO
+CONGELADO (nenhum símbolo entra ou sai):
+HYPE VIRTUAL PEPE UNI AAVE HMSTR PARTI TRUMP KAITO XLM ONDO FIL HBAR
+GRASS THETA MOODENG TAO LDO IOTA INJ JTO ETHFI CHZ MORPHO ORDI SHIB
+AGLD PENGU TIA ICP FARTCOIN CRV PYTH PLUME WIF BONK BLUR EIGEN ZRO ETC
+(sufixo USDT). Deriva registrada: snapshot contaminado de 01:53 (XAU)
+difere deste em ~8 nomes — ranking por volume deriva em horas; o
+congelamento existe para isso.
+Backfill 740d/4h: 40 jobs, 0 falhas, 233s; 429s 100% recuperados na 1ª
+retry. Piloto pré-existente estendido sem emenda (AAVE/FIL/INJ/TIA/ICP
+779d). GAP-SCAN: 0 buracos em 40/40; mínimo PLUME 429d ≥ 400 ⇒ regras
+mecânicas de exclusão dispararam ZERO vezes.
+JANELA Fase B: 2024-05-22→2026-06-21 (idêntica à Fase A; ~20d pós-21/06
+deliberadamente fora — sem segunda olhada em janela estendida). Proibido
+refresh de TIER1 antes da Fase B. Ruído "FALTAM 143" no coverage = cauda
+defasada do store + eras-piloto, sem ação.
+Asteriscos pré-declarados: sobrevivência flatteia perna LONG; custo
+executável de memes > premissa 6bps ⇒ FORTE/BETA nasce condicionado ao
+Estágio 2 com força extra.
+
 ## PENDENTES (pré-registrados)
-- Snapshot TIER2 CORRIGIDO (emenda: subjacente cripto, ex-TradFi
-  XAU/XAG/XAUT/PAXG) → congelar no ledger com os 2 asteriscos declarados
-  (sobrevivência flatteia LONG; custo executável de memes > 6bps ⇒
-  FORTE/BETA na Fase B nasce condicionado ao Estágio 2).
-- PR-7 (--symbols no backfill_okx): despachar/revisar/mergear.
-- Backfill TIER2 4h ≥400d (CPU livre agora) → FASE B: primários L=84/H=48
-  inalterados; grade exploratória idem; gates idem. Se MORTO ⇒ programa
-  TSMOM morre; próximo do menu 01/07 (Donchian/Turtle) com novo pré-registro.
+- FASE B primário: TSMOM L=84/H=48, TIER2(40), gates de 08/07 inalterados.
+- Pós-primário: exploratórios 8 combos (batch único, entrada consolidada).
+- Se A e B MORTO ⇒ programa TSMOM morre; Donchian/Turtle herda com novo
+  pré-registro. FORTE/BETA ⇒ Estágio 2 (shadow execution).
 - Auditoria de indexação posicional (replay/sweep/null_model).
 - Hardening: guarda de contiguidade por timestamp no juice.
 - Higiene (baixa): ~45 logs v8 + whitelist do .gitignore.
