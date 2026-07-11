@@ -87,7 +87,7 @@ async def _fetch_job(session, sem, symbol, tf_label, bar, start_ms, end_ms):
             return symbol, tf_label, [], f"{type(e).__name__}: {e}"
 
 
-async def main_async(days: int, db_path: str, tfs: list) -> int:
+async def main_async(days: int, db_path: str, tfs: list, symbols: list) -> int:
     now_ms = int(time.time() * 1000)
     # janela por TF, calculada UMA vez (todas as moedas do mesmo TF compartilham)
     sel = {k: TIMEFRAMES[k] for k in tfs}
@@ -97,8 +97,8 @@ async def main_async(days: int, db_path: str, tfs: list) -> int:
         start_ms = end_ms - days * 24 * 60 * 60 * 1000
         windows[tf_label] = (bar, bar_ms, start_ms, end_ms)
 
-    total = len(PILOT_TOKENS) * len(sel)
-    print(f"[backfill] iniciando: {len(PILOT_TOKENS)} tokens x {len(sel)} TFs "
+    total = len(symbols) * len(sel)
+    print(f"[backfill] iniciando: {len(symbols)} tokens x {len(sel)} TFs "
           f"= {total} jobs | janela {days}d | TFs={','.join(sel)}",
           file=sys.stderr, flush=True)
     t0 = time.time()
@@ -109,7 +109,7 @@ async def main_async(days: int, db_path: str, tfs: list) -> int:
     async with aiohttp.ClientSession() as session:
         jobs = [
             _fetch_job(session, sem, symbol, tf_label, bar, start_ms, end_ms)
-            for symbol in PILOT_TOKENS
+            for symbol in symbols
             for tf_label, (bar, bar_ms, start_ms, end_ms) in windows.items()
         ]
         # as_completed = feedback AO VIVO: imprime cada job assim que termina,
@@ -146,12 +146,14 @@ def main() -> int:
     ap.add_argument("--db", type=str, default=str(ROOT / "backtest" / "candles_v9.db"))
     ap.add_argument("--timeframes", type=str, default=",".join(TIMEFRAMES),
                     help="TFs a backfillar, separados por virgula (default: todos)")
+    ap.add_argument("--symbols", nargs="+", default=None,
+                    help="default: PILOT_TOKENS")
     args = ap.parse_args()
     tfs = [t.strip() for t in args.timeframes.split(",") if t.strip()]
     bad = [t for t in tfs if t not in TIMEFRAMES]
     if bad:
         ap.error(f"TF invalido: {bad}; validos: {list(TIMEFRAMES)}")
-    return asyncio.run(main_async(args.days, args.db, tfs))
+    return asyncio.run(main_async(args.days, args.db, tfs, args.symbols or PILOT_TOKENS))
 
 
 if __name__ == "__main__":
