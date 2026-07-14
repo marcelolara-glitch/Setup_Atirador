@@ -233,11 +233,33 @@ Asteriscos pré-declarados: sobrevivência flatteia perna LONG; custo
 executável de memes > premissa 6bps ⇒ FORTE/BETA nasce condicionado ao
 Estágio 2 com força extra.
 
+## 2026-07-12 — FASE B: TSMOM L=84/H=48, TIER2(40) — VEREDITO: MORTO
+Config: 4h, 2024-05-22→2026-06-21, n=4585 (borda 0 — store TIER2 até 11/07
+deu forward real às entradas tardias; assimetria inofensiva vs Fase A,
+registrada). Log: faseB_tsmom_20260711_2252 (VM).
+  temporal: EV@6 +9.0  | blockP2.5 −88.7 → MONEY NÃO | p_shift 0.386 → SKILL NÃO
+  bracket:  EV@6 +11.4 | blockP2.5 −41.9 → MONEY NÃO | p_shift 0.153 → SKILL NÃO
+MORTO nos dois gates. A-FORTIORI: resultado veio COM o viés de sobrevivência
+pré-declarado a favor da perna LONG. EV/trade em alts = 1/3 do de majors —
+o território da alegação acadêmica falhou mais forte que o controle.
+Observação: bracket > temporal pela 1ª vez (stop paga em cauda esquerda de
+memes). Pendente: batch exploratório 8 combos (pré-registrado, informativo).
+
+## 2026-07-12 — PRÉ-COMPROMISSO: fechamento de família (travado antes
+## do pré-registro Donchian)
+Donchian/Turtle herda o menu de 01/07 com PRIOR REBAIXADO (mesma família
+de sinal que TSMOM, morto em 2 universos). CLÁUSULA: se Donchian morrer
+nos gates vigentes (A e B), a família "tendência direcional por ativo
+sobre OHLCV" FECHA INTEIRA — sem variantes de gatilho (Keltner, NR4/7,
+VCP, squeeze breakout etc.) — e a decisão sobe para CLASSE DE DADO:
+funding/carry, cross-section, ou plataforma-observatório. Cerca
+anti-strategy-shopping plantada antes da tentação.
+
 ## PENDENTES (pré-registrados)
-- FASE B primário: TSMOM L=84/H=48, TIER2(40), gates de 08/07 inalterados.
-- Pós-primário: exploratórios 8 combos (batch único, entrada consolidada).
-- Se A e B MORTO ⇒ programa TSMOM morre; Donchian/Turtle herda com novo
-  pré-registro. FORTE/BETA ⇒ Estágio 2 (shadow execution).
+- Batch exploratório Fase B (8 combos L×H, entrada consolidada) — informativo.
+- PRÉ-REGISTRO Donchian (próxima mensagem): sinal canônico, primários,
+  gates inalterados, 2 universos, cláusula de fechamento acima incorporada.
+- PR-8: detector donchian no soquete do stage1 (após trava do pré-registro).
 - Auditoria de indexação posicional (replay/sweep/null_model).
 - Hardening: guarda de contiguidade por timestamp no juice.
 - Higiene (baixa): ~45 logs v8 + whitelist do .gitignore.
