@@ -255,11 +255,50 @@ VCP, squeeze breakout etc.) — e a decisão sobe para CLASSE DE DADO:
 funding/carry, cross-section, ou plataforma-observatório. Cerca
 anti-strategy-shopping plantada antes da tentação.
 
+## 2026-07-14 — FASE B exploratórios (8 combos, TIER2) — CONSOLIDADO + H-42
+Log: faseB_explor_20260714_1211 (VM). Estrutura INVERTIDA vs majors: mel em
+L curto. L=42: SKILL 5/6 gates; temporal H=32 EV@6 61.1 (p .000, block −4.2);
+BRACKET H=16: EV@6 43.2, blockP2.5 +0.9, p_shift .000 — ÚNICO duplo-passe
+em 36 pares de gates do programa. NÃO-PROMOVÍVEL: exploratório por registro,
+melhor-de-36, margem +0.9 contra os DOIS asteriscos pré-declarados
+(sobrevivência LONG; custo de meme > 6bps). L=84 fraco; L=168 morto.
+Bracket > temporal em H=16 (stop paga em cauda gorda de alts).
+REGISTRO DE HIPÓTESE H-42: TSMOM L=42/H=16, bracket 1.5/6.0, TIER2
+congelada — promovível EXCLUSIVAMENTE via validação forward (shadow);
+amostra histórica exausta pela exploração (validação in-sample = circular).
+Protocolo forward a pré-registrar ANTES do primeiro dado.
+
+## 2026-07-14 — PROGRAMA TSMOM CANÔNICO: ENCERRADO (termos de 08 e 12/07)
+Primários MORTO em A (TIER1) e B (TIER2). Placar: 36 pares de gates,
+MONEY 1/36 (exploratório, ver acima), SKILL 6/36. Legado: timing de
+tendência existe, episódico — L≈84 em majors (classificador > canônico,
+p .004), L≈42 em alts — e não converte em dinheiro through-cycle a custo
+maker em nenhuma colheita testada. Cemitério íntegro: toda célula julgada
+está neste ledger.
+
+## 2026-07-14 — PRÉ-REGISTRO: programa DONCHIAN (herança de 12/07,
+## prior rebaixado, cláusula de fechamento incorporada)
+SINAL (canônico, closes): na barra i, LONG se close_i > max(closes das N
+barras anteriores); SHORT se < min; senão sem sinal. Entradas espaçadas
+48 barras por direção (semântica do soquete). Elegibilidade: N barras de
+história + 48 forward.
+PRIMÁRIOS (×2, imutáveis, NÃO-contaminados pelo brilho do TSMOM-42):
+N=120 (20 dias — Turtle S1) | temporal H=48 | bracket S=1.5/T=6.0/H=48.
+EXPLORATÓRIOS (família declarada, jamais promovíveis): N ∈ {42, 240} ×
+H ∈ {16, 32, 48} × ambos os exits.
+FASES: A = TIER1(20); B = TIER2 congelada de 11/07 (mesma janela
+2024-05-22→2026-06-21, mesmos asteriscos). Gates e vereditos de 08/07
+INALTERADOS. Brilho exploratório (se houver) → fila forward junto ao H-42.
+CLÁUSULA (de 12/07, reafirmada): primários MORTO em A e B ⇒ família
+"tendência direcional por ativo sobre OHLCV" FECHA INTEIRA; decisão sobe
+para classe de dado (funding/carry, cross-section, ou observatório).
+
 ## PENDENTES (pré-registrados)
-- Batch exploratório Fase B (8 combos L×H, entrada consolidada) — informativo.
-- PRÉ-REGISTRO Donchian (próxima mensagem): sinal canônico, primários,
-  gates inalterados, 2 universos, cláusula de fechamento acima incorporada.
-- PR-8: detector donchian no soquete do stage1 (após trava do pré-registro).
+- Marcelo: travar ou contestar o pré-registro Donchian acima.
+- PR-8: detector donchian no soquete (--detector donchian, --channel N) —
+  briefing após a trava.
+- Rodadas Donchian: A primário → B primário → exploratórios (batches).
+- Protocolo forward H-42 (shadow via scanner): pré-registro dedicado.
 - Auditoria de indexação posicional (replay/sweep/null_model).
 - Hardening: guarda de contiguidade por timestamp no juice.
 - Higiene (baixa): ~45 logs v8 + whitelist do .gitignore.
