@@ -1,7 +1,8 @@
-"""Testes puros de stage1 — shift_idx, bin_of e tsmom_entries (topo stdlib ->
-coleta no sandbox)."""
+"""Testes puros de stage1 — shift_idx, bin_of, tsmom_entries e donchian_entries
+(topo stdlib -> coleta no sandbox)."""
 
-from backtest.stage1 import bin_of, shift_idx, tsmom_entries
+from backtest.stage1 import (bin_of, donchian_entries, shift_idx,
+                             tsmom_entries)
 
 
 def test_shift_wrap():
@@ -60,3 +61,46 @@ def test_tsmom_direcao_descendente():
     closes = [100, 90, 80, 70]
     out = tsmom_entries(closes, _tss(4), lookback=1, sep_bars=1, bar_ms=1000)
     assert out and all(e["direction"] == "SHORT" for e in out)
+
+
+def test_donchian_warmup():
+    # nenhuma entrada com i < channel (janela anterior nao existe)
+    closes = [1, 2, 3, 4, 5]
+    out = donchian_entries(closes, _tss(5), channel=3, sep_bars=1, bar_ms=1000)
+    assert all(e["bar_ts"] >= 3 * 1000 for e in out)
+
+
+def test_donchian_rompimento_acima_long():
+    # closes[3]=10 > max([1,2,3]) -> LONG
+    closes = [1, 2, 3, 10]
+    out = donchian_entries(closes, _tss(4), channel=3, sep_bars=1, bar_ms=1000)
+    assert out == [{"bar_ts": 3000, "direction": "LONG"}]
+
+
+def test_donchian_rompimento_abaixo_short():
+    # closes[3]=0 < min([5,6,7]) -> SHORT
+    closes = [5, 6, 7, 0]
+    out = donchian_entries(closes, _tss(4), channel=3, sep_bars=1, bar_ms=1000)
+    assert out == [{"bar_ts": 3000, "direction": "SHORT"}]
+
+
+def test_donchian_dentro_do_canal_nada():
+    # closes[3]=4 esta entre min e max de [2,5,3] -> sem sinal
+    closes = [2, 5, 3, 4]
+    out = donchian_entries(closes, _tss(4), channel=3, sep_bars=1, bar_ms=1000)
+    assert out == []
+
+
+def test_donchian_empate_max_estrito():
+    # closes[3]=5 == max([2,5,3]) -> NAO e sinal (comparacao estrita)
+    closes = [2, 5, 3, 5]
+    out = donchian_entries(closes, _tss(4), channel=3, sep_bars=1, bar_ms=1000)
+    assert out == []
+
+
+def test_donchian_espacamento_por_direcao():
+    # LONG persistente reentra so apos sep_bars barras (em tempo)
+    closes = [1, 2, 3, 4, 5, 6]
+    out = donchian_entries(closes, _tss(6), channel=1, sep_bars=3, bar_ms=1000)
+    ts = [e["bar_ts"] for e in out if e["direction"] == "LONG"]
+    assert ts == [1000, 4000] and ts[1] - ts[0] == 3 * 1000
