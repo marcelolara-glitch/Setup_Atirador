@@ -353,9 +353,23 @@ exploratório não promove; eventual 2º passageiro do shadow, nunca antes.
 Achado estrutural: em rompimento, o stop é metade do payload (bracket ≫
 temporal em 6/6; sem stop a família morre). Nada muda no protocolo.
 
+## 2026-07-19 — EMENDA ao protocolo Estágio 2 (antes da trava): relatório
+## DIÁRIO + moldura de leitura do journal v9
+Relatório do shadow passa de semanal para DIÁRIO via Telegram, tag
+[VIGIA]: acumulado-que-decide no topo (dia N/84, sinais X/80, média
+líquida no executável, spread mediano, delta vs pesquisa), abertas no
+meio, "hoje" no rodapé. Regras de veredito INALTERADAS; ruído diário não
+autoriza ajuste (cláusula anti-tinkering vigente). v9 permanece intocada
+e LIGADA (coletora); canal antigo silenciado no cliente, zero código.
+MOLDURA PRÉ-COMPROMETIDA da leitura do journal v9 (~2,5 meses forward,
+cego, resolve o asterisco das conclusões 15m pré-reparo): leitura
+DESCRITIVA; negativa/morna ⇒ veredito de junho confirmado com dado
+forward; positiva ⇒ NÃO ressuscita — candidata a julgamento formal
+pelos juízes calibrados antes de qualquer mudança de status.
+
 ## PENDENTES (pré-registrados)
-- Marcelo: TRAVAR ou contestar o protocolo Estágio 2 (registro 18/07) —
-  ÚNICO item bloqueante; PR-9 sai após a trava.
-- PR-9 (shadow: módulo + cron 4h + relatório semanal).
+- Marcelo: TRAVAR o protocolo Estágio 2 COMO EMENDADO acima (diário).
+- Leitura do journal v9: rodar/colar; entrada consolidada no ledger.
+- PR-9 (shadow + relatório diário [VIGIA]): briefing após a trava.
 - H-42: ativação no shadow após 4 semanas estáveis.
 - Auditoria de indexação posicional; hardening do juice; higiene de logs.
