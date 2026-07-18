@@ -293,12 +293,28 @@ CLÁUSULA (de 12/07, reafirmada): primários MORTO em A e B ⇒ família
 "tendência direcional por ativo sobre OHLCV" FECHA INTEIRA; decisão sobe
 para classe de dado (funding/carry, cross-section, ou observatório).
 
+## 2026-07-18 — DONCHIAN N=120: FASE A (TIER1) = FORTE | FASE B = MORTO
+Pipeline donchian_pipeline_20260718_0218; regressão tsmom byte-idêntica OK.
+FASE A (n=933, borda 5):
+  temporal: EV@6 +90.4 | block −82.5 → MONEY NÃO | p_shift .034 → SKILL NÃO
+  bracket:  EV@6 +88.6 | block +3.4  → MONEY SIM | p_shift .004 → SKILL SIM
+  VEREDITO FORTE — 1º e único duplo-passe PRIMÁRIO em 10 pares da campanha.
+FASE B (n=1850): bracket EV@6 +77.2, SKILL .001, block −12.8 → MORTO
+  (asteriscos pré-declarados cortando contra; morte limpa).
+Anatomia: mesma média do temporal; o stop 1.5 ATR é seguro de variância
+(block +3.4 vs −82.5) — entradas raras em ignição de rompimento
+(~23/símbolo/2a). Honestidade: margem MONEY fina; 1 FORTE em 10 pares ⇒
+sorte agregada residual [Provável ~1/5] ⇒ Estágio 2 obrigatório, capital
+proibido. CLÁUSULA de fechamento NÃO dispara (exigia A e B mortos).
+Família tendência-direcional: ENCERRADA para novos testes históricos;
+sobrevivente único DONCHIAN-A → fila forward (à frente do H-42).
+
 ## PENDENTES (pré-registrados)
-- Marcelo: travar ou contestar o pré-registro Donchian acima.
-- PR-8: detector donchian no soquete (--detector donchian, --channel N) —
-  briefing após a trava.
-- Rodadas Donchian: A primário → B primário → exploratórios (batches).
-- Protocolo forward H-42 (shadow via scanner): pré-registro dedicado.
-- Auditoria de indexação posicional (replay/sweep/null_model).
-- Hardening: guarda de contiguidade por timestamp no juice.
-- Higiene (baixa): ~45 logs v8 + whitelist do .gitignore.
+- PRÉ-REGISTRO do protocolo Estágio 2 (observação ao vivo, sem dinheiro):
+  candidato DONCHIAN-A (N=120, bracket 1.5/6.0/H=48, TIER1, premissa
+  maker a MEDIR no vivo). Redação na próxima mensagem; trava ANTES do
+  primeiro dado forward.
+- Exploratórios Donchian Fase A (6 combos) — OPCIONAIS: contexto de
+  vizinhança do vencedor; não promovem nem demovem; batch único.
+- H-42 (TSMOM L=42 alts): fila forward, atrás do DONCHIAN-A.
+- Auditoria de indexação posicional; hardening do juice; higiene de logs.
