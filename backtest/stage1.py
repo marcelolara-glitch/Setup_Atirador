@@ -49,6 +49,28 @@ def tsmom_entries(closes, tss, lookback, sep_bars, bar_ms):
     return out
 
 
+def donchian_entries(closes, tss, channel, sep_bars, bar_ms):
+    """Entradas Donchian canonicas (pre-registro 14/07): na barra i,
+    LONG se closes[i] > max das `channel` barras ANTERIORES; SHORT se
+    < min delas; empate (== max ou == min) NAO e sinal (estrito).
+    Espacamento por direcao em TEMPO, identico aos irmaos (last persiste)."""
+    last = {"LONG": None, "SHORT": None}
+    out = []
+    for i in range(channel, len(closes)):
+        win = closes[i - channel:i]
+        if closes[i] > max(win):
+            d = "LONG"
+        elif closes[i] < min(win):
+            d = "SHORT"
+        else:
+            continue
+        ts = tss[i]
+        if last[d] is None or ts - last[d] >= sep_bars * bar_ms:
+            out.append({"bar_ts": ts, "direction": d})
+            last[d] = ts
+    return out
+
+
 def shift_idx(i: int, offset: int, n: int) -> int:
     """Deslocamento circular de indice dentro de n barras elegiveis."""
     return (i + offset) % n
@@ -60,11 +82,12 @@ def bin_of(ts: int, t0: int, block_ms: int) -> int:
 
 
 def run(store, symbols, start_iso, end_iso, tf,
-        detector="classifier", lookback=84, hold=48):
+        detector="classifier", lookback=84, hold=48, channel=120):
     """Pre-computa barras elegiveis (measure_event LONG) por simbolo, deriva os
     dois primarios por entrada e roda os gates MONEY/SKILL. `detector` escolhe
-    o gerador de entradas: classifier (regime TREND-aligned, intocado) ou tsmom
-    (momentum time-series, pre-registro 08/07)."""
+    o gerador de entradas: classifier (regime TREND-aligned, intocado), tsmom
+    (momentum time-series, pre-registro 08/07) ou donchian (rompimento de canal,
+    pre-registro 14/07)."""
     from backtest.candle_store import connect, read_candles          # noqa: E402
     from backtest.excursion import _iso_to_ms, measure_event         # noqa: E402
     from backtest.juice import (_boot_mean, _regime_timeline,        # noqa: E402
@@ -96,8 +119,14 @@ def run(store, symbols, start_iso, end_iso, tf,
             cndl = read_candles(conn, sym, tf, start_ms=start_ms, end_ms=end_ms)
             closes = [c["close"] for c in cndl]
             tss = [c["ts"] for c in cndl]
-            cand_ts = tss[lookback:]
-            evs = tsmom_entries(closes, tss, lookback, SEP_BARS, _BAR_MS[tf])
+            if detector == "donchian":
+                cand_ts = tss[channel:]
+                evs = donchian_entries(closes, tss, channel,
+                                       SEP_BARS, _BAR_MS[tf])
+            else:
+                cand_ts = tss[lookback:]
+                evs = tsmom_entries(closes, tss, lookback,
+                                    SEP_BARS, _BAR_MS[tf])
         cache, cts = [], []
         for ts in cand_ts:
             m = measure_event(conn, sym, ts, "LONG", tf=tf)
@@ -181,7 +210,8 @@ def run(store, symbols, start_iso, end_iso, tf,
     return {"tf": tf, "start": start_iso, "end": end_iso,
             "n_symbols": len(symbols), "n_entries": len(entries),
             "excluida": excluida, "table": table, "gates": gates,
-            "detector": detector, "lookback": lookback, "hold": hold}
+            "detector": detector, "lookback": lookback, "hold": hold,
+            "channel": channel}
 
 
 def main() -> int:
@@ -192,27 +222,37 @@ def main() -> int:
     ap.add_argument("--end", required=True, help="data ISO, ex. 2026-06-21")
     ap.add_argument("--store", default=str(ROOT / "backtest" / "candles_v9.db"))
     ap.add_argument("--symbols", nargs="+", default=None, help="default: TIER1")
-    ap.add_argument("--detector", choices=["classifier", "tsmom"],
+    ap.add_argument("--detector", choices=["classifier", "tsmom", "donchian"],
                     default="classifier")
     ap.add_argument("--lookback", type=int, choices=[42, 84, 168], default=84,
                     help="efeito apenas com --detector tsmom")
     ap.add_argument("--hold", type=int, choices=[16, 32, 48], default=48,
                     help="efeito apenas com --detector tsmom")
+    ap.add_argument("--channel", type=int, choices=[42, 120, 240], default=120,
+                    help="efeito apenas com --detector donchian")
     args = ap.parse_args()
     from backtest.sweep import TIER1        # noqa: E402
     symbols = args.symbols if args.symbols else TIER1
     random.seed(SEED)
-    suffix = (f" detector=tsmom L={args.lookback} H={args.hold}"
-              if args.detector == "tsmom" else "")
+    if args.detector == "tsmom":
+        suffix = f" detector=tsmom L={args.lookback} H={args.hold}"
+    elif args.detector == "donchian":
+        suffix = f" detector=donchian N={args.channel} H={args.hold}"
+    else:
+        suffix = ""
     print(f"[stage1] tf={args.tf} janela {args.start}->{args.end} "
           f"symbols={len(symbols)}{suffix}", file=sys.stderr)
     r = run(args.store, symbols, args.start, args.end, args.tf,
-            detector=args.detector, lookback=args.lookback, hold=args.hold)
+            detector=args.detector, lookback=args.lookback, hold=args.hold,
+            channel=args.channel)
 
     print(f"\n===== STAGE1 (nulo circular + block bootstrap, {r['tf']}) =====")
     print(f"janela {r['start']} -> {r['end']} | {r['n_symbols']} simbolos | "
           f"entradas: {r['n_entries']} | excluidas_borda: {r['excluida']}")
-    if r["detector"] == "tsmom":
+    if r["detector"] == "donchian":
+        print(f"primarios: DONCHIAN N={r['channel']} | temporal H={r['hold']} | "
+              f"bracket S={PRIM_S} T={PRIM_T} H={r['hold']}")
+    elif r["detector"] == "tsmom":
         print(f"primarios: TSMOM L={r['lookback']} | temporal H={r['hold']} | "
               f"bracket S={PRIM_S} T={PRIM_T} H={r['hold']}")
     else:
@@ -228,11 +268,17 @@ def main() -> int:
         print(f"{name:>9} | {ev6:>9.1f} | {bp:>9.1f} | "
               f"{('sim' if money else 'nao'):>5} | {ps:>7.3f} | "
               f"{('sim' if skill else 'nao'):>5}")
-    exploratorio = (r["detector"] == "tsmom"
-                    and (r["lookback"], r["hold"]) != (84, 48))
+    exploratorio = (
+        (r["detector"] == "tsmom" and (r["lookback"], r["hold"]) != (84, 48))
+        or (r["detector"] == "donchian"
+            and (r["channel"], r["hold"]) != (120, 48)))
     if exploratorio:
-        print(f"\nEXPLORATORIO (L={r['lookback']}, H={r['hold']}): celulas nao "
-              "promoviveis (pre-registro 08/07) — gates acima sao informativos.")
+        if r["detector"] == "donchian":
+            cell, preg = f"N={r['channel']}, H={r['hold']}", "14/07"
+        else:
+            cell, preg = f"L={r['lookback']}, H={r['hold']}", "08/07"
+        print(f"\nEXPLORATORIO ({cell}): celulas nao promoviveis "
+              f"(pre-registro {preg}) — gates acima sao informativos.")
     else:
         forte = [g[0] for g in r["gates"] if g[3] and g[5]]
         money = [g[0] for g in r["gates"] if g[3]]
