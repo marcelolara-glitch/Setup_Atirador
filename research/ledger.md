@@ -309,12 +309,40 @@ proibido. CLÁUSULA de fechamento NÃO dispara (exigia A e B mortos).
 Família tendência-direcional: ENCERRADA para novos testes históricos;
 sobrevivente único DONCHIAN-A → fila forward (à frente do H-42).
 
+## 2026-07-18 — PRÉ-REGISTRO: ESTÁGIO 2 — observação ao vivo DONCHIAN-A
+(travado antes do primeiro dado forward; sem dinheiro em nenhuma hipótese)
+CANDIDATO (imutável durante toda a observação): DONCHIAN N=120, 4h,
+TIER1 (20 majors, congelados nesta data), bracket S=1.5 ATR / T=6.0 ATR
+/ H=48 barras, entradas espaçadas 48 barras por direção. Qualquer
+mudança de parâmetro ⇒ o relógio reinicia do zero.
+MECÂNICA: detecção no fechamento de cada barra 4h; cada sinal registra
+(a) preço teórico (close) e (b) realidade executável no momento da
+detecção — melhor bid/ask e spread. Posição simulada pelo bracket nas
+barras seguintes; saídas registradas do mesmo jeito. Nenhuma ordem
+enviada, nenhum capital.
+CUSTO: medido, não assumido. Três cenários reportados — (i) EXECUTÁVEL
+(cruza o spread + taxa taker nos dois lados; o cenário "qualquer um
+consegue"), (ii) 6 bps da pesquisa, (iii) 0 bps. O VEREDITO usa (i).
+JANELA: mínimo 12 semanas OU 80 sinais fechados — o que vier POR ÚLTIMO.
+VEREDITOS (travados agora):
+  CONFIRMA: média líquida > 0 no executável E spread mediano ≤ 10 bps
+    ⇒ vivo; conversa de capital mínimo vira decisão dedicada, à parte.
+  VIVO-COM-ASTERISCO: média > 0 mas spread mediano > 10 bps ⇒ +6
+    semanas; o problema é execução, não sinal.
+  ENTERRA: média ≤ 0 no executável ao fim da janela ⇒ candidato morre;
+    a cláusula de 13/07 termina de disparar; família fechada em
+    definitivo; decisão sobe para classe de dado.
+SEMPRE REPORTADO: slippage teórico→executável por sinal e comparação
+com a expectativa da pesquisa (+88.6 bps @6) — informativa, não gate.
+H-42 (TSMOM L=42 alts): segundo passageiro do MESMO shadow após 4
+semanas estáveis, por ativação registrada — sem novo protocolo.
+INFRA: PR-9 (módulo shadow + cron 4h + relatório semanal); briefing
+após a trava. Runtime v9 de produção INTOCADO.
+
 ## PENDENTES (pré-registrados)
-- PRÉ-REGISTRO do protocolo Estágio 2 (observação ao vivo, sem dinheiro):
-  candidato DONCHIAN-A (N=120, bracket 1.5/6.0/H=48, TIER1, premissa
-  maker a MEDIR no vivo). Redação na próxima mensagem; trava ANTES do
-  primeiro dado forward.
-- Exploratórios Donchian Fase A (6 combos) — OPCIONAIS: contexto de
-  vizinhança do vencedor; não promovem nem demovem; batch único.
-- H-42 (TSMOM L=42 alts): fila forward, atrás do DONCHIAN-A.
+- Marcelo: TRAVAR ou contestar o protocolo Estágio 2 acima.
+- Batch exploratório Donchian (6 combos): colar quando 6/6; entrada
+  consolidada no ledger.
+- PR-9 (shadow): briefing após a trava do protocolo.
+- H-42: ativação no shadow após 4 semanas estáveis.
 - Auditoria de indexação posicional; hardening do juice; higiene de logs.
