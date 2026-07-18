@@ -339,10 +339,23 @@ semanas estáveis, por ativação registrada — sem novo protocolo.
 INFRA: PR-9 (módulo shadow + cron 4h + relatório semanal); briefing
 após a trava. Runtime v9 de produção INTOCADO.
 
+## 2026-07-18 — Exploratórios Donchian Fase A (6 combos) — VIZINHANÇA VIVA;
+## MONEY marginal em toda a família
+Log: donchA_explor_20260718_1817. Bracket (exit do vencedor): EV@6
+positivo nos 6 vizinhos (55.5→116.2 bps, crescendo com N) e SKILL 6/6
+(p .003–.006); block P2.5 negativo nos 6 (−8.9 a −18.0) ⇒ o +3.4 do
+primário segue o ÚNICO passe de MONEY da campanha. Temporal: morto em
+toda parte (block −84 a −219).
+Leitura: vencedor em crista elevada e coerente — probabilidade de "sinal
+por sorte" CAI; a dúvida concentra-se na monetização through-cycle,
+exatamente o que o Estágio 2 mede. N=240 (EV 116.2) anotado e ARQUIVADO:
+exploratório não promove; eventual 2º passageiro do shadow, nunca antes.
+Achado estrutural: em rompimento, o stop é metade do payload (bracket ≫
+temporal em 6/6; sem stop a família morre). Nada muda no protocolo.
+
 ## PENDENTES (pré-registrados)
-- Marcelo: TRAVAR ou contestar o protocolo Estágio 2 acima.
-- Batch exploratório Donchian (6 combos): colar quando 6/6; entrada
-  consolidada no ledger.
-- PR-9 (shadow): briefing após a trava do protocolo.
+- Marcelo: TRAVAR ou contestar o protocolo Estágio 2 (registro 18/07) —
+  ÚNICO item bloqueante; PR-9 sai após a trava.
+- PR-9 (shadow: módulo + cron 4h + relatório semanal).
 - H-42: ativação no shadow após 4 semanas estáveis.
 - Auditoria de indexação posicional; hardening do juice; higiene de logs.
