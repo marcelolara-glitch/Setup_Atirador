@@ -367,9 +367,37 @@ DESCRITIVA; negativa/morna ⇒ veredito de junho confirmado com dado
 forward; positiva ⇒ NÃO ressuscita — candidata a julgamento formal
 pelos juízes calibrados antes de qualquer mudança de status.
 
+## 2026-07-19 — JOURNAL v9 (FORWARD CEGO 24/04→18/07): CONFIRMA MORTO | ESTÁGIO 2 TRAVADO | DESATIVAÇÃO v9 DECIDIDA
+Moldura pré-comprometida (19/07): leitura descritiva; positiva não
+ressuscita. Janela 85d: 5427 trades, 5381 fechados/expirados, 46 OPEN.
+Status: LOSS_SL 2484 | WIN_TP1 1790 | WIN_TP2 351 | WIN_TP3 23 |
+EXPIRED 733. TP1-or-better (decididos): 46.6% (2164/4648) vs ~71%
+necessário p/ breakeven na estrutura 50/30/20. PnL −3890% agregado;
+4/4 meses negativos (abr −288 | mai −1516.7 | jun −1270.2 | jul −815.1);
+todos os setups principais negativos. TP3: 23/4648 = 0.49%.
+Setups inertes: rev_exaust 1 disparo em 85d; break_range 15.
+VEREDITO: forward cego CONFIRMA os vereditos históricos MORTO da
+família SMC v9. Cláusula de fechamento vigente, sem emenda.
+DECISÃO 1: protocolo Estágio 2 emendado TRAVADO (regras de 18–19/07).
+DECISÃO 2: runtime v9 será DESATIVADO — papel de coletora encerrado
+com esta leitura. Execução condicionada, pré-registrada:
+  (a) PR-9A + PR-9B merged, shadow DONCHIAN-A rodando;
+  (b) [VIGIA] diário estável 3+ dias consecutivos sem erro;
+  (c) leitura final do journal v9: OPEN remanescentes marcados como
+      TRUNCADOS no ledger (não contam como EXPIRED);
+  (d) cronfile v9 → .DISABLED (padrão v8); DBs, logs e código
+      preservados; nenhuma exclusão.
+Até (a)-(b), cron v9 permanece ativo como pulso da VM.
+Nota de precisão: DONCHIAN-A NÃO foi validado como operável — passou
+Fase A com margem fina e foi promovido a observação; o que roda no
+shadow é candidato em julgamento forward, não sistema aprovado.
+
 ## PENDENTES (pré-registrados)
-- Marcelo: TRAVAR o protocolo Estágio 2 COMO EMENDADO acima (diário).
-- Leitura do journal v9: rodar/colar; entrada consolidada no ledger.
-- PR-9 (shadow + relatório diário [VIGIA]): briefing após a trava.
-- H-42: ativação no shadow após 4 semanas estáveis.
-- Auditoria de indexação posicional; hardening do juice; higiene de logs.
+- PR-9A: shadow DONCHIAN-A — motor (módulo shadow/, DB próprio,
+  espelho fiel do detector/bracket do stage1). Briefing pronto (19/07).
+- PR-9B: [VIGIA] diário via Telegram + deploy (cron 4h próprio,
+  minuto deslocado do scan v9). Após merge do 9A.
+- Desativação v9 conforme condições (a)-(d) da entrada de 19/07.
+- Auditoria de indexação posicional (replay/sweep/null_model).
+- Hardening do juice (contiguidade por timestamp).
+- Higiene de logs v8.
