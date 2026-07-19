@@ -39,6 +39,10 @@ _DDL = ("CREATE TABLE IF NOT EXISTS shadow_trades (id TEXT PRIMARY KEY, "
         "atr_at_entry REAL, sl_price REAL, tp_price REAL, expiry_bar_ts TEXT, "
         "status TEXT, exit_ts TEXT, exit_price REAL, pnl_pct REAL, "
         "r_multiple REAL, evidence_json TEXT, UNIQUE(symbol, bar_ts_entry))")
+# Cobertura de runs p/ o [VIGIA] (PR-9B): 1 linha por execucao do run_once, para
+# o relatorio saber quantas barras foram efetivamente avaliadas (esperado 6/dia).
+_DDL_RUNS = ("CREATE TABLE IF NOT EXISTS shadow_runs (run_ts TEXT PRIMARY KEY, "
+             "ok INTEGER, falhas INTEGER)")
 
 
 def _setup_logger() -> logging.Logger:
@@ -59,6 +63,7 @@ def _connect(db_path: str = DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute(_DDL)
+    conn.execute(_DDL_RUNS)
     conn.commit()
     return conn
 
@@ -210,6 +215,13 @@ def run_once(db_path: str = DB_PATH, fetch_fn=None, symbols=None, log=None):
         except Exception as e:
             falhas += 1
             log.warning(f"  [{symbol}] falha: {type(e).__name__}: {e}")
+    try:                                                # registra a run p/ o [VIGIA]
+        conn.execute("INSERT OR REPLACE INTO shadow_runs (run_ts, ok, falhas) "
+                     "VALUES (?,?,?)",
+                     (datetime.now(timezone.utc).isoformat(), ok, falhas))
+        conn.commit()
+    except Exception as e:                              # observabilidade: nunca derruba
+        log.warning(f"  shadow_runs indisponivel: {type(e).__name__}: {e}")
     conn.close()
     log.info(f"[shadow] run_once fim — ok={ok} falhas={falhas}")
     if ok == 0 and symbols:
