@@ -71,6 +71,11 @@ def _connect(db_path: str = DB_PATH) -> sqlite3.Connection:
     conn.execute(_DDL)
     conn.execute(_DDL_RUNS)
     conn.execute(_DDL_WATCH)
+    try:                 # PR-9D: falhas por simbolo na run (idempotente; linhas
+        conn.execute(    # antigas ficam NULL). ALTER e a unica via em sqlite.
+            "ALTER TABLE shadow_runs ADD COLUMN falha_symbols TEXT")
+    except sqlite3.OperationalError:
+        pass                                            # coluna ja existe
     conn.commit()
     return conn
 
@@ -247,6 +252,7 @@ def run_once(db_path: str = DB_PATH, fetch_fn=None, symbols=None, log=None,
     run_ts = datetime.now(timezone.utc).isoformat()     # mesmo carimbo p/ runs+watchlist
     conn = _connect(db_path)
     ok = falhas = 0
+    falha_symbols = []                                  # PR-9D: quais cairam no except
     for symbol in symbols:
         try:
             closed = fetch_fn(symbol)
@@ -257,10 +263,12 @@ def run_once(db_path: str = DB_PATH, fetch_fn=None, symbols=None, log=None,
             ok += 1
         except Exception as e:
             falhas += 1
+            falha_symbols.append(symbol)
             log.warning(f"  [{symbol}] falha: {type(e).__name__}: {e}")
     try:                                                # registra a run p/ o [VIGIA]
-        conn.execute("INSERT OR REPLACE INTO shadow_runs (run_ts, ok, falhas) "
-                     "VALUES (?,?,?)", (run_ts, ok, falhas))
+        conn.execute("INSERT OR REPLACE INTO shadow_runs (run_ts, ok, falhas, "
+                     "falha_symbols) VALUES (?,?,?,?)",
+                     (run_ts, ok, falhas, json.dumps(falha_symbols)))
         conn.commit()
     except Exception as e:                              # observabilidade: nunca derruba
         log.warning(f"  shadow_runs indisponivel: {type(e).__name__}: {e}")

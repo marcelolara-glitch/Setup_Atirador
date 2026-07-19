@@ -264,3 +264,44 @@ def test_watchlist_ausente_quando_ha_sinal(tmp_path):
     conn = sd._connect(db)
     assert conn.execute("SELECT COUNT(*) FROM shadow_watchlist").fetchone()[0] == 0
     conn.close()
+
+
+# --- PR-9D: falhas por simbolo gravadas na run ------------------------------
+def test_run_grava_falha_symbols_json(tmp_path):
+    # Um simbolo falha (fetch levanta), outro abre => falha_symbols = ["TONUSDT"].
+    db = str(tmp_path / "s.db")
+    bars, _ = _long_series()
+
+    def _fetch(sym):
+        if sym == "TONUSDT":
+            raise RuntimeError("deslistado")
+        return bars
+
+    ok, falhas = sd.run_once(db, fetch_fn=_fetch, symbols=["BTCUSDT", "TONUSDT"],
+                             log=QUIET, ticker_fn=_NO_TICKER)
+    assert (ok, falhas) == (1, 1)
+    conn = sd._connect(db)
+    raw = conn.execute("SELECT falha_symbols FROM shadow_runs").fetchone()[0]
+    conn.close()
+    assert json.loads(raw) == ["TONUSDT"]
+
+
+def test_run_sem_falhas_grava_lista_vazia(tmp_path):
+    db = str(tmp_path / "s.db")
+    bars, _ = _long_series()
+    sd.run_once(db, fetch_fn=lambda s: bars, symbols=["BTCUSDT"], log=QUIET,
+                ticker_fn=_NO_TICKER)
+    conn = sd._connect(db)
+    raw = conn.execute("SELECT falha_symbols FROM shadow_runs").fetchone()[0]
+    conn.close()
+    assert json.loads(raw) == []
+
+
+def test_connect_alter_idempotente(tmp_path):
+    # _connect chamado 2x no mesmo DB nao levanta (ALTER ja aplicado).
+    db = str(tmp_path / "s.db")
+    sd._connect(db).close()
+    conn = sd._connect(db)                                # 2a vez: coluna ja existe
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(shadow_runs)").fetchall()]
+    conn.close()
+    assert "falha_symbols" in cols
