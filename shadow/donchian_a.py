@@ -43,6 +43,12 @@ _DDL = ("CREATE TABLE IF NOT EXISTS shadow_trades (id TEXT PRIMARY KEY, "
 # o relatorio saber quantas barras foram efetivamente avaliadas (esperado 6/dia).
 _DDL_RUNS = ("CREATE TABLE IF NOT EXISTS shadow_runs (run_ts TEXT PRIMARY KEY, "
              "ok INTEGER, falhas INTEGER)")
+# Snapshot de proximidade (PR-9C): a cada run, p/ cada simbolo SEM sinal, a
+# distancia do close ao topo/fundo do canal N em bps. Alimenta o RADAR do
+# [VIGIA] (observabilidade pura, sem acao). Falha silenciosa.
+_DDL_WATCH = ("CREATE TABLE IF NOT EXISTS shadow_watchlist (run_ts TEXT, "
+              "symbol TEXT, dist_high_bps REAL, dist_low_bps REAL, "
+              "PRIMARY KEY(run_ts, symbol))")
 
 
 def _setup_logger() -> logging.Logger:
@@ -64,8 +70,33 @@ def _connect(db_path: str = DB_PATH) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute(_DDL)
     conn.execute(_DDL_RUNS)
+    conn.execute(_DDL_WATCH)
     conn.commit()
     return conn
+
+
+def _default_ticker(symbol: str):
+    from shadow.ticker import fetch_best_bid_ask       # lazy: aiohttp fora do sandbox
+    return fetch_best_bid_ask(symbol)
+
+
+def _record_watchlist(conn, symbol, closes, run_ts, log):
+    # Distancia do close ao topo/fundo do canal N (bps), p/ o RADAR do [VIGIA].
+    # Observabilidade: falha silenciosa, NUNCA derruba o run.
+    if len(closes) < N + 1:
+        return
+    win = closes[-(N + 1):-1]
+    c = closes[-1]
+    if c <= 0:
+        return
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO shadow_watchlist (run_ts, symbol, "
+            "dist_high_bps, dist_low_bps) VALUES (?,?,?,?)",
+            (run_ts, symbol, (max(win) - c) / c * 1e4, (c - min(win)) / c * 1e4))
+        conn.commit()
+    except Exception as e:
+        log.warning(f"  [{symbol}] watchlist indisponivel: {type(e).__name__}: {e}")
 
 
 def wilder_atr(candles: list, period: int = ATR_PERIOD) -> float:
@@ -159,10 +190,11 @@ def _update_open(conn, symbol, by_ts, log):
                  f"pnl={pnl_pct:.3f}% R={r_mult:.2f}")
 
 
-def _detect_and_open(conn, symbol, closed, log):
+def _detect_and_open(conn, symbol, closed, log, run_ts, ticker_fn):
     closes = [c["close"] for c in closed]
     direction = donchian_signal(closes)
     if direction is None:
+        _record_watchlist(conn, symbol, closes, run_ts, log)   # SEM sinal -> RADAR
         return
     bar_ts = closed[-1]["ts"]
     row = conn.execute(                                 # espacamento 48b/direcao
@@ -179,9 +211,17 @@ def _detect_and_open(conn, symbol, closed, log):
     sign = 1.0 if direction == "LONG" else -1.0
     sl, tp = entry - sign * S_ATR * atr, entry + sign * T_ATR * atr
     expiry_ts = bar_ts + H_BARS * BAR_MS
+    exec_snap = None                                    # best bid/ask no instante da deteccao
+    try:
+        exec_snap = ticker_fn(symbol)
+    except Exception as e:                              # captura falha -> exec=null + warning
+        log.warning(f"  [{symbol}] captura exec falhou: {type(e).__name__}: {e}")
+    if exec_snap is None:                               # NUNCA bloqueia a abertura
+        log.warning(f"  [{symbol}] exec=null — abertura segue sem medicao de spread")
     evidence = json.dumps({"channel_high": max(win := closes[-(N + 1):-1]),
                            "channel_low": min(win), "close": entry, "atr": atr,
-                           "n": N, "s_atr": S_ATR, "t_atr": T_ATR, "tf": TF})
+                           "n": N, "s_atr": S_ATR, "t_atr": T_ATR, "tf": TF,
+                           "exec": exec_snap})
     try:
         conn.execute(
             "INSERT INTO shadow_trades (id, symbol, direction, bar_ts_entry, "
@@ -196,12 +236,15 @@ def _detect_and_open(conn, symbol, closed, log):
         pass                                            # (symbol,bar_ts) idempotente
 
 
-def run_once(db_path: str = DB_PATH, fetch_fn=None, symbols=None, log=None):
+def run_once(db_path: str = DB_PATH, fetch_fn=None, symbols=None, log=None,
+             ticker_fn=None):
     # Por simbolo (try/except isolado): fetch -> resolve OPEN -> detecta.
     # Falha de 1 = warning; universo inteiro = notify_error. -> (ok, falhas).
     log = log or _setup_logger()
     fetch_fn = fetch_fn or _fetch_confirmed
+    ticker_fn = ticker_fn or _default_ticker
     symbols = symbols or SYMBOLS
+    run_ts = datetime.now(timezone.utc).isoformat()     # mesmo carimbo p/ runs+watchlist
     conn = _connect(db_path)
     ok = falhas = 0
     for symbol in symbols:
@@ -210,15 +253,14 @@ def run_once(db_path: str = DB_PATH, fetch_fn=None, symbols=None, log=None):
             if len(closed) < N + 2:
                 raise ValueError(f"barras insuficientes: {len(closed)} < {N + 2}")
             _update_open(conn, symbol, {c["ts"]: c for c in closed}, log)
-            _detect_and_open(conn, symbol, closed, log)
+            _detect_and_open(conn, symbol, closed, log, run_ts, ticker_fn)
             ok += 1
         except Exception as e:
             falhas += 1
             log.warning(f"  [{symbol}] falha: {type(e).__name__}: {e}")
     try:                                                # registra a run p/ o [VIGIA]
         conn.execute("INSERT OR REPLACE INTO shadow_runs (run_ts, ok, falhas) "
-                     "VALUES (?,?,?)",
-                     (datetime.now(timezone.utc).isoformat(), ok, falhas))
+                     "VALUES (?,?,?)", (run_ts, ok, falhas))
         conn.commit()
     except Exception as e:                              # observabilidade: nunca derruba
         log.warning(f"  shadow_runs indisponivel: {type(e).__name__}: {e}")

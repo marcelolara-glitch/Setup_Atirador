@@ -118,11 +118,15 @@ def _long_series(n_channel=sd.N + 1):
     return bars, brk_ts
 
 
+_NO_TICKER = lambda s: None                                  # noqa: E731  offline: exec=null
+
+
 def test_run_once_abre_e_idempotente(tmp_path):
     db = str(tmp_path / "s.db")
     bars, brk_ts = _long_series()
     fetch = lambda sym: bars                                  # noqa: E731
-    ok, falhas = sd.run_once(db, fetch_fn=fetch, symbols=["BTCUSDT"], log=QUIET)
+    ok, falhas = sd.run_once(db, fetch_fn=fetch, symbols=["BTCUSDT"], log=QUIET,
+                             ticker_fn=_NO_TICKER)
     assert (ok, falhas) == (1, 0)
     conn = sd._connect(db)
     rows = conn.execute("SELECT * FROM shadow_trades").fetchall()
@@ -136,7 +140,8 @@ def test_run_once_abre_e_idempotente(tmp_path):
     assert r["expiry_bar_ts"] == str(brk_ts + sd.H_BARS * BAR)
     conn.close()
     # roda de novo na MESMA barra => nenhum duplicado (UNIQUE symbol,bar_ts).
-    sd.run_once(db, fetch_fn=fetch, symbols=["BTCUSDT"], log=QUIET)
+    sd.run_once(db, fetch_fn=fetch, symbols=["BTCUSDT"], log=QUIET,
+                ticker_fn=_NO_TICKER)
     conn = sd._connect(db)
     assert conn.execute("SELECT COUNT(*) FROM shadow_trades").fetchone()[0] == 1
     conn.close()
@@ -146,11 +151,13 @@ def test_run_once_ciclo_win_e_espacamento(tmp_path):
     db = str(tmp_path / "s.db")
     bars, brk_ts = _long_series()
     # run 1: abre a OPEN no breakout.
-    sd.run_once(db, fetch_fn=lambda s: bars, symbols=["BTCUSDT"], log=QUIET)
+    sd.run_once(db, fetch_fn=lambda s: bars, symbols=["BTCUSDT"], log=QUIET,
+                ticker_fn=_NO_TICKER)
     # run 2: uma barra forward que toca tp=107 => a OPEN resolve WIN; a nova barra
     # (close 106) volta a romper mas o espacamento 48b suprime => sem 2o trade.
     ext = bars + [_bar(brk_ts + BAR, 101, 107.0, 100.5, 106.0)]
-    sd.run_once(db, fetch_fn=lambda s: ext, symbols=["BTCUSDT"], log=QUIET)
+    sd.run_once(db, fetch_fn=lambda s: ext, symbols=["BTCUSDT"], log=QUIET,
+                ticker_fn=_NO_TICKER)
     conn = sd._connect(db)
     rows = conn.execute("SELECT * FROM shadow_trades").fetchall()
     assert len(rows) == 1                                    # espacamento: 1 so trade
@@ -187,3 +194,73 @@ def test_run_once_falha_total_isolada(tmp_path):
             sys.modules.pop("telegram", None)
     assert (ok, falhas) == (0, 2)
     assert chamado["n"] == 1
+
+
+# --- PR-9C: captura de execucao (bid/ask) + watchlist -----------------------
+import json                                             # noqa: E402
+
+
+def _no_signal_series(n_channel=sd.N + 1):
+    """Canal com topo=101 e fundo=99; barra corrente close=100 (DENTRO) => sem
+    sinal. dist_high=dist_low=100 bps. len = N+2 (satisfaz run_once)."""
+    bars = [_bar(k * BAR, 100.0, 100.5, 99.5, 100.0) for k in range(n_channel)]
+    bars[1] = _bar(BAR, 100.0, 101.5, 100.5, 101.0)      # topo do canal = 101
+    bars[2] = _bar(2 * BAR, 100.0, 99.5, 98.5, 99.0)     # fundo do canal = 99
+    bars.append(_bar(n_channel * BAR, 100.0, 100.4, 99.6, 100.0))   # corrente, dentro
+    return bars
+
+
+def test_exec_capturado_em_evidence(tmp_path):
+    db = str(tmp_path / "s.db")
+    bars, brk_ts = _long_series()
+    snap = {"bid": 100.9, "ask": 101.1, "mid": 101.0,
+            "spread_bps": 19.8, "ts_capture": 123}
+    sd.run_once(db, fetch_fn=lambda s: bars, symbols=["BTCUSDT"], log=QUIET,
+                ticker_fn=lambda s: snap)
+    conn = sd._connect(db)
+    ev = json.loads(conn.execute(
+        "SELECT evidence_json FROM shadow_trades").fetchone()["evidence_json"])
+    conn.close()
+    assert ev["exec"] == snap
+
+
+def test_exec_falha_nao_bloqueia_insert(tmp_path):
+    # ticker_fn levanta => exec=null, mas o trade ABRE mesmo assim.
+    db = str(tmp_path / "s.db")
+    bars, _ = _long_series()
+
+    def _boom_ticker(sym):
+        raise RuntimeError("ticker down")
+
+    ok, falhas = sd.run_once(db, fetch_fn=lambda s: bars, symbols=["BTCUSDT"],
+                             log=QUIET, ticker_fn=_boom_ticker)
+    assert (ok, falhas) == (1, 0)                        # captura falha != run falha
+    conn = sd._connect(db)
+    row = conn.execute("SELECT status, evidence_json FROM shadow_trades").fetchone()
+    conn.close()
+    assert row["status"] == "OPEN"                        # NUNCA bloqueia a abertura
+    assert json.loads(row["evidence_json"])["exec"] is None
+
+
+def test_watchlist_gravada_sem_sinal(tmp_path):
+    db = str(tmp_path / "s.db")
+    sd.run_once(db, fetch_fn=lambda s: _no_signal_series(), symbols=["BTCUSDT"],
+                log=QUIET, ticker_fn=_NO_TICKER)
+    conn = sd._connect(db)
+    assert conn.execute("SELECT COUNT(*) FROM shadow_trades").fetchone()[0] == 0
+    w = conn.execute("SELECT * FROM shadow_watchlist").fetchone()
+    conn.close()
+    assert w["symbol"] == "BTCUSDT"
+    assert abs(w["dist_high_bps"] - 100.0) < 1e-6         # (101-100)/100*1e4
+    assert abs(w["dist_low_bps"] - 100.0) < 1e-6          # (100-99)/100*1e4
+
+
+def test_watchlist_ausente_quando_ha_sinal(tmp_path):
+    # Breakout => trade aberto, NENHUMA linha de watchlist p/ o simbolo.
+    db = str(tmp_path / "s.db")
+    bars, _ = _long_series()
+    sd.run_once(db, fetch_fn=lambda s: bars, symbols=["BTCUSDT"], log=QUIET,
+                ticker_fn=_NO_TICKER)
+    conn = sd._connect(db)
+    assert conn.execute("SELECT COUNT(*) FROM shadow_watchlist").fetchone()[0] == 0
+    conn.close()
