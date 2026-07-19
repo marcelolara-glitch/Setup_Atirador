@@ -1,0 +1,17 @@
+# Setup Atirador — shadow DONCHIAN-A (Estagio 2 forward, ledger 18-19/07).
+# Runtime v9 INTOCADO: este cron roda o modulo shadow/ em DB proprio.
+#
+# INSTALACAO (feita pelo Marcelo via SSH, NAO pelo Code):
+#   sudo cp ~/Setup_Atirador/deploy/cron-atirador-shadow-donchian \
+#           /etc/cron.d/cron-atirador-shadow-donchian     # nome SEM ponto
+#   sudo chown root:root /etc/cron.d/cron-atirador-shadow-donchian
+#   sudo chmod 644       /etc/cron.d/cron-atirador-shadow-donchian
+#
+# Horarios em UTC. Usuario explicito: ubuntu. Minutos (8, 20) deslocados do
+# scan v9 (*/30) para nao competir por rede/CPU.
+SHELL=/bin/bash
+HOME=/home/ubuntu
+# Scan pos-fechamento das barras 4h — 00,04,08,12,16,20 UTC (6 runs/dia).
+8 0,4,8,12,16,20 * * * ubuntu /home/ubuntu/Setup_Atirador/deploy/run-shadow.sh >> /home/ubuntu/cron-shadow-donchian.log 2>&1
+# Relatorio diario [VIGIA] — 00:20 UTC, com o dia UTC anterior ja fechado (D-1).
+20 0 * * * ubuntu /home/ubuntu/Setup_Atirador/deploy/run-shadow.sh --vigia >> /home/ubuntu/cron-shadow-donchian.log 2>&1
