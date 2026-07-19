@@ -392,12 +392,54 @@ Nota de precisão: DONCHIAN-A NÃO foi validado como operável — passou
 Fase A com margem fina e foi promovido a observação; o que roda no
 shadow é candidato em julgamento forward, não sistema aprovado.
 
+## 2026-07-19 — PR-9A/9B/9C MERGED: SHADOW DONCHIAN-A NO AR | RELÓGIO ESTÁGIO 2 INICIADO
+PR-9A (motor): exceção registrada ao teto de 200 linhas (226 brutas /
+188 SLOC; branco+traçabilidade); revisão executável: gêmeo sintético
+20 walks, 765 entradas e 765 vereditos idênticos vs bancada
+(donchian_entries+first_touch), zero divergências.
+PR-9B ([VIGIA]+deploy): 199 linhas; layout conforme moldura da emenda
+19/07; cobertura de runs 6/dia com alerta (requisito da revisão 9A).
+PR-9C (execução): captura bid/ask no instante da detecção
+(evidence_json.exec; falha nunca bloqueia abertura); topo do [VIGIA]
+completo (líq executável, spread mediano, Δpesq); FECHADOS cap 5,
+macro LONG/SHORT, RADAR cap 3 (observação, sem ação). Auditoria
+aritmética independente do build_report: PASS.
+CONSTANTE DE IMPLEMENTAÇÃO (não é número do protocolo): TAKER_FEE_BPS
+= 5.0 (OKX perp taker não-VIP, tier "qualquer um consegue" da premissa
+:323-325). Troca exige registro aqui.
+CAVEAT DE LEITURA (fixado): Δpesq = líq@EXECUTÁVEL − 88.6@6bps —
+mistura bases de custo por construção; Δ ≈ −(spread+10−6) bps é
+esperado com edge idêntico ao da pesquisa. Δ é informativo, não gate;
+Δ negativo pequeno NÃO é decaimento de edge.
+LIMITES CONHECIDOS (revisão 9A/9B): sinal avaliado só na última barra
+fechada de cada run — cron perdido = barra nunca avaliada (alerta no
+[VIGIA]); outage >~25d degrada resolução de OPENs (janela fetch 200
+barras); [VIGIA] importa _tg_send privado — refactor de telegram.py
+mata o relatório em silêncio. REGRA OPERACIONAL: [VIGIA] ausente às
+21:20 BRT é INCIDENTE. Spread de saída = proxy pela entrada
+(disclosure no código).
+RELÓGIO ESTÁGIO 2: início na instalação do cron (19/07/2026); janela
+mín. 12 semanas OU 80 fechados, o que vier POR ÚLTIMO; veredito pelas
+regras travadas; anti-tinkering vigente — RADAR não autoriza nada.
+
+## 2026-07-19 — TONUSDT INDISPONÍVEL (DELISTING OKX): TIER1 20 CONGELADO, OBSERVÁVEIS 19
+Probe direto: OKX 51001 (instId inexistente; lista SWAP sem TON*),
+Bitget 40034. Estrutural, não transitório. TIER1 NÃO é alterado —
+substituição adulteraria o experimento; TON permanece como membro de
+0 sinais. Veredito inalterado (conta sinais/80); cobertura passa a
+ser sobre 19 observáveis. Atrito de universo = informação do forward.
+RELÓGIO ESTÁGIO 2: válido desde 19/07 (instalação 14:39 UTC); [VIGIA]
+de 19/07 mostrará runs 2/6 (esperado, não incidente); dia 1 LIMPO da
+janela = 20/07.
+PR-9D promovido a prioridade: [VIGIA] deve expor falhas POR SÍMBOLO
+(hoje só conta agregada — símbolo pode falhar 6/6 por 12 semanas
+invisível atrás de "runs 6/6").
+
 ## PENDENTES (pré-registrados)
-- PR-9A: shadow DONCHIAN-A — motor (módulo shadow/, DB próprio,
-  espelho fiel do detector/bracket do stage1). Briefing pronto (19/07).
-- PR-9B: [VIGIA] diário via Telegram + deploy (cron 4h próprio,
-  minuto deslocado do scan v9). Após merge do 9A.
-- Desativação v9 conforme condições (a)-(d) da entrada de 19/07.
-- Auditoria de indexação posicional (replay/sweep/null_model).
-- Hardening do juice (contiguidade por timestamp).
-- Higiene de logs v8.
+- PR-9D: falhas por símbolo no motor (shadow_runs) + linha no [VIGIA]
+  com alerta de símbolo fora do dia inteiro. Briefing emitido 19/07.
+- Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
+- Desativação v9 conforme condições (a)-(d) — após 3+ dias de [VIGIA]
+  estável (leitura final + OPEN truncados + cronfile .DISABLED).
+- H-42: shadow só após 4 semanas de DONCHIAN-A estável; N=240 depois.
+- Auditoria de indexação posicional; hardening do juice; higiene v8.
