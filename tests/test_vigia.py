@@ -61,6 +61,15 @@ def _add_trade(conn, tid, symbol="BTCUSDT", direction="LONG", entry_ms=0,
     conn.commit()
 
 
+def _add_run_fail(conn, iso_ts, falha_symbols, ok=18, falhas=None):
+    # run com falha_symbols (JSON list); simula PR-9D.
+    falhas = len(falha_symbols) if falhas is None else falhas
+    conn.execute("INSERT OR REPLACE INTO shadow_runs (run_ts, ok, falhas, "
+                 "falha_symbols) VALUES (?,?,?,?)",
+                 (iso_ts, ok, falhas, json.dumps(falha_symbols)))
+    conn.commit()
+
+
 def _six_runs(conn, day=DAY):
     for h in (0, 4, 8, 12, 16, 20):
         _add_run(conn, f"{day}T{h:02d}:08:00+00:00")
@@ -323,6 +332,90 @@ def test_b4_radar_presente_top3(tmp_path):
     assert "DDD" not in msg                                     # cap fixo 3
 
 
+# --- PR-9D: falhas por simbolo no bloco HOJE ---------------------------------
+def test_9d_falhas_symbol_agregacao_xN(tmp_path):
+    conn = _seed_conn(tmp_path)
+    # 6 runs; TONUSDT falha em 6, XYZ em 2.
+    for i, h in enumerate((0, 4, 8, 12, 16, 20)):
+        fails = ["TONUSDT"] + (["XYZUSDT"] if h in (0, 4) else [])
+        _add_run_fail(conn, f"{DAY}T{h:02d}:08:00+00:00", fails)
+    msg = vigia.build_report(conn, NOW)
+    conn.close()
+    assert "falhas símbolo:" in msg
+    assert "TONUSDT ×6" in msg
+    assert "XYZUSDT ×2" in msg
+
+
+def test_9d_alerta_dia_inteiro(tmp_path):
+    conn = _seed_conn(tmp_path)
+    for h in (0, 4, 8, 12, 16, 20):                  # TONUSDT falha em TODAS as 6
+        _add_run_fail(conn, f"{DAY}T{h:02d}:08:00+00:00", ["TONUSDT"])
+    msg = vigia.build_report(conn, NOW)
+    conn.close()
+    assert "⚠️ TONUSDT ×6 (fora do universo no dia)" in msg
+
+
+def test_9d_nao_dia_inteiro_sem_alerta(tmp_path):
+    conn = _seed_conn(tmp_path)
+    for i, h in enumerate((0, 4, 8, 12, 16, 20)):    # falha em 5 de 6 (nao todas)
+        fails = ["TONUSDT"] if h != 20 else []
+        _add_run_fail(conn, f"{DAY}T{h:02d}:08:00+00:00", fails)
+    msg = vigia.build_report(conn, NOW)
+    conn.close()
+    assert "TONUSDT ×5" in msg
+    assert "fora do universo no dia" not in msg
+
+
+def test_9d_cap_3(tmp_path):
+    conn = _seed_conn(tmp_path)
+    # 4 simbolos com contagens distintas: A×6 B×5 C×4 D×3 => so os 3 primeiros.
+    for i, h in enumerate((0, 4, 8, 12, 16, 20)):
+        fails = ["AUSDT"]
+        if h != 20:
+            fails.append("BUSDT")
+        if h in (0, 4, 8, 12):
+            fails.append("CUSDT")
+        if h in (0, 4, 8):
+            fails.append("DUSDT")
+        _add_run_fail(conn, f"{DAY}T{h:02d}:08:00+00:00", fails)
+    msg = vigia.build_report(conn, NOW)
+    conn.close()
+    assert "AUSDT ×6" in msg
+    assert "BUSDT ×5" in msg
+    assert "CUSDT ×4" in msg
+    assert "DUSDT" not in msg                         # cap 3: o 4o cai fora
+
+
+def test_9d_sem_falhas_omite_linha(tmp_path):
+    conn = _seed_conn(tmp_path)
+    _six_runs(conn)                                  # runs sem falha_symbols (NULL)
+    msg = vigia.build_report(conn, NOW)
+    conn.close()
+    assert "falhas símbolo" not in msg
+
+
+def test_9d_linhas_null_antigas_nao_quebram(tmp_path):
+    # Mistura: runs antigas (NULL, via _add_run) + uma nova com falha_symbols.
+    conn = _seed_conn(tmp_path)
+    for h in (0, 4, 8, 12, 16):
+        _add_run(conn, f"{DAY}T{h:02d}:08:00+00:00")           # NULL falha_symbols
+    _add_run_fail(conn, f"{DAY}T20:08:00+00:00", ["TONUSDT"])  # 1 run com falha
+    msg = vigia.build_report(conn, NOW)                        # nao pode levantar
+    conn.close()
+    assert "TONUSDT ×1" in msg
+
+
+def test_9d_json_ilegivel_tolerado(tmp_path):
+    conn = _seed_conn(tmp_path)
+    _six_runs(conn)
+    conn.execute("UPDATE shadow_runs SET falha_symbols='{nao-e-json' "
+                 f"WHERE run_ts='{DAY}T00:08:00+00:00'")
+    conn.commit()
+    msg = vigia.build_report(conn, NOW)              # ilegivel => ignora, nao quebra
+    conn.close()
+    assert "falhas símbolo" not in msg
+
+
 def test_b4_radar_ausente_omite(tmp_path):
     conn = _seed_conn(tmp_path)
     _six_runs(conn)
@@ -345,7 +438,10 @@ def test_b4_radar_usa_apenas_ultimo_run(tmp_path):
 # --- PR-9C: tamanho da mensagem (folga em 4096) ------------------------------
 def test_mensagem_cabe_com_folga(tmp_path):
     conn = _seed_conn(tmp_path)
-    _six_runs(conn)
+    # runs com falhas por simbolo (nomes longos) p/ estressar a nova linha PR-9D.
+    for h in (0, 4, 8, 12, 16, 20):
+        _add_run_fail(conn, f"{DAY}T{h:02d}:08:00+00:00",
+                      ["TONUSDT", "XYZLONGUSDT", "ABCUSDT", "EXTRAUSDT"])
     base = _ms(datetime(2026, 7, 1, tzinfo=timezone.utc))
     for i in range(9):                                          # ABERTAS ~<10 (natural)
         _add_trade(conn, f"o{i}", symbol=f"OPN{i}", status="OPEN",

@@ -77,7 +77,8 @@ def build_report(conn, now: datetime) -> str:
     trades = conn.execute(
         "SELECT symbol, direction, bar_ts_entry, status, exit_ts, r_multiple, "
         "pnl_pct, evidence_json FROM shadow_trades").fetchall()
-    runs = conn.execute("SELECT run_ts, ok, falhas FROM shadow_runs").fetchall()
+    runs = conn.execute(
+        "SELECT run_ts, ok, falhas, falha_symbols FROM shadow_runs").fetchall()
 
     # --- acumulado (desde o inicio da observacao) ---------------------------
     resolved = [t for t in trades if t["status"] in RESOLVED]
@@ -129,6 +130,24 @@ def build_report(conn, now: datetime) -> str:
     n_runs = len(runs_today)
     res_today = [t for t in resolved if t["exit_ts"] and _utc_date_of_ms(t["exit_ts"]) == day]
 
+    # falhas por simbolo (PR-9D): conta em quantas runs de D-1 cada simbolo caiu
+    # no except. Tolera NULL/ausente (linhas antigas) e JSON ilegivel. set() por
+    # run => cnt == n_runs sinaliza "fora do universo o dia inteiro".
+    fail_by_symbol = {}
+    for r in runs_today:
+        raw = r["falha_symbols"]
+        if not raw:
+            continue
+        try:
+            syms = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(syms, list):
+            continue
+        for s in set(syms):
+            fail_by_symbol[s] = fail_by_symbol.get(s, 0) + 1
+    top_fails = sorted(fail_by_symbol.items(), key=lambda kv: -kv[1])[:3]  # cap 3
+
     # --- fechados recentes (B2): ultimos 5 por exit_ts desc ------------------
     fechados = sorted((t for t in resolved if t["exit_ts"]),
                       key=lambda x: int(x["exit_ts"]), reverse=True)[:5]
@@ -178,6 +197,14 @@ def build_report(conn, now: datetime) -> str:
         miss = EXPECTED_RUNS_PER_DAY - n_runs
         L.append(f"  ⚠️ cobertura incompleta: {miss} barra(s) nao avaliada(s) — "
                  f"entrada(s) potencialmente perdida(s) em silencio")
+    if top_fails:                                        # PR-9D: falhas por simbolo
+        parts = []
+        for sym, cnt in top_fails:
+            if n_runs > 0 and cnt == n_runs:             # falhou em TODAS as runs
+                parts.append(f"⚠️ {sym} ×{cnt} (fora do universo no dia)")
+            else:
+                parts.append(f"{sym} ×{cnt}")
+        L.append(f"  falhas símbolo: {', '.join(parts)}")
     if res_today:
         for t in res_today:
             L.append(f"  {t['symbol']} {t['direction']} {t['status']} "
