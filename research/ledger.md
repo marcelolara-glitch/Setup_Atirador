@@ -435,9 +435,11 @@ PR-9D promovido a prioridade: [VIGIA] deve expor falhas POR SÍMBOLO
 (hoje só conta agregada — símbolo pode falhar 6/6 por 12 semanas
 invisível atrás de "runs 6/6").
 
+PR-9D merged (19/07): falhas por símbolo em shadow_runs + linha no
+[VIGIA] com alerta de dia-inteiro. Revisão: 51/51 + auditoria
+independente da agregação (dedupe, NULL, JSON ilegível) PASS.
+
 ## PENDENTES (pré-registrados)
-- PR-9D: falhas por símbolo no motor (shadow_runs) + linha no [VIGIA]
-  com alerta de símbolo fora do dia inteiro. Briefing emitido 19/07.
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - Desativação v9 conforme condições (a)-(d) — após 3+ dias de [VIGIA]
   estável (leitura final + OPEN truncados + cronfile .DISABLED).
