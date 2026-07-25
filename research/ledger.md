@@ -439,9 +439,28 @@ PR-9D merged (19/07): falhas por símbolo em shadow_runs + linha no
 [VIGIA] com alerta de dia-inteiro. Revisão: 51/51 + auditoria
 independente da agregação (dedupe, NULL, JSON ilegível) PASS.
 
+## 2026-07-25 — RUNTIME v9 DESATIVADO: CONDIÇÕES (a)-(d) DE 19/07 EXECUTADAS
+(a) PR-9A/9B/9C/9D merged; shadow DONCHIAN-A no ar desde 19/07 14:39 UTC.
+(b) [VIGIA] estável 5 dias consecutivos (20-24/07): runs 6/6 todos os
+dias, falha só TONUSDT (delisting conhecido), enviado=True 7/7 às 00:20.
+(c) Leitura FINAL do journal v9 (24/04→25/07, 92d): 5760 trades —
+LOSS_SL 2639 | WIN_TP1 1881 | WIN_TP2 373 | WIN_TP3 24 | EXPIRED 798 |
+OPEN 45. TP1-or-better decididos: 46.3% (2278/4917) — consistente com
+a leitura de 19/07; veredito MORTO inalterado. Os 45 OPEN ficam
+TRUNCADOS nesta data (não contam como EXPIRED; congelados no DB).
+(d) Cronfile → atirador-scan-v9.DISABLED (padrão v8); DBs, logs e
+código preservados; telegram_bot mantido para consultas SQL.
+Heartbeat da VM passa a ser o shadow (6 runs/dia + [VIGIA] diário).
+NOTA (não é gate, não autoriza ação): semana 1 do shadow = 9 fechados,
+9 LOSS (−9.0R), 6 OPEN (bloco SHORT 23-24/07). Whipsaw em bloco é o
+modo de falha esperado do detector; breakeven do bracket ≈ 20% WR;
+anti-tinkering vigente; veredito só ao fim da janela (80 fechados /
+12 semanas, o que vier por último).
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
-- Desativação v9 conforme condições (a)-(d) — após 3+ dias de [VIGIA]
-  estável (leitura final + OPEN truncados + cronfile .DISABLED).
-- H-42: shadow só após 4 semanas de DONCHIAN-A estável; N=240 depois.
-- Auditoria de indexação posicional; hardening do juice; higiene v8.
+- H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
+  DONCHIAN-A estável (a partir de ~17/08); N=240 depois, nunca antes.
+- Auditoria de indexação posicional (replay/sweep/null_model).
+- Hardening do juice (contiguidade por timestamp).
+- Higiene de logs v8.
