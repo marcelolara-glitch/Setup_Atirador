@@ -457,6 +457,63 @@ modo de falha esperado do detector; breakeven do bracket ≈ 20% WR;
 anti-tinkering vigente; veredito só ao fim da janela (80 fechados /
 12 semanas, o que vier por último).
 
+## 2026-08-09 — EMENDA: reabertura da família com pedágio + reenquadramento do juiz
+
+Motivo. A cláusula de 13/07 ("família encerrada para novos testes históricos,
+sem exceção") era mais larga que o argumento que a sustentava. O argumento real
+é orçamento de multiplicidade sobre a amostra 2024-05-22→2026-06-21, não
+"tendência direcional não existe". Redação corrigida abaixo. Isto NÃO revoga
+nenhum veredito anterior; todos permanecem MORTO.
+
+Contabilidade da campanha (auditada por grep no próprio ledger, 09/08):
+10 pares primários, alpha idêntico em todos (MONEY = blockP2.5 > 0;
+SKILL = p_shift < 0.025; correção ×2 apenas INTRA-rodada, nunca entre rodadas).
+  MONEY: 1 passe em 10  → P(≥1 passe por acaso em 10 @2.5%) = 22%
+  SKILL: 5 passes em 10 → esperado 0.25. NÃO é acaso.
+Leitura: o achado robusto da campanha é que estes detectores acertam QUANDO
+melhor que o acaso; o que não sobrevive é o custo de 5 bps taker. O único
+passe de MONEY (DONCHIAN-A, blockP2.5 +3.4) tinha ~1 em 4,5 de ser sorte pura.
+
+REGRA 1 — Reabertura com pedágio.
+A família "tendência direcional por ativo sobre OHLCV" está REABERTA para novos
+testes históricos na janela 2024-05-22→2026-06-21, sob limiares agravados:
+  MONEY = blockP2.5 do líquido @6bps > +5 bps   (era > 0)
+  SKILL = p_shift < 0.005                        (era < 0.025)
+O agravamento existe porque 10 rodadas ao alpha original já consumiram o
+orçamento a 22% de falso-positivo. Sob esta régua, o DONCHIAN-A NÃO teria
+passado — e não deveria ter passado.
+Permanece intocado: pré-registro ANTES do dado; UM primário por ideia;
+exploratório NUNCA promove; nenhuma varredura de parâmetro após falha do
+primário; toda rodada entra no ledger antes do teste seguinte.
+
+REGRA 2 — O juiz é fila, não certificado.
+Passar no juiz histórico NÃO é aprovação de edge. É entrada na fila de shadow
+forward. O recurso escasso é o slot de observação (~12 semanas cada), e a
+função do juiz é ordenar candidatos para esse slot. O único gate que certifica
+é o forward, porque encontra dados que não existiam quando a estratégia foi
+desenhada. O juiz histórico já provou empiricamente que não prevê lucro:
+aprovou o DONCHIAN-A, que está em 6.9% de acerto contra 20% de breakeven.
+Hold-out pós-2026-06-21: DESEJÁVEL, não obrigatório (~3,5 blocos, poder baixo
+demais para reprovar; serve para detectar desastre óbvio, não para certificar).
+
+REGISTRO PRÉ-VEREDITO — DONCHIAN-A (Estágio 2).
+Estado em 08/08: dia 21/84, fechados 29/80, WIN 2 · LOSS 24 · EXPIRED 3,
+ΣR -14.89. Decomposição exata: 24 LOSS são stop cheio (-1.00R cada); 3 EXPIRED
+levemente positivos (+0.24/+0.49/+0.38); 2 WIN a +4.00R. 83% dos fechados
+batem stop. Breakeven do bracket 4:1 = 20% de acerto; observado 6.9%.
+Binomial P(X<=2 | n=29, p=0.20) = 0.052 — NÃO cruzou o limiar de 0.025.
+A janela segue até o fechamento pré-registrado (80 fechados OU 84 dias, o que
+for MAIS TARDE). Sem veredito interino.
+HIPÓTESE DE TRABALHO REGISTRADA AGORA, antes do veredito: o DONCHIAN-A foi o
+falso-positivo esperado dos 22%. Se ele virar, vira contra expectativa escrita.
+
+PENDÊNCIA TÉCNICA ABERTA (não bloqueante do veredito): Δpesq -186.9 bps no
+VIGIA de 08/08 excede em ordem de magnitude o caveat registrado ("delta
+levemente negativo por bases de custo mistas"). Verificar se `líq exec` é
+acumulado ou média por trade. Candidato a bug de medição, não a decaimento.
+NIT: falha `TONUSDT ×6` diária é estrutural (delistada da OKX, 07/2026);
+marcar como permanente no VIGIA para não treinar o olho a ignorar o campo.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
