@@ -514,6 +514,69 @@ acumulado ou média por trade. Candidato a bug de medição, não a decaimento.
 NIT: falha `TONUSDT ×6` diária é estrutural (delistada da OKX, 07/2026);
 marcar como permanente no VIGIA para não treinar o olho a ignorar o campo.
 
+## 2026-08-09 — PRÉ-REGISTRO: KEEP IT SIMPLE (FabioMaistro) — antes de qualquer dado
+
+Fonte: tradingview.com/script/nP5fBSfa/ (Pine v6, open-source, publicado 08/2026).
+Prior externo NULO: script novo, sem track record, sem crítica pública. Registrado
+como fraqueza, não como impedimento.
+
+AUDITORIA DO PINE (feita antes do pré-registro):
+- corEstado tem 4 estados alcançáveis. O 5º (CINZAGRID) exige empate exato de
+  float (close==mmeCurta ou mmeCurta==mmeLonga) — inalcançável na prática.
+  A "neutral/transition" da descrição é decorativa.
+- Bollinger (21, 1.3σ, base EMA) alimenta APENAS fill(). Nenhuma decisão depende
+  dela. EXCLUÍDA dos primários por decisão explícita (09/08).
+- forca = adxV + variacao soma unidades incompatíveis (ADX 0-100 limitado +
+  distância % |SMA5-SMA13| ilimitada); cortes 15/20/25/30 calibrados para ações.
+  variacao é cega à direção (valor absoluto). EXCLUÍDA dos primários.
+- Conteúdo negociável real: estado (4 valores) + forca>forca[1]. O resto é pintura.
+
+DETECTOR (a ser implementado, sem grau de liberdade):
+  mmeCurta = EMA(close,8); mmeLonga = EMA(close,21); tf 4h; universo TIER1(20).
+  estado = VERDE  se close>mmeCurta e mmeCurta>mmeLonga
+         | AZUL   se close<mmeCurta e mmeCurta>mmeLonga
+         | ROXO   se close>mmeCurta e mmeCurta<mmeLonga
+         | VERM   se close<mmeCurta e mmeCurta<mmeLonga
+  Entrada LONG  = barra fechada em que estado passa a VERDE (de qualquer outro).
+  Entrada SHORT = barra fechada em que estado passa a VERM.
+  Execução no open da barra seguinte. Warmup: descartar 21 primeiras barras/símbolo.
+
+PRIMÁRIO 1 — NATIVO (saída da própria máquina de estados)
+  Sai quando estado deixa VERDE (LONG) / VERM (SHORT). Cap duro H=48 barras.
+  SEM stop. NÃO OPERÁVEL (cauda descoberta) — é instrumento de medição, mede o
+  indicador como escrito. Se passar, NÃO vai a shadow sem redesenho de saída.
+
+PRIMÁRIO 2 — BRACKET
+  S=1.5 ATR14 · T=3.0 ATR14 · H=24 barras. Puro S/T/H, sem override por estado.
+  Derivação (nenhuma do dado): S=1.5 idêntico à campanha (comparabilidade);
+  T=3.0 porque 4:1 foi calibrado para sinal de 20 dias e EMA8/21 em 4h tem
+  memória ~3-4 dias — mesmo erro do TP3 a 3.5xATR diagnosticado no v9 em 04/2026;
+  H=24 ≈ uma memória completa da EMA longa (centro de massa ~21 barras).
+
+CONFUNDIMENTO CONHECIDO (registrado ANTES do resultado):
+  Os 10 pares anteriores usaram bracket T=6.0/H=48. Aqui T=3.0/H=24. Se o
+  Primário 2 passar e o DONCHIAN não, "T=3.0 é melhor em cripto 4h" é explicação
+  concorrente e NÃO separável nesta rodada. Não pode ser descoberto depois.
+
+SECUNDÁRIOS (descritivos, NÃO promovíveis, nunca reciclados como primário):
+  forca>forca[1] no momento da entrada; largura BB relativa; estado de origem
+  da transição. Reportados para autópsia apenas.
+
+GATES (pedágio da emenda 09/08):
+  MONEY = blockP2.5 do líquido @6bps > +5 bps
+  SKILL = p_shift < 0.005
+  Correção ×2 intra-rodada já embutida (2 primários), como nas 10 anteriores.
+
+CRITÉRIOS DE MORTE:
+  Nenhum primário com MONEY ⇒ MORTO. Sem varredura de parâmetro após falha.
+  n < 400 entradas na janela ⇒ INCONCLUSIVO (não é licença para afrouxar gate).
+  Janela: 2024-05-22 → 2026-06-21, candles_v9.db, seed 1337, determinístico.
+
+EXPECTATIVA REGISTRADA ANTES DO FATO:
+  [Provável] morre no custo, não no sinal — EV@0 positivo com EV@6 negativo.
+  Estado de EMA8/21 em 4h gira muito; a 5 bps/perna precisa de ~10 bps brutos
+  por trade só para empatar. Se o padrão observado for outro, é informação.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
