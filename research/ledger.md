@@ -578,19 +578,52 @@ EXPECTATIVA REGISTRADA ANTES DO FATO:
   por trade só para empatar. Se o padrão observado for outro, é informação.
 
 ### EMENDA ao pré-registro KEEP IT SIMPLE (10/08, ANTES de qualquer rodada)
+
 1. EXECUÇÃO: entrada no CLOSE da barra do sinal, não no open da seguinte.
-   Motivo: é a convenção de measure_event, usada nos 10 pares anteriores.
-   Trocar quebraria comparabilidade. O pré-registro estava errado; a
-   instrução "replicar a convenção existente" prevalece.
-2. ESPAÇAMENTO: SEP_BARS=48 por direção (herdado de juice.py, invariante de
-   forward não-sobreposto). NÃO estava no pré-registro. Mantido por
-   comparabilidade — trocar adicionaria um 2º confundimento aos 10 pares.
-   LIMITAÇÃO REGISTRADA: com SEP=48 não se testa "toda transição de estado",
-   e sim "a primeira transição após 8 dias de cooldown". Obrigatório reportar
-   n_bruto (transições antes do SEP) ao lado de n. Supressão >70% torna o
-   veredito específico deste sampling, não do indicador como escrito.
-3. GATES: reafirmados +5 bps / 0.005. Implementação inicial do PR usava os
-   antigos (0 / 0.025); corrigida antes do merge.
+   É a convenção de measure_event usada nos 10 pares anteriores. O
+   pré-registro estava errado; a convenção existente prevalece.
+
+2. ESPAÇAMENTO: SEP = 0 para o keepitsimple (irmãos mantêm SEP_BARS=48).
+   Razão: o primário NATIVO já se auto-espaça — o estado é único, só se
+   reentra depois de sair. A carência de 48 barras não protegia de nada e
+   descartava a maioria das transições, testando "primeira virada após 8
+   dias de cooldown" em vez do indicador. Reversão de decisão anterior
+   (Claude havia recomendado manter 48; argumento de comparabilidade era
+   fraco e foi retirado).
+   PREMISSA DE CAPITAL REGISTRADA: no primário BRACKET (H=24) o estado pode
+   voltar antes do fechamento, empilhando ~2-3 posições simultâneas no mesmo
+   símbolo. É perfil de risco distinto dos 10 pares anteriores. A correlação
+   estatística da sobreposição é tratada pelos bins de 14 dias do block
+   bootstrap; a premissa de capital NÃO é tratada e fica anotada.
+
+3. GATES: reafirmados MONEY > +5.0 bps e SKILL < 0.005. A implementação
+   inicial do PR usava os antigos (0 / 0.025); corrigida antes do merge.
+
+4. REGRA DE DECISÃO — travada ANTES de ver qualquer número:
+   Custo fixo do gate = 6 bps/trade. Lê-se EV@0 da tabela informativa.
+     EV@0 < 6 bps  ⇒ o sinal não paga o pedágio. Churn CONFIRMADO por
+       mecanismo. Habilita a RODADA 2 (abaixo).
+     EV@0 > 6 bps e MONEY reprova ⇒ o problema NÃO é custo, é variância/
+       episodicidade. RODADA 2 fica PROIBIDA — amortecedor seria o filtro
+       errado. MORTO, cemitério.
+     Qualquer primário com MONEY e SKILL ⇒ entra na fila de forward.
+   Diagnóstico auxiliar (não decisional): hold mediano do nativo. 1-3 barras
+   = chicote puro; 8-15 = outro mecanismo.
+
+5. RODADA 2 — PRÉ-REGISTRADA E CONDICIONADA (só dispara se EV@0 < 6 bps):
+   Banda morta em ATR, com histerese:
+     LONG  entra se close > EMA8 + k*ATR14 e EMA8 > EMA21
+     SHORT entra se close < EMA8 - k*ATR14 e EMA8 < EMA21
+     nativo sai do LONG quando close < EMA8 - k*ATR14 (banda invertida)
+   k = 0.5, DERIVADO: exatamente 1/3 do stop pré-registrado (S=1.5 ATR).
+   Leitura: o ruído que o preço precisa vencer para entrar é um terço fixo
+   do risco assumido. Não é garimpo; é razão fixa contra parâmetro já travado.
+   Escolhido sobre BB (exigiria lookback de percentil = parâmetro livre novo)
+   e sobre ADX/forca (soma unidades incompatíveis e é cego à direção).
+   CUSTO ACEITO: [Provável] a banda atrasa a entrada; troca-se menos trades
+   por entradas piores. Não existe amortecedor de graça.
+   Mesmos gates, mesmos dois primários, mesma janela. UMA rodada. Se falhar,
+   MORTO sem varredura de k.
 
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
