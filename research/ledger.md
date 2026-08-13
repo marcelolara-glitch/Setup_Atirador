@@ -577,6 +577,21 @@ EXPECTATIVA REGISTRADA ANTES DO FATO:
   Estado de EMA8/21 em 4h gira muito; a 5 bps/perna precisa de ~10 bps brutos
   por trade só para empatar. Se o padrão observado for outro, é informação.
 
+### EMENDA ao pré-registro KEEP IT SIMPLE (10/08, ANTES de qualquer rodada)
+1. EXECUÇÃO: entrada no CLOSE da barra do sinal, não no open da seguinte.
+   Motivo: é a convenção de measure_event, usada nos 10 pares anteriores.
+   Trocar quebraria comparabilidade. O pré-registro estava errado; a
+   instrução "replicar a convenção existente" prevalece.
+2. ESPAÇAMENTO: SEP_BARS=48 por direção (herdado de juice.py, invariante de
+   forward não-sobreposto). NÃO estava no pré-registro. Mantido por
+   comparabilidade — trocar adicionaria um 2º confundimento aos 10 pares.
+   LIMITAÇÃO REGISTRADA: com SEP=48 não se testa "toda transição de estado",
+   e sim "a primeira transição após 8 dias de cooldown". Obrigatório reportar
+   n_bruto (transições antes do SEP) ao lado de n. Supressão >70% torna o
+   veredito específico deste sampling, não do indicador como escrito.
+3. GATES: reafirmados +5 bps / 0.005. Implementação inicial do PR usava os
+   antigos (0 / 0.025); corrigida antes do merge.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
