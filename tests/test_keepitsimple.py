@@ -130,6 +130,56 @@ def test_espacamento_nao_afeta_direcao_oposta():
     assert (65, "SHORT") in _idx(evs)
 
 
+# ------------------------------------------------------------ SEP = 0
+
+def _serie_duas_verdes_coladas():
+    """Duas transicoes para VERDE separadas por UMA barra: a serie sobe (VERDE),
+    cai uma unica barra abaixo da EMA curta (AZUL — a EMA longa nao e cruzada)
+    e volta a subir (VERDE de novo na barra seguinte)."""
+    closes = [100.0] * 41 + [110.0] * 8 + [104.0] + [112.0] * 10
+    st = states(closes)
+    i = next(k for k in range(50, len(st)) if st[k] == "VERDE"
+             and st[k - 1] == "AZUL")
+    assert st[i - 1] == "AZUL" and st[i - 2] == "VERDE"   # gap de 1 barra
+    return closes, i
+
+
+def test_sep_zero_admite_duas_verdes_separadas_por_uma_barra():
+    closes, i = _serie_duas_verdes_coladas()
+    evs = keepitsimple_entries(_cndl(closes), sep_bars=0, bar_ms=1000)
+    longs = [k for k, d in _idx(evs) if d == "LONG"]
+    assert longs == [41, i] and i - 41 == 9      # ambas entram, coladas
+
+
+def test_sep_padrao_suprimiria_a_segunda():
+    # contraprova: com SEP_BARS=48 (o dos irmaos) a 2a VERDE some
+    closes, i = _serie_duas_verdes_coladas()
+    evs = keepitsimple_entries(_cndl(closes), sep_bars=48, bar_ms=1000)
+    assert [k for k, d in _idx(evs) if d == "LONG"] == [41] and i not in [
+        k for k, _d in _idx(evs)]
+
+
+def test_sep_zero_nunca_suprime_nada_na_serie_espec():
+    # com sep=0 a guarda `ts - last[d] < 0` e sempre falsa -> no-op
+    a = keepitsimple_entries(_cndl(_SERIE), sep_bars=0, bar_ms=1000)
+    st = states(_SERIE)
+    esperado = [i for i in range(WARMUP, len(_SERIE))
+                if (st[i] == "VERDE" and st[i - 1] != "VERDE")
+                or (st[i] == "VERM" and st[i - 1] != "VERM")]
+    assert [i for i, _d in _idx(a)] == esperado
+
+
+def test_stage1_usa_kis_sep_zero():
+    from backtest import stage1
+    assert stage1.KIS_SEP == 0
+
+
+def test_stage1_limiares_de_gate_por_detector():
+    from backtest import stage1
+    assert (stage1.GATE_MONEY_BPS, stage1.GATE_SKILL) == (0.0, 0.025)
+    assert (stage1.KIS_MONEY_BPS, stage1.KIS_SKILL) == (5.0, 0.005)
+
+
 # --------------------------------------------------------------- empate
 
 def test_empate_exato_vira_cinza():

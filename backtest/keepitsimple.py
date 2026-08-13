@@ -103,10 +103,12 @@ def keepitsimple_entries(candles: list, sep_bars: int, bar_ms: int) -> list:
     """Entradas keepitsimple (pre-registro desta PR): na barra FECHADA i, LONG
     se estado[i]=='VERDE' e estado[i-1]!='VERDE'; SHORT se estado[i]=='VERM' e
     estado[i-1]!='VERM'. As WARMUP primeiras barras do simbolo nunca geram
-    entrada. Espacamento por direcao em TEMPO, identico aos irmaos (`last`
-    persiste entre clusters). Cada entrada carrega `hold` = barras ate o estado
-    DEIXAR o de origem (cap/fallback NAT_CAP), que e a saida do primario nativo,
-    e o payload descritivo de autopsia. Saida indexada sempre por bar_ts."""
+    entrada. Espacamento por direcao em TEMPO, na mesma forma dos irmaos
+    (`last` persiste entre clusters); com sep_bars=0 — como o stage1 chama, por
+    KIS_SEP — a guarda vira no-op e nada e suprimido. Cada entrada carrega
+    `hold` = barras ate o estado DEIXAR o de origem (cap/fallback NAT_CAP), que
+    e a saida do primario nativo, e o payload descritivo de autopsia. Saida
+    indexada sempre por bar_ts."""
     closes = [c["close"] for c in candles]
     tss = [c["ts"] for c in candles]
     st = states(closes)
