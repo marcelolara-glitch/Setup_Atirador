@@ -14,12 +14,20 @@ import argparse
 import random
 import statistics
 import sys
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from backtest.keepitsimple import (NAT_CAP, WARMUP,          # noqa: E402
+                                   keepitsimple_entries)
+
 PRIM_S, PRIM_T, PRIM_H = 1.5, 6.0, 4      # bracket primario
+KIS_S, KIS_T, KIS_BRK_H = 1.5, 3.0, 24    # bracket pre-registrado do keepitsimple
+KIS_SEP = 0                               # keepitsimple nao espaca entradas
+GATE_MONEY_BPS, GATE_SKILL = 0.0, 0.025   # limiares dos irmaos (intocados)
+KIS_MONEY_BPS, KIS_SKILL = 5.0, 0.005     # pedagio de multiplicidade (10/08)
 TEMP_H = 4                                 # temporal primario
 COSTS = (12.0, 6.0, 0.0)                   # tabela informativa
 GATE_COST = 6.0                            # custo dos gates
@@ -86,8 +94,9 @@ def run(store, symbols, start_iso, end_iso, tf,
     """Pre-computa barras elegiveis (measure_event LONG) por simbolo, deriva os
     dois primarios por entrada e roda os gates MONEY/SKILL. `detector` escolhe
     o gerador de entradas: classifier (regime TREND-aligned, intocado), tsmom
-    (momentum time-series, pre-registro 08/07) ou donchian (rompimento de canal,
-    pre-registro 14/07)."""
+    (momentum time-series, pre-registro 08/07), donchian (rompimento de canal,
+    pre-registro 14/07) ou keepitsimple (EMA 8/21; primarios `nativo` — saida
+    quando o estado deixa VERDE/VERM, cap NAT_CAP — e `bracket` KIS_*)."""
     from backtest.candle_store import connect, read_candles          # noqa: E402
     from backtest.excursion import _iso_to_ms, measure_event         # noqa: E402
     from backtest.juice import (_boot_mean, _regime_timeline,        # noqa: E402
@@ -99,17 +108,24 @@ def run(store, symbols, start_iso, end_iso, tf,
     gc = GATE_COST / 1e4
     # perfil de horizontes: classifier mantem o pre-registro (H=4); tsmom usa
     # o hold escolhido nos dois primarios. S/T ficam PRIM_S/PRIM_T sempre.
+    kis = detector == "keepitsimple"
     temp_h = TEMP_H if detector == "classifier" else hold
-    brk_h = PRIM_H if detector == "classifier" else hold
+    brk_h = KIS_BRK_H if kis else (PRIM_H if detector == "classifier" else hold)
+    brk_s, brk_t = (KIS_S, KIS_T) if kis else (PRIM_S, PRIM_T)
 
-    def vals(entry, direction):
-        """(temporal_ATR, bracket_ATR, atr_pct) da barra, simetria p/ SHORT."""
+    def vals(entry, direction, hold_bars=None):
+        """(temporal_ATR, bracket_ATR, atr_pct) da barra, simetria p/ SHORT. No
+        keepitsimple `fwdh` e a serie por barra: `hold_bars` (propriedade do
+        sinal, viaja com ele no nulo) escolhe a saida do nativo; o FLAT do
+        bracket continua no fechamento de brk_h."""
         atr_pct, fwdh, favh, advh = entry
+        temp, flat = ((fwdh[hold_bars - 1], fwdh[brk_h - 1]) if kis
+                      else (fwdh, fwdh))
         if direction == "SHORT":
-            fwdh, favh, advh = -fwdh, advh, favh
-        brk, _c = first_touch(favh, advh, fwdh, PRIM_S, PRIM_T, brk_h)
-        return fwdh, brk, atr_pct
-    elig, entries, excluida = {}, [], 0
+            temp, flat, favh, advh = -temp, -flat, advh, favh
+        brk, _c = first_touch(favh, advh, flat, brk_s, brk_t, brk_h)
+        return temp, brk, atr_pct
+    elig, entries, excluida, autopsia = {}, [], 0, []
     for sym in symbols:
         if detector == "classifier":
             tl = _regime_timeline(conn, sym, tf, start_ms, end_ms)
@@ -123,6 +139,9 @@ def run(store, symbols, start_iso, end_iso, tf,
                 cand_ts = tss[channel:]
                 evs = donchian_entries(closes, tss, channel,
                                        SEP_BARS, _BAR_MS[tf])
+            elif kis:
+                cand_ts = tss[WARMUP:]
+                evs = keepitsimple_entries(cndl, KIS_SEP, _BAR_MS[tf])
             else:
                 cand_ts = tss[lookback:]
                 evs = tsmom_entries(closes, tss, lookback,
@@ -132,11 +151,14 @@ def run(store, symbols, start_iso, end_iso, tf,
             m = measure_event(conn, sym, ts, "LONG", tf=tf)
             if m is None:
                 continue
-            e = (m["atr"] / m["entry"], m["fwd"][temp_h],
+            e = (m["atr"] / m["entry"],
+                 m["fwd_bar"][:NAT_CAP] if kis else m["fwd"][temp_h],
                  m["fav"][:brk_h], m["adv"][:brk_h])
             if not cache:   # guarda de simetria na 1a barra elegivel do simbolo
                 ms = measure_event(conn, sym, ts, "SHORT", tf=tf)
-                assert abs(ms["fwd"][temp_h] + e[1]) < 1e-9 and all(
+                msf = ms["fwd_bar"][:NAT_CAP] if kis else ms["fwd"][temp_h]
+                assert (all(abs(a + b) < 1e-9 for a, b in zip(msf, e[1]))
+                        if kis else abs(msf + e[1]) < 1e-9) and all(
                     abs(a - b) < 1e-9 for a, b in zip(ms["fav"][:brk_h], e[3])
                 ) and all(
                     abs(a - b) < 1e-9 for a, b in zip(ms["adv"][:brk_h], e[2])
@@ -150,16 +172,19 @@ def run(store, symbols, start_iso, end_iso, tf,
             if i is None:
                 excluida += 1
             else:
-                entries.append((sym, ev["direction"], i, ev["bar_ts"]))
+                entries.append((sym, ev["direction"], i, ev["bar_ts"],
+                                ev.get("hold")))
+                if kis:
+                    autopsia.append(dict(ev, symbol=sym))
     conn.close()
     # estrategia: bruto em fracao do nocional (custo aplicado depois)
     ts_list, g_temp, g_brk, by_sym = [], [], [], {}
-    for sym, d, i, ts in entries:
-        fwd4, brk, ap = vals(elig[sym][i], d)
+    for sym, d, i, ts, hb in entries:
+        fwd4, brk, ap = vals(elig[sym][i], d, hb)
         ts_list.append(ts)
         g_temp.append(fwd4 * ap)
         g_brk.append(brk * ap)
-        by_sym.setdefault(sym, []).append((d, i))
+        by_sym.setdefault(sym, []).append((d, i, hb))
     t0 = min(ts_list) if ts_list else 0
 
     def block_p25(gross):   # MONEY: reamostra bins de calendario c/ reposicao
@@ -189,8 +214,8 @@ def run(store, symbols, start_iso, end_iso, tf,
             cache = elig[sym]
             n = len(cache)
             off = random.randrange(n)
-            for d, i in evs:
-                fwd4, brk, ap = vals(cache[shift_idx(i, off, n)], d)
+            for d, i, hb in evs:
+                fwd4, brk, ap = vals(cache[shift_idx(i, off, n)], d, hb)
                 rt.append(fwd4 * ap - gc)
                 rb.append(brk * ap - gc)
         ge_t += statistics.fmean(rt) >= sm_temp
@@ -199,19 +224,22 @@ def run(store, symbols, start_iso, end_iso, tf,
     ps_brk = ge_b / N_SHIFT if entries else 1.0
     # tabela informativa (iid via _boot_mean) — apos gates p/ ordem RNG fixa
     table = []
-    for name, gross in (("temporal", g_temp), ("bracket", g_brk)):
+    tname = "nativo" if kis else "temporal"
+    for name, gross in ((tname, g_temp), ("bracket", g_brk)):
         for cost in COSTS:
             m, _lo, _hi, p = _boot_mean([g - cost / 1e4 for g in gross])
             table.append((name, cost, len(gross), m * 1e4, p))
-    gates = [("temporal", sm_temp * 1e4, bp_temp * 1e4, bp_temp > 0,
-              ps_temp, ps_temp < 0.025),
-             ("bracket", sm_brk * 1e4, bp_brk * 1e4, bp_brk > 0,
-              ps_brk, ps_brk < 0.025)]
+    g_money, g_skill = ((KIS_MONEY_BPS, KIS_SKILL) if kis
+                        else (GATE_MONEY_BPS, GATE_SKILL))
+    gates = [(tname, sm_temp * 1e4, bp_temp * 1e4, bp_temp * 1e4 > g_money,
+              ps_temp, ps_temp < g_skill),
+             ("bracket", sm_brk * 1e4, bp_brk * 1e4, bp_brk * 1e4 > g_money,
+              ps_brk, ps_brk < g_skill)]
     return {"tf": tf, "start": start_iso, "end": end_iso,
             "n_symbols": len(symbols), "n_entries": len(entries),
             "excluida": excluida, "table": table, "gates": gates,
             "detector": detector, "lookback": lookback, "hold": hold,
-            "channel": channel}
+            "channel": channel, **({"autopsia": autopsia} if kis else {})}
 
 
 def main() -> int:
@@ -222,7 +250,8 @@ def main() -> int:
     ap.add_argument("--end", required=True, help="data ISO, ex. 2026-06-21")
     ap.add_argument("--store", default=str(ROOT / "backtest" / "candles_v9.db"))
     ap.add_argument("--symbols", nargs="+", default=None, help="default: TIER1")
-    ap.add_argument("--detector", choices=["classifier", "tsmom", "donchian"],
+    ap.add_argument("--detector",
+                    choices=["classifier", "tsmom", "donchian", "keepitsimple"],
                     default="classifier")
     ap.add_argument("--lookback", type=int, choices=[42, 84, 168], default=84,
                     help="efeito apenas com --detector tsmom")
@@ -238,6 +267,8 @@ def main() -> int:
         suffix = f" detector=tsmom L={args.lookback} H={args.hold}"
     elif args.detector == "donchian":
         suffix = f" detector=donchian N={args.channel} H={args.hold}"
+    elif args.detector == "keepitsimple":
+        suffix = " detector=keepitsimple EMA 8/21"
     else:
         suffix = ""
     print(f"[stage1] tf={args.tf} janela {args.start}->{args.end} "
@@ -255,6 +286,9 @@ def main() -> int:
     elif r["detector"] == "tsmom":
         print(f"primarios: TSMOM L={r['lookback']} | temporal H={r['hold']} | "
               f"bracket S={PRIM_S} T={PRIM_T} H={r['hold']}")
+    elif r["detector"] == "keepitsimple":
+        print(f"primarios: KEEPITSIMPLE EMA 8/21 | nativo saida-por-estado "
+              f"H<={NAT_CAP} | bracket S={KIS_S} T={KIS_T} H={KIS_BRK_H}")
     else:
         print(f"primarios: temporal H={TEMP_H} | "
               f"bracket S={PRIM_S} T={PRIM_T} H={PRIM_H}")
@@ -262,12 +296,26 @@ def main() -> int:
           f"{'iid_p':>6}   (tabela informativa)")
     for name, cost, n, ev, p in r["table"]:
         print(f"{name:>9} | {cost:>5.1f} | {n:>5} | {ev:>8.1f} | {p:>6.3f}")
+    gm, gs = ((KIS_MONEY_BPS, KIS_SKILL) if r["detector"] == "keepitsimple"
+              else (GATE_MONEY_BPS, GATE_SKILL))
     print(f"\n{'primario':>9} | {'EV@6(bps)':>9} | {'blockP2.5':>9} | "
-          f"{'MONEY':>5} | {'p_shift':>7} | {'SKILL':>5}   (gates custo 6)")
+          f"{'MONEY':>5} | {'p_shift':>7} | {'SKILL':>5}   (gates custo 6 | "
+          f"MONEY: blockP2.5 > +{gm:.1f} bps | SKILL: p_shift < {gs:.3f})")
     for name, ev6, bp, money, ps, skill in r["gates"]:
         print(f"{name:>9} | {ev6:>9.1f} | {bp:>9.1f} | "
               f"{('sim' if money else 'nao'):>5} | {ps:>7.3f} | "
               f"{('sim' if skill else 'nao'):>5}")
+    if r.get("autopsia"):   # payload descritivo — NAO entra em decisao alguma
+        a = r["autopsia"]
+        sub = [x["forca_subindo"] for x in a if x["forca_subindo"] is not None]
+        bw = [x["bb_width_rel"] for x in a if x["bb_width_rel"] is not None]
+        dirs = Counter(x["direction"] for x in a)
+        print(f"\nautopsia (descritiva, nao decisional): "
+              f"LONG={dirs['LONG']} SHORT={dirs['SHORT']} | hold_mediano="
+              f"{statistics.median(x['hold'] for x in a):.0f} | forca_subindo="
+              f"{100 * sum(sub) / len(sub) if sub else 0:.0f}% (n={len(sub)}) |"
+              f" bb_width_rel_med={statistics.median(bw) if bw else 0:.4f} | "
+              f"origem={Counter(x['estado_origem'] for x in a).most_common()}")
     exploratorio = (
         (r["detector"] == "tsmom" and (r["lookback"], r["hold"]) != (84, 48))
         or (r["detector"] == "donchian"

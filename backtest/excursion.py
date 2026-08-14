@@ -120,8 +120,11 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str,
         adv = [(c["high"] - entry) / atr for c in fwd]
     sign = 1.0 if is_long else -1.0
     fwd_atr = {h: sign * (fwd[h - 1]["close"] - entry) / atr for h in HORIZONS}
+    # ADITIVO: mesmo retorno de fechamento, mas POR BARRA (48), p/ horizontes
+    # fora de HORIZONS. Invariante: fwd_bar[h-1] == fwd[h] p/ h em HORIZONS.
+    fwd_bar = [sign * (c["close"] - entry) / atr for c in fwd]
     return {"symbol": symbol, "bar_ts": bar_ts, "direction": direction,
-            "atr": atr, "mfe": mfe, "mae": mae,
+            "atr": atr, "mfe": mfe, "mae": mae, "fwd_bar": fwd_bar,
             "entry": entry, "fwd": fwd_atr, "fav": fav, "adv": adv}
 
 
