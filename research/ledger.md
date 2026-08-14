@@ -668,6 +668,15 @@ PROIBIDO derivar primaria de qualquer um destes numeros. Se "forca crescente"
 virar hipotese algum dia, vem de raciocinio a priori, com outro nome, sem
 citar esta rodada como motivacao.
 
+### 2026-08-10 — EXPLORATÓRIO: keepitsimple símbolo único (SOLUSDT)
+Motivação: inspeção VISUAL do gráfico após o veredito MORTO do agregado.
+Isto é melhor-de-20 pós-hoc. P(>=1 dos 20 passar por acaso @2.5%) = 40%.
+NÃO PROMOVÍVEL sob nenhuma circunstância, qualquer que seja o resultado.
+Não gera rodada 2, não entra na fila forward, não vira primária depois com
+outro nome. Serve APENAS para diagnosticar dispersão entre símbolos.
+Poder esperado: n ~500 sobre ~52 bins de 14d ⇒ blockP2.5 muito largo.
+[Provável] o resultado será INCONCLUSIVO, não exculpatório.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
