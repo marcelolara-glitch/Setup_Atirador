@@ -631,6 +631,43 @@ CORREÇÃO (10/08, antes da rodada): a estimativa "~2-3 posições simultâneas"
    Mesmos gates, mesmos dois primários, mesma janela. UMA rodada. Se falhar,
    MORTO sem varredura de k.
 
+## 2026-08-10 — KEEP IT SIMPLE (EMA 8/21, TIER1 4h) — VEREDITO: MORTO
+n=10532 entradas (LONG 4942 / SHORT 5590), excluidas_borda 138, SEP=0.
+  nativo  (saida-por-estado, H<=48): EV@0 +14.1 | EV@6 +8.1 (iid_p .041)
+          | blockP2.5 -10.6 → MONEY NAO | p_shift 0.024 → SKILL NAO (toll .005)
+  bracket (S=1.5 T=3.0 H=24):        EV@0 +11.2 | EV@6 +5.2 (iid_p .163)
+          | blockP2.5 -25.8 → MONEY NAO | p_shift 0.330 → SKILL NAO
+MORTO: nenhum primario com MONEY. Rodada 2 (banda morta k=0.5) PROIBIDA pela
+regra de decisao pre-registrada (EV@0 > 6 bps ⇒ o mecanismo NAO e custo).
+
+PREVISAO FALSIFICADA: o pre-registro apostava "[Provavel] morre no custo,
+EV@0 positivo com EV@6 negativo". EV@6 e POSITIVO (+8.1). A previsao estava
+errada; a regra escrita antes do dado impediu que o erro virasse racionalizacao.
+
+ROBUSTEZ DO VEREDITO: sob os gates ANTIGOS (>0 / <0.025) o nativo daria
+MONEY nao / SKILL SIM (0.024). Continua MORTO. O pedagio de 09/08 NAO foi o
+executor — quem matou foi o block bootstrap. A emenda nao esta calibrada
+para reprovar.
+
+CONTABILIDADE: 12 primarias na campanha, 1 passe de MONEY.
+P(>=1 passe por acaso @2.5%) = 26% (era 22% com 10). O DONCHIAN-A fica
+progressivamente mais compativel com sorte.
+
+LICAO NOVA — corrige generalizacao anterior:
+O ledger registrava "em rompimento o bracket domina o temporal (8/8)". AQUI E
+O INVERSO: nativo 14.1/p .024 vs bracket 11.2/p .330. O bracket destroi a
+skill. Leitura corrigida: bracket domina em ROMPIMENTO; em sinal de horizonte
+curto com saida ENDOGENA, o stop fixo corta a operacao no meio da informacao
+e e subtracao. Nao generalizar "bracket sempre".
+
+AUTOPSIA (descritiva, NAO promovivel):
+hold_mediano 3 barras (12h); forca_subindo em apenas 29% das entradas;
+bb_width_rel_med 0.0502; origem ROXO 5275 / AZUL 4611 / VERDE 340 / VERM 306
+(94% vindo dos estados adjacentes de pullback, como esperado).
+PROIBIDO derivar primaria de qualquer um destes numeros. Se "forca crescente"
+virar hipotese algum dia, vem de raciocinio a priori, com outro nome, sem
+citar esta rodada como motivacao.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
