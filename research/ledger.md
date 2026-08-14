@@ -595,6 +595,12 @@ EXPECTATIVA REGISTRADA ANTES DO FATO:
    símbolo. É perfil de risco distinto dos 10 pares anteriores. A correlação
    estatística da sobreposição é tratada pelos bins de 14 dias do block
    bootstrap; a premissa de capital NÃO é tratada e fica anotada.
+CORREÇÃO (10/08, antes da rodada): a estimativa "~2-3 posições simultâneas"
+   estava subdimensionada. Smoke sintético com SEP=0 deu hold mediano 3 barras
+   e 4,1x mais entradas; com bracket H=24 o empilhamento provável é 5-8
+   posições por símbolo. Premissa de capital MAIS pesada que a registrada.
+   Medição permanece válida (correlação tratada pelos bins de 14d); a distância
+   entre medido e operável é maior do que o texto original sugeria.
 
 3. GATES: reafirmados MONEY > +5.0 bps e SKILL < 0.005. A implementação
    inicial do PR usava os antigos (0 / 0.025); corrigida antes do merge.
