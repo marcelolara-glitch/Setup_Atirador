@@ -677,6 +677,97 @@ outro nome. Serve APENAS para diagnosticar dispersão entre símbolos.
 Poder esperado: n ~500 sobre ~52 bins de 14d ⇒ blockP2.5 muito largo.
 [Provável] o resultado será INCONCLUSIVO, não exculpatório.
 
+### 2026-08-16 — EXPLORATÓRIO POR SÍMBOLO (keepitsimple, 20 TIER1)
+
+RESSALVA DE PROCEDÊNCIA — ler antes do resto. O exploratório de 10/08 acima
+previa SOLUSDT isolado. Foi ampliado para os 20 símbolos da TIER1 por decisão
+de 10/08, e a regra de leitura abaixo foi fixada por escrito na mesma data,
+ANTES do lançamento da rodada (14/08). Mas o bloco da ampliação NÃO foi
+commitado na época: está sendo registrado agora, DEPOIS do resultado. A regra
+é legítima por ter antecedido o dado; a lacuna de registro fica anotada como
+falha de processo, não se repete.
+
+REGRA DE LEITURA (fixada 10/08, antes do dado): >=15 de 20 símbolos com
+EV@6 > 0 mereceria atenção. O melhor símbolo isolado NÃO conta como evidência
+(máximo de 20 sorteios é alto por construção). Dispersão só é informativa se
+ESTRUTURADA e nomeável a priori.
+
+RESULTADO: 12 de 19 com EV@6 > 0 (nativo). P(>=12 de 19) = 0.18. É ACASO.
+TON excluído das contagens: n=69 contra ~520-575 dos demais (amostra quebrada
+por delistagem). n total 10532, bate com o agregado de 10/08.
+  positivos: XRP +30.0 · DOGE +34.7 · ARB +27.4 · WLD +25.3 · ADA +20.7 ·
+             DOT +20.7 · SUI +16.5 · TRX +13.4 · AVAX +12.6 · NEAR +7.8 ·
+             BNB +2.4 · OP +2.1
+  negativos: LTC -23.8 · BCH -18.0 · ETH -7.4 · SOL -6.7 · LINK -6.3 ·
+             BTC -0.3 · APT -0.3
+
+SOL REFUTADO. A hipótese visual que motivou este ramo ("SOL é visualmente e
+seguramente rentável") está ERRADA. SOL nativo EV@6 -6.7, blockP2.5 -38.2;
+bracket EV@6 -14.9, blockP2.5 -76.3. TERCEIRO PIOR dos 20. Registrado como
+medida direta do valor probatório da leitura visual de gráfico nesta bancada.
+
+ACHADO ESTRUTURAL — o mais importante desta rodada.
+blockP2.5 negativo em 19 de 20 símbolos, mediana -27.8 bps, INCLUSIVE nos de
+maior EV: XRP EV@6 +30.0 com block -10.0; ARB +27.4 com block -3.4. Com ~550
+trades sobre ~52 bins de 14 dias (~10 trades/bin), a variância entre janelas
+engole a média.
+
+O PEDÁGIO DE 09/08 SE PAGOU. Único blockP2.5 > 0 em toda a varredura: TRX
+bracket +1.4 bps com p_shift 0.024. Sob os gates ANTIGOS (>0 / <0.025) seria
+DUPLO-PASSE e viraria "o segundo DONCHIAN-A". Sob o pedágio morre nos dois.
+É exatamente o melhor-de-20 previsto (P=40%) aparecendo uma vez. A emenda foi
+calibrada para acertar, não para reprovar.
+
+PREVISÃO CONFIRMADA: o pré-registro de 10/08 dizia "[Provável] o resultado
+será INCONCLUSIVO, não exculpatório". Foi.
+
+===== O QUE ISTO ENCERRA E O QUE NÃO ENCERRA =====
+
+ENCERRADO — por FALTA DE PODER, não por regra:
+Símbolo isolado como caminho de PROMOÇÃO. Com ~550 trades sobre ~52 bins, o
+blockP2.5 é estruturalmente negativo. Qualquer variante futura rodada símbolo
+a símbolo terá o mesmo destino, por aritmética, independentemente do mérito.
+Rodar por símbolo continua PERMITIDO como DIAGNÓSTICO de dispersão; NÃO como
+candidatura a primária.
+
+NÃO ENCERRADO — frente ABERTA e SEM TETO DE TENTATIVAS:
+Variantes da estratégia sobre o UNIVERSO INTEIRO. A frente "Keep It Simple"
+NÃO está fechada. O veredito MORTO de 10/08 se aplica à CONFIGURAÇÃO testada
+(regra Estado + saída por mudança de estado + bracket 1.5/3.0/24), não à
+família de variantes. Marcelo está em fase de DESENHO LIVRE no TradingView.
+Variantes já em exploração visual, todas legítimas como primárias futuras:
+  - regra "Extremos": posição = último estado EXTREMO visto; AZUL/ROXO/CINZA
+    não agem; só o extremo oposto inverte (stop-and-reverse);
+  - saída por cruzamento do preço com a EMA LONGA (21);
+  - confirmação de N barras no estado antes de liberar entrada;
+  - separação mínima EMA curta-longa em ATR (filtro de lateralidade);
+  - ADX mínimo como double-check.
+Cada configuração CONGELADA vira primária nova (#13, #14, ...), com
+pré-registro antes do dado e os gates de pedágio de 09/08. Não há limite de
+quantas podem ser submetidas ao juiz.
+NOTA TÉCNICA registrada: "sair quando o preço cruza de volta a EMA CURTA" é
+matematicamente idêntico a sair do estado VERDE/VERM — é a regra já morta em
+10/08, sem as reentradas. A EMA LONGA é que constitui saída genuinamente nova.
+
+TERCEIRO CAMINHO, TAMBÉM ABERTO:
+Universo em SUBCONJUNTO definido A PRIORI (ex.: "somente alts", "somente
+top-5 por liquidez"). Legítimo como primária desde que o critério do recorte
+seja escrito ANTES de olhar resultado — o n volta a ser grande e o poder
+volta. PROIBIDO: escolher o subconjunto olhando a tabela por símbolo acima.
+Isso seria melhor-de-20 com outro nome.
+
+FASE DE DESENHO vs. FASE DE JULGAMENTO — distinção registrada:
+Exploração visual no TradingView é GERAÇÃO DE HIPÓTESE, não evidência. Não há
+limite de configurações que Marcelo possa avaliar visualmente. Ao submeter uma
+ao juiz, informar quantas combinações foram avaliadas a sério — entra na
+leitura do p-valor, não como julgamento moral.
+
+PERMANECE FACTUAL, NÃO SE REABRE: a refutação do SOL e o caso TRX. São
+medições, não vereditos.
+
+CONTABILIDADE DA CAMPANHA (inalterada por este exploratório): 12 primárias,
+1 passe de MONEY. P(>=1 por acaso @2.5%) = 26%.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
