@@ -26,9 +26,9 @@ confirmacao — e nenhuma entrada NOVA aparece.
 
 import pytest
 
-from backtest.keepitsimple import (EXT_CAP, EXT_CONF, WARMUP, _alvo_extremos,
-                                   extremos_entries, keepitsimple_entries,
-                                   states)
+from backtest.keepitsimple import (EMA_SLOW, EXT_CAP, EXT_CONF, WARMUP,
+                                   _alvo_extremos, extremos_entries,
+                                   keepitsimple_entries, states)
 
 _SERIE = ([100.0] * 41 + [110.0] * 20 + [108.0] * 4 + [90.0] * 20
           + [105.0] * 25 + [80.0] * 20)
@@ -186,6 +186,37 @@ def test_warmup_suprime_entradas_antes_da_barra_21():
     assert all(e["bar_ts"] >= WARMUP * 1000 for e in evs), tss[:1]
 
 
+# Serie que ENTRA em VERDE o mais cedo que as EMAs permitem e NAO sai mais: e
+# o caso em que o alvo carregado poderia chegar em WARMUP-1 ja nao-nulo e
+# engolir a primeira posicao do simbolo (a entrada exige MUDANCA de valor).
+_SOBE = [100.0 + 2.0 * i for i in range(60)]
+
+
+def test_primeiro_estado_nao_cinza_nunca_vem_antes_de_warmup_menos_um():
+    # states() nao consegue emitir extremo antes de EMA_SLOW-1: a EMA longa so
+    # ganha semente no indice EMA_SLOW-1, e antes disso o estado e CINZA.
+    st = states(_SOBE)
+    assert next(i for i, s in enumerate(st) if s != "CINZA") == EMA_SLOW - 1
+    assert all(s == "CINZA" for s in st[:EMA_SLOW - 1])
+
+
+def test_alvo_em_warmup_menos_um_e_sempre_zero():
+    # CONSEQUENCIA: na barra WARMUP-1 o extremo tem barras_no_estado == 1 (a
+    # anterior era CINZA), entao nao confirma e o alvo carrega 0. Nao existe
+    # primeira posicao descartada — o descarte e estruturalmente impossivel
+    # ENQUANTO WARMUP == EMA_SLOW. Se alguem desacoplar os dois, este teste cai.
+    assert WARMUP == EMA_SLOW
+    for serie in (_SOBE, [100.0 - 2.0 * i for i in range(60)], _SERIE):
+        assert _alvo_extremos(states(serie))[WARMUP - 1] == 0
+
+
+def test_a_primeira_posicao_do_simbolo_entra_na_barra_warmup():
+    # o par dos dois testes acima, no comportamento observavel: a serie que
+    # sobe desde a barra 0 gera entrada EXATAMENTE em WARMUP, nao depois
+    evs = extremos_entries(_cndl(_SOBE))
+    assert _idx(evs, [i * 1000 for i in range(60)]) == [(WARMUP, "LONG")]
+
+
 # ------------------------------------------------------- gap de timestamp
 
 def test_gap_de_timestamp_nao_desloca_entradas():
@@ -291,6 +322,100 @@ def test_reguas_antigas_seguem_no_horizonte_de_48():
         conn.close()
     assert len(m["fav"]) == len(m["adv"]) == max(HORIZONS) == 48
     assert set(m["mfe"]) == set(m["mae"]) == set(m["fwd"]) == set(HORIZONS)
+
+
+def _run_ext(d, candles, fim="2027-06-21"):
+    """stage1.run no modo kis_extremos sobre um store sintetico de 1 simbolo."""
+    import random
+
+    from backtest import stage1
+    from backtest.candle_store import connect, upsert_candles
+    db = d + "/s.db"
+    conn = connect(db)
+    upsert_candles(conn, "AAAUSDT", "4h", candles)
+    conn.close()
+    random.seed(1337)
+    return stage1.run(db, ["AAAUSDT"], "2024-05-22", fim, "4h",
+                      detector="kis_extremos")
+
+
+_T0 = 1_716_336_000_000
+_BAR4H = 14_400_000
+
+
+def _ohlc(closes, tss):
+    return [{"ts": t, "open": c, "high": c + 0.5, "low": c - 0.5,
+             "close": c, "volume": 1.0} for t, c in zip(tss, closes)]
+
+
+def test_sem_buraco_nenhum_evento_e_excluido_por_hold():
+    # PROPRIEDADE: numa serie contigua, hold <= len(fwd_bar) SEMPRE. hold conta
+    # candles ate a proxima inversao (<= fim da serie) e fwd_bar le do store,
+    # que vai pelo menos tao longe. A exclusao existe para o caso do buraco.
+    pytest.importorskip("aiohttp")
+    import tempfile
+
+    closes = [100.0 + 30.0 * ((i // 150) % 2) + 0.05 * (i % 150)
+              for i in range(700)]
+    with tempfile.TemporaryDirectory() as d:
+        r = _run_ext(d, _ohlc(closes, [_T0 + i * _BAR4H for i in range(700)]))
+    assert r["n_entries"] > 0 and r["excluida_hold"] == 0
+
+
+def test_buraco_no_store_exclui_o_evento_em_vez_de_medi_lo_curto():
+    # O caso REAL (perfil TON/delistagem): 120 barras, buraco de 400, mais 200.
+    # `hold` conta CANDLES ate a inversao; `fwd_bar` cobre 256 larguras de
+    # barra em TEMPO. Atravessando o buraco, o hold nao cabe — antes desta
+    # correcao o evento era medido como se tivesse saido cedo.
+    pytest.importorskip("aiohttp")
+    import tempfile
+
+    closes = ([100.0 + 0.3 * i for i in range(120)]
+              + [160.0 - 0.3 * i for i in range(200)])
+    tss = ([_T0 + i * _BAR4H for i in range(120)]
+           + [_T0 + (i + 520) * _BAR4H for i in range(200)])
+    with tempfile.TemporaryDirectory() as d:
+        r = _run_ext(d, _ohlc(closes, tss))
+    assert r["excluida_hold"] == 1
+    # e o evento excluido nao vazou para a autopsia nem para as entradas
+    assert r["n_entries"] == len(r["autopsia"]) == 1
+
+
+def test_cache_curto_mede_a_exposicao_do_nulo():
+    # barras perto da borda direita do store nao tem os EXT_CAP inteiros; o
+    # nulo desloca sinais para elas, entao a contagem tem que ser reportada
+    pytest.importorskip("aiohttp")
+    import tempfile
+
+    closes = [100.0 + 30.0 * ((i // 150) % 2) + 0.05 * (i % 150)
+              for i in range(700)]
+    with tempfile.TemporaryDirectory() as d:
+        r = _run_ext(d, _ohlc(closes, [_T0 + i * _BAR4H for i in range(700)]))
+    assert 0 < r["cache_curto"] < EXT_CAP     # ~as ultimas EXT_CAP elegiveis
+
+
+def test_keepitsimple_nao_ganha_exclusao_por_hold():
+    # o clamp e inofensivo no irmao (hold <= NAT_CAP == len) e a contagem nova
+    # nem e aplicada la: o contador fica em zero e nada e descartado
+    pytest.importorskip("aiohttp")
+    import random
+    import tempfile
+
+    from backtest import stage1
+    from backtest.candle_store import connect, upsert_candles
+
+    closes = [100.0 + 30.0 * ((i // 150) % 2) + 0.05 * (i % 150)
+              for i in range(700)]
+    with tempfile.TemporaryDirectory() as d:
+        conn = connect(d + "/s.db")
+        upsert_candles(conn, "AAAUSDT", "4h",
+                       _ohlc(closes, [_T0 + i * _BAR4H for i in range(700)]))
+        conn.close()
+        random.seed(1337)
+        r = stage1.run(d + "/s.db", ["AAAUSDT"], "2024-05-22", "2027-06-21",
+                       "4h", detector="keepitsimple")
+    assert r["excluida_hold"] == 0 and r["cache_curto"] == 0
+    assert [g[0] for g in r["gates"]] == ["nativo", "bracket"]
 
 
 def test_exclusao_de_borda_continua_em_48_e_nao_em_256():

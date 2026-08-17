@@ -125,9 +125,15 @@ def run(store, symbols, start_iso, end_iso, tf,
         """(temporal_ATR, bracket_ATR, atr_pct) da barra, simetria p/ SHORT. No
         keepitsimple `fwdh` e a serie por barra: `hold_bars` (propriedade do
         sinal, viaja com ele no nulo) escolhe a saida do nativo; o FLAT do
-        bracket continua no fechamento de brk_h. O clamp por len(fwdh) so
-        morde no kis_extremos perto da borda direita do store (fwd_bar tem
-        comprimento variavel); no keepitsimple hold_bars <= NAT_CAP == len."""
+        bracket continua no fechamento de brk_h.
+
+        O clamp por len(fwdh) NAO e alcancavel pelo evento OBSERVADO: no
+        keepitsimple hold_bars <= NAT_CAP == len(fwdh) por construcao, e no
+        kis_extremos o evento cujo hold nao cabe no futuro disponivel e
+        EXCLUIDO na coleta (`excluida_hold`) em vez de medido curto. Sobra o
+        nulo, que desloca o sinal para uma barra arbitraria do simbolo: la o
+        clamp ainda morde, limitado pelas `cache_curto` barras de fwd_bar
+        truncado — o cabecalho reporta as duas contagens."""
         atr_pct, fwdh, favh, advh = entry
         temp, flat = ((fwdh[min(hold_bars, len(fwdh)) - 1], fwdh[brk_h - 1])
                       if kis else (fwdh, fwdh))
@@ -138,6 +144,7 @@ def run(store, symbols, start_iso, end_iso, tf,
         brk, _c = first_touch(favh, advh, flat, brk_s, brk_t, brk_h)
         return temp, brk, atr_pct
     elig, entries, excluida, autopsia = {}, [], 0, []
+    excluida_hold = cache_curto = 0
     for sym in symbols:
         if detector == "classifier":
             tl = _regime_timeline(conn, sym, tf, start_ms, end_ms)
@@ -182,11 +189,20 @@ def run(store, symbols, start_iso, end_iso, tf,
             cache.append(e)
             cts.append(ts)
         elig[sym] = cache
+        if ext:   # exposicao do nulo ao clamp: barras sem os EXT_CAP inteiros
+            cache_curto += sum(1 for c in cache if len(c[1]) < EXT_CAP)
         pos = {t: i for i, t in enumerate(cts)}
         for ev in evs:
             i = pos.get(ev["bar_ts"])
             if i is None:
                 excluida += 1
+            elif ext and ev["hold"] > len(cache[i][1]):
+                # A MESMA regra de borda direita ja travada, so que aplicada ao
+                # horizonte REAL do evento em vez do fixo de 48: sem futuro
+                # para o hold inteiro, medir seria fingir uma saida antecipada
+                # — e o vies cairia justo nos holds longos, que num seguidor de
+                # tendencia carregam o payoff. Excluir e a unica leitura honesta.
+                excluida_hold += 1
             else:
                 entries.append((sym, ev["direction"], i, ev["bar_ts"],
                                 ev.get("hold")))
@@ -259,6 +275,7 @@ def run(store, symbols, start_iso, end_iso, tf,
     return {"tf": tf, "start": start_iso, "end": end_iso,
             "n_symbols": len(symbols), "n_entries": len(entries),
             "excluida": excluida, "table": table, "gates": gates,
+            "excluida_hold": excluida_hold, "cache_curto": cache_curto,
             "detector": detector, "lookback": lookback, "hold": hold,
             "channel": channel, **({"autopsia": autopsia} if kis else {})}
 
@@ -303,7 +320,19 @@ def main() -> int:
 
     print(f"\n===== STAGE1 (nulo circular + block bootstrap, {r['tf']}) =====")
     print(f"janela {r['start']} -> {r['end']} | {r['n_symbols']} simbolos | "
-          f"entradas: {r['n_entries']} | excluidas_borda: {r['excluida']}")
+          f"entradas: {r['n_entries']} | excluidas_borda: {r['excluida']}"
+          + (f" | excluidas_hold: {r['excluida_hold']}"
+             if r["detector"] == "kis_extremos" else ""))
+    if r["detector"] == "kis_extremos":
+        tot = r["n_entries"] + r["excluida_hold"]
+        pct = 100.0 * r["excluida_hold"] / tot if tot else 0.0
+        print(f"excluidas_hold = eventos cujo hold NAO cabe no futuro "
+              f"disponivel do store ({pct:.1f}% de {tot}); e a borda direita "
+              f"aplicada ao horizonte real do evento, nao ao fixo de 48. "
+              + ("ACIMA DE 3%: PARAR, EXT_CAP pode estar curto."
+                 if pct > 3.0 else "Abaixo do teto de 3%."))
+        print(f"  barras do cache com fwd_bar < {EXT_CAP}: {r['cache_curto']} "
+              f"— exposicao residual do NULO ao clamp (ver nota em vals)")
     if r["detector"] == "donchian":
         print(f"primarios: DONCHIAN N={r['channel']} | temporal H={r['hold']} | "
               f"bracket S={PRIM_S} T={PRIM_T} H={r['hold']}")
@@ -347,9 +376,13 @@ def main() -> int:
               f"origem={Counter(x['estado_origem'] for x in a).most_common()}")
         if r["detector"] == "kis_extremos":
             trunc = sum(1 for x in a if x.get("hold_truncado"))
+            longos = Counter(x["symbol"] for x in a if x["hold"] > NAT_CAP)
             print(f"  hold_max={max(x['hold'] for x in a)} | "
                   f"truncados_no_teto_{EXT_CAP}={trunc} — esperado ~0; "
                   f"contagem alta = teto curto demais, nao resultado")
+            print(f"  hold>{NAT_CAP} (entradas que SO existem pelo horizonte "
+                  f"estendido): {sum(longos.values())} de {len(a)} | "
+                  f"por simbolo: {longos.most_common()}")
     exploratorio = (
         (r["detector"] == "tsmom" and (r["lookback"], r["hold"]) != (84, 48))
         or (r["detector"] == "donchian"
