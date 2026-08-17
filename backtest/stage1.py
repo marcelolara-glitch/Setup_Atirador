@@ -20,8 +20,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from backtest.keepitsimple import (NAT_CAP, WARMUP,          # noqa: E402
-                                   keepitsimple_entries)
+from backtest.keepitsimple import (EXT_CAP, NAT_CAP, WARMUP,  # noqa: E402
+                                   extremos_entries, keepitsimple_entries)
 
 PRIM_S, PRIM_T, PRIM_H = 1.5, 6.0, 4      # bracket primario
 KIS_S, KIS_T, KIS_BRK_H = 1.5, 3.0, 24    # bracket pre-registrado do keepitsimple
@@ -95,8 +95,10 @@ def run(store, symbols, start_iso, end_iso, tf,
     dois primarios por entrada e roda os gates MONEY/SKILL. `detector` escolhe
     o gerador de entradas: classifier (regime TREND-aligned, intocado), tsmom
     (momentum time-series, pre-registro 08/07), donchian (rompimento de canal,
-    pre-registro 14/07) ou keepitsimple (EMA 8/21; primarios `nativo` — saida
-    quando o estado deixa VERDE/VERM, cap NAT_CAP — e `bracket` KIS_*)."""
+    pre-registro 14/07), keepitsimple (EMA 8/21; primarios `nativo` — saida
+    quando o estado deixa VERDE/VERM, cap NAT_CAP — e `bracket` KIS_*) ou
+    kis_extremos (mesma maquina de estados, primario UNICO `extremos`: ultimo
+    estado extremo confirmado, saida por inversao, cap EXT_CAP, sem bracket)."""
     from backtest.candle_store import connect, read_candles          # noqa: E402
     from backtest.excursion import _iso_to_ms, measure_event         # noqa: E402
     from backtest.juice import (_boot_mean, _regime_timeline,        # noqa: E402
@@ -108,7 +110,13 @@ def run(store, symbols, start_iso, end_iso, tf,
     gc = GATE_COST / 1e4
     # perfil de horizontes: classifier mantem o pre-registro (H=4); tsmom usa
     # o hold escolhido nos dois primarios. S/T ficam PRIM_S/PRIM_T sempre.
-    kis = detector == "keepitsimple"
+    # kis_extremos compartilha a maquina de estados e a serie por barra do
+    # keepitsimple, mas tem UM primario so (`extremos`, saida por inversao) e
+    # nenhum bracket. Os gates ficam com o pedagio KIS_*, que ja embute a
+    # correcao x2 de 2 primarios: com 1 primario, e conservador de proposito.
+    ext = detector == "kis_extremos"
+    kis = detector == "keepitsimple" or ext
+    cap = EXT_CAP if ext else NAT_CAP
     temp_h = TEMP_H if detector == "classifier" else hold
     brk_h = KIS_BRK_H if kis else (PRIM_H if detector == "classifier" else hold)
     brk_s, brk_t = (KIS_S, KIS_T) if kis else (PRIM_S, PRIM_T)
@@ -117,12 +125,16 @@ def run(store, symbols, start_iso, end_iso, tf,
         """(temporal_ATR, bracket_ATR, atr_pct) da barra, simetria p/ SHORT. No
         keepitsimple `fwdh` e a serie por barra: `hold_bars` (propriedade do
         sinal, viaja com ele no nulo) escolhe a saida do nativo; o FLAT do
-        bracket continua no fechamento de brk_h."""
+        bracket continua no fechamento de brk_h. O clamp por len(fwdh) so
+        morde no kis_extremos perto da borda direita do store (fwd_bar tem
+        comprimento variavel); no keepitsimple hold_bars <= NAT_CAP == len."""
         atr_pct, fwdh, favh, advh = entry
-        temp, flat = ((fwdh[hold_bars - 1], fwdh[brk_h - 1]) if kis
-                      else (fwdh, fwdh))
+        temp, flat = ((fwdh[min(hold_bars, len(fwdh)) - 1], fwdh[brk_h - 1])
+                      if kis else (fwdh, fwdh))
         if direction == "SHORT":
             temp, flat, favh, advh = -temp, -flat, advh, favh
+        if ext:                 # UM primario: sai por inversao, sem bracket
+            return temp, 0.0, atr_pct
         brk, _c = first_touch(favh, advh, flat, brk_s, brk_t, brk_h)
         return temp, brk, atr_pct
     elig, entries, excluida, autopsia = {}, [], 0, []
@@ -141,7 +153,8 @@ def run(store, symbols, start_iso, end_iso, tf,
                                        SEP_BARS, _BAR_MS[tf])
             elif kis:
                 cand_ts = tss[WARMUP:]
-                evs = keepitsimple_entries(cndl, KIS_SEP, _BAR_MS[tf])
+                evs = (extremos_entries(cndl) if ext else
+                       keepitsimple_entries(cndl, KIS_SEP, _BAR_MS[tf]))
             else:
                 cand_ts = tss[lookback:]
                 evs = tsmom_entries(closes, tss, lookback,
@@ -152,16 +165,19 @@ def run(store, symbols, start_iso, end_iso, tf,
             if m is None:
                 continue
             e = (m["atr"] / m["entry"],
-                 m["fwd_bar"][:NAT_CAP] if kis else m["fwd"][temp_h],
-                 m["fav"][:brk_h], m["adv"][:brk_h])
+                 m["fwd_bar"][:cap] if kis else m["fwd"][temp_h],
+                 () if ext else m["fav"][:brk_h],   # extremos nao tem bracket:
+                 () if ext else m["adv"][:brk_h])   # nao paga fav/adv no cache
             if not cache:   # guarda de simetria na 1a barra elegivel do simbolo
                 ms = measure_event(conn, sym, ts, "SHORT", tf=tf)
-                msf = ms["fwd_bar"][:NAT_CAP] if kis else ms["fwd"][temp_h]
+                msf = ms["fwd_bar"][:cap] if kis else ms["fwd"][temp_h]
                 assert (all(abs(a + b) < 1e-9 for a, b in zip(msf, e[1]))
                         if kis else abs(msf + e[1]) < 1e-9) and all(
-                    abs(a - b) < 1e-9 for a, b in zip(ms["fav"][:brk_h], e[3])
+                    abs(a - b) < 1e-9
+                    for a, b in zip(ms["fav"][:brk_h], m["adv"][:brk_h])
                 ) and all(
-                    abs(a - b) < 1e-9 for a, b in zip(ms["adv"][:brk_h], e[2])
+                    abs(a - b) < 1e-9
+                    for a, b in zip(ms["adv"][:brk_h], m["fav"][:brk_h])
                 ), f"simetria quebrada em {sym}"
             cache.append(e)
             cts.append(ts)
@@ -224,17 +240,22 @@ def run(store, symbols, start_iso, end_iso, tf,
     ps_brk = ge_b / N_SHIFT if entries else 1.0
     # tabela informativa (iid via _boot_mean) — apos gates p/ ordem RNG fixa
     table = []
-    tname = "nativo" if kis else "temporal"
-    for name, gross in ((tname, g_temp), ("bracket", g_brk)):
+    tname = ("extremos" if ext else "nativo") if kis else "temporal"
+    # bp_brk/ps_brk seguem CALCULADOS mesmo no extremos — mexer nisso mudaria a
+    # ordem de consumo do RNG e quebraria a regressao dos irmaos. O que muda e
+    # so o que entra no relatorio: com UM primario, nao ha linha de bracket.
+    prims = [(tname, g_temp)] if ext else [(tname, g_temp), ("bracket", g_brk)]
+    for name, gross in prims:
         for cost in COSTS:
             m, _lo, _hi, p = _boot_mean([g - cost / 1e4 for g in gross])
             table.append((name, cost, len(gross), m * 1e4, p))
     g_money, g_skill = ((KIS_MONEY_BPS, KIS_SKILL) if kis
                         else (GATE_MONEY_BPS, GATE_SKILL))
     gates = [(tname, sm_temp * 1e4, bp_temp * 1e4, bp_temp * 1e4 > g_money,
-              ps_temp, ps_temp < g_skill),
-             ("bracket", sm_brk * 1e4, bp_brk * 1e4, bp_brk * 1e4 > g_money,
-              ps_brk, ps_brk < g_skill)]
+              ps_temp, ps_temp < g_skill)]
+    if not ext:
+        gates.append(("bracket", sm_brk * 1e4, bp_brk * 1e4,
+                      bp_brk * 1e4 > g_money, ps_brk, ps_brk < g_skill))
     return {"tf": tf, "start": start_iso, "end": end_iso,
             "n_symbols": len(symbols), "n_entries": len(entries),
             "excluida": excluida, "table": table, "gates": gates,
@@ -251,7 +272,8 @@ def main() -> int:
     ap.add_argument("--store", default=str(ROOT / "backtest" / "candles_v9.db"))
     ap.add_argument("--symbols", nargs="+", default=None, help="default: TIER1")
     ap.add_argument("--detector",
-                    choices=["classifier", "tsmom", "donchian", "keepitsimple"],
+                    choices=["classifier", "tsmom", "donchian", "keepitsimple",
+                             "kis_extremos"],
                     default="classifier")
     ap.add_argument("--lookback", type=int, choices=[42, 84, 168], default=84,
                     help="efeito apenas com --detector tsmom")
@@ -269,6 +291,8 @@ def main() -> int:
         suffix = f" detector=donchian N={args.channel} H={args.hold}"
     elif args.detector == "keepitsimple":
         suffix = " detector=keepitsimple EMA 8/21"
+    elif args.detector == "kis_extremos":
+        suffix = " detector=kis_extremos EMA 8/21 conf>=2"
     else:
         suffix = ""
     print(f"[stage1] tf={args.tf} janela {args.start}->{args.end} "
@@ -289,6 +313,10 @@ def main() -> int:
     elif r["detector"] == "keepitsimple":
         print(f"primarios: KEEPITSIMPLE EMA 8/21 | nativo saida-por-estado "
               f"H<={NAT_CAP} | bracket S={KIS_S} T={KIS_T} H={KIS_BRK_H}")
+    elif r["detector"] == "kis_extremos":
+        print(f"primario UNICO: KIS_EXTREMOS EMA 8/21 | ultimo estado EXTREMO "
+              f"confirmado (>=2 barras), stop-and-reverse | saida por inversao "
+              f"H<={EXT_CAP} | SEM bracket")
     else:
         print(f"primarios: temporal H={TEMP_H} | "
               f"bracket S={PRIM_S} T={PRIM_T} H={PRIM_H}")
@@ -296,7 +324,8 @@ def main() -> int:
           f"{'iid_p':>6}   (tabela informativa)")
     for name, cost, n, ev, p in r["table"]:
         print(f"{name:>9} | {cost:>5.1f} | {n:>5} | {ev:>8.1f} | {p:>6.3f}")
-    gm, gs = ((KIS_MONEY_BPS, KIS_SKILL) if r["detector"] == "keepitsimple"
+    gm, gs = ((KIS_MONEY_BPS, KIS_SKILL)
+              if r["detector"] in ("keepitsimple", "kis_extremos")
               else (GATE_MONEY_BPS, GATE_SKILL))
     print(f"\n{'primario':>9} | {'EV@6(bps)':>9} | {'blockP2.5':>9} | "
           f"{'MONEY':>5} | {'p_shift':>7} | {'SKILL':>5}   (gates custo 6 | "
@@ -316,6 +345,11 @@ def main() -> int:
               f"{100 * sum(sub) / len(sub) if sub else 0:.0f}% (n={len(sub)}) |"
               f" bb_width_rel_med={statistics.median(bw) if bw else 0:.4f} | "
               f"origem={Counter(x['estado_origem'] for x in a).most_common()}")
+        if r["detector"] == "kis_extremos":
+            trunc = sum(1 for x in a if x.get("hold_truncado"))
+            print(f"  hold_max={max(x['hold'] for x in a)} | "
+                  f"truncados_no_teto_{EXT_CAP}={trunc} — esperado ~0; "
+                  f"contagem alta = teto curto demais, nao resultado")
     exploratorio = (
         (r["detector"] == "tsmom" and (r["lookback"], r["hold"]) != (84, 48))
         or (r["detector"] == "donchian"
