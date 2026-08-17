@@ -768,6 +768,64 @@ medições, não vereditos.
 CONTABILIDADE DA CAMPANHA (inalterada por este exploratório): 12 primárias,
 1 passe de MONEY. P(>=1 por acaso @2.5%) = 26%.
 
+## 2026-08-17 — PRÉ-REGISTRO: KEEP IT SIMPLE EXTREMOS (primária #13)
+
+Procedência honesta: formulada por Marcelo em 14/08, DEPOIS do veredito MORTO
+da regra "Estado" (10/08). Não é ideia virgem. Desenho fechado em bancada
+visual no TradingView; nenhum parâmetro contínuo garimpado (todos nos valores
+canônicos: EMA 8/21, ATR14, confirmação = 2 barras, filtros desligados).
+Combinações avaliadas a sério na bancada: ~8 (regra Estado/Extremos × saída
+extremo-oposto/EMA-longa × stop nenhum/fixo/BE-trail/trail-EMA).
+
+DETECTOR (sem grau de liberdade):
+  mmeCurta=EMA(close,8); mmeLonga=EMA(close,21); tf 4h; TIER1(20).
+  estado ∈ {VERDE, AZUL, ROXO, VERM} como no pré-registro de 09/08.
+  barrasNoEstado >= 2 exigido (confirmação; estado deve sobreviver ao
+  fechamento seguinte).
+  alvoPos := +1 quando estado==VERDE e confirmado
+           := -1 quando estado==VERM  e confirmado
+           AZUL/ROXO/CINZA NÃO alteram alvoPos (atravessa o pullback).
+  Entrada quando alvoPos muda de valor. SEMPRE NO MERCADO (stop-and-reverse).
+  Execução no CLOSE da barra do sinal (convenção do soquete).
+  SEP irrelevante: sobreposição impossível por construção.
+
+PRIMÁRIO ÚNICO — sem bracket, portanto SEM correção ×2 intra-rodada.
+  Saída = próxima inversão de alvoPos. Sem stop, sem alvo, sem cap de tempo.
+  Justificativa de haver um só: o bracket foi medido como destrutivo nesta
+  família (10/08: nativo p_shift .024 vs bracket .330). Testá-lo de novo
+  gastaria multiplicidade para reconfirmar um cadáver.
+
+GATES (pedágio de 09/08): blockP2.5 líquido @6bps > +5.0 bps E p_shift < 0.005.
+
+NÃO OPERÁVEL — registrado ANTES do resultado:
+  Bancada TradingView, 6 pares, 2024-01 a 2026-08, mediu DD máximo de
+  perdedores em 32.05 ATR (TAO) e 13.99 ATR (XRP). Um evento adverso de 32 ATR
+  vale 1.6x TODO o ganho da estratégia naquele par (SOMA 19.7 ATR em 213
+  trades). Em perpétuo alavancado isso é liquidação; o backtest nunca é
+  liquidado. Se este primário PASSAR, NÃO vai a Estágio 2 sem uma regra de
+  cauda pré-registrada em rodada própria.
+
+HOLD (medido na bancada): mediano 17-18 barras; MÁXIMO 117 a 225 barras.
+  Exige estender o horizonte de measure_event de 48 para 256 barras. Truncar
+  em 48 cortaria a cauda longa, que num seguidor de tendência É o payoff, e
+  testaria outra estratégia.
+
+CRITÉRIOS DE MORTE: sem MONEY ⇒ MORTO, sem varredura de parâmetro depois.
+  n < 400 ⇒ INCONCLUSIVO.
+  Janela 2024-05-22 → 2026-06-21, candles_v9.db, seed 1337.
+
+EXPECTATIVA REGISTRADA ANTES DO FATO:
+  [Provável] SKILL passa com folga; MONEY REPROVA por concentração episódica.
+  Base: as curvas de L&P de XRP e DOGE mostram um degrau vertical único
+  seguido de ~2 anos de deriva lateral — poucos trades carregam o resultado.
+  Se MONEY passar, a leitura de concentração estava errada e isso deve ser
+  registrado como acerto do desenho, não como sorte.
+  Marcador de calibração: na rodada de 10/08 eu previ morte por CUSTO e
+  errei (morreu por variância). Esta previsão é do mesmo tipo — trate como
+  hipótese testável, não como oráculo.
+
+CONTABILIDADE: se passar, campanha vai a 13 primárias com 2 passes de MONEY.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
