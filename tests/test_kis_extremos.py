@@ -433,3 +433,61 @@ def test_exclusao_de_borda_continua_em_48_e_nao_em_256():
         conn.close()
     assert ok is not None and len(ok["fwd_bar"]) == 48
     assert nao is None                                # 47 barras -> excluido
+
+
+# ------------------------------------- array('d') no cache do stage1 (item 4)
+
+@pytest.mark.parametrize("direction", ["LONG", "SHORT"])
+def test_array_d_preserva_cada_bit_do_fwd_bar(direction):
+    # O slot e[1] do cache passou de lista Python para array('d') por memoria
+    # (920 -> 206 MiB numa rodada TIER1). float do Python E um C double e
+    # array('d') guarda C double: a conversao tem que ser BIT-A-BIT identica,
+    # nao "aproximadamente igual". Comparado com float.hex(), que expoe a
+    # mantissa inteira — approx() aqui esconderia exatamente o que se teme.
+    pytest.importorskip("aiohttp")
+    import tempfile
+    from array import array
+
+    from backtest.excursion import measure_event
+
+    with tempfile.TemporaryDirectory() as d:
+        conn, bar = _store_com(400, d)
+        vistos = 0
+        for i in range(30, 120):
+            m = measure_event(conn, "AAA", i * bar, direction, tf="4h")
+            if m is None:
+                continue
+            vistos += 1
+            lista = m["fwd_bar"][:EXT_CAP]
+            arr = array("d", lista)
+            assert len(arr) == len(lista)
+            assert [x.hex() for x in arr] == [x.hex() for x in lista]
+            assert all(a == b for a, b in zip(arr, lista))
+        conn.close()
+    assert vistos > 50
+
+
+def test_array_d_suporta_os_quatro_usos_do_slot_no_stage1():
+    # os 4 consumidores de e[1], um a um: indexacao em vals, len() no clamp e
+    # na exclusao por hold, zip() na guarda de simetria, e negacao do valor
+    # indexado na simetria SHORT. Se algum nao aceitasse array, o stage1
+    # quebraria so na VM, com o store real.
+    from array import array
+    lista = [0.5, -1.25, 3.75, -0.125]
+    arr = array("d", lista)
+    assert arr[2] == lista[2] and arr[len(arr) - 1] == lista[-1]  # indexacao
+    assert len(arr) == 4                                          # len()
+    assert list(zip(arr, lista)) == list(zip(lista, lista))       # zip()
+    assert -arr[1] == 1.25 and isinstance(arr[0], float)          # negacao
+    assert arr[:2].tolist() == lista[:2]      # fatiamento devolve outro array
+
+
+def test_slot_nao_kis_continua_escalar():
+    # so o modo kis guarda serie; classifier/tsmom/donchian guardam m["fwd"][h],
+    # um float solto. A troca de tipo NAO pode ter alcancado esse caminho —
+    # `abs(msf + e[1])` na guarda de simetria depende de e[1] ser escalar.
+    import inspect
+
+    from backtest import stage1
+    src = inspect.getsource(stage1.run)
+    assert 'array("d", m["fwd_bar"][:cap]) if kis else m["fwd"][temp_h]' in src

@@ -14,6 +14,7 @@ import argparse
 import random
 import statistics
 import sys
+from array import array
 from collections import Counter
 from pathlib import Path
 
@@ -171,8 +172,18 @@ def run(store, symbols, start_iso, end_iso, tf,
             m = measure_event(conn, sym, ts, "LONG", tf=tf)
             if m is None:
                 continue
+            # array('d') e nao lista. Medido no perfil TIER1 (20 simbolos x
+            # ~4560 barras 4h): lista Python com fwd_bar[:256] pede 928 MiB de
+            # cache, e a VM tem 956 MiB TOTAIS com o cron de producao na mesma
+            # maquina — deficit garantido. array('d') guarda o MESMO C double
+            # do float Python (zero perda de precisao) em 8 bytes crus, sem o
+            # objeto float nem o ponteiro por elemento: 206 MiB, abaixo ate do
+            # baseline de 374 MiB do keepitsimple. Os 4 usos do slot — indexar,
+            # len(), zip() na guarda de simetria e negar o valor indexado no
+            # SHORT — funcionam identicos. So o modo kis guarda serie; nos
+            # irmaos o slot segue sendo o escalar m["fwd"][temp_h].
             e = (m["atr"] / m["entry"],
-                 m["fwd_bar"][:cap] if kis else m["fwd"][temp_h],
+                 array("d", m["fwd_bar"][:cap]) if kis else m["fwd"][temp_h],
                  () if ext else m["fav"][:brk_h],   # extremos nao tem bracket:
                  () if ext else m["adv"][:brk_h])   # nao paga fav/adv no cache
             if not cache:   # guarda de simetria na 1a barra elegivel do simbolo
