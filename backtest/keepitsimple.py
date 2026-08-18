@@ -9,6 +9,8 @@ from __future__ import annotations
 EMA_FAST, EMA_SLOW = 8, 21
 WARMUP = EMA_SLOW              # barras descartadas por simbolo (EMA longa/BB)
 NAT_CAP = 48                   # cap do primario nativo, em barras do tf
+EXT_CAP = 256                  # cap do hold do extremos, em barras do tf
+EXT_CONF = 2                   # barras no MESMO estado p/ confirmar o extremo
 ADX_LEN = 13
 SMA_FAST, SMA_SLOW = 5, 13
 BB_LEN, BB_MULT = 21, 1.3
@@ -132,6 +134,73 @@ def keepitsimple_entries(candles: list, sep_bars: int, bar_ms: int) -> list:
                 hold = j - i
                 break
         out.append({"bar_ts": ts, "direction": d, "hold": hold,
+                    "estado_origem": st[i - 1], "bb_width_rel": bbw[i],
+                    "forca_subindo": (None if forca[i] is None
+                                      or forca[i - 1] is None
+                                      else forca[i] > forca[i - 1])})
+    return out
+
+
+def _alvo_extremos(st: list) -> list:
+    """Posicao-alvo por barra da regra "Extremos" (stop-and-reverse puro):
+
+        barras_no_estado[i] = 1 se estado[i] != estado[i-1], senao +1
+        confirmado[i]       = barras_no_estado[i] >= EXT_CONF
+        alvo[i] = +1 se estado[i]=='VERDE' e confirmado[i]
+                | -1 se estado[i]=='VERM'  e confirmado[i]
+                | alvo[i-1] caso contrario
+
+    AZUL/ROXO/CINZA nao agem: CARREGAM o alvo anterior. Estado extremo ainda
+    nao confirmado tambem carrega — e por isso que uma ida a AZUL e volta a
+    VERDE nao gera segunda entrada, e que um extremo de 1 barra que reverte
+    nao gera entrada nenhuma. alvo[0] = 0 por construcao (barras=1 < EXT_CONF,
+    e as primeiras barras sao CINZA de qualquer forma pelo warmup da EMA)."""
+    alvo, barras = [], 0
+    for i, s in enumerate(st):
+        barras = 1 if (i == 0 or s != st[i - 1]) else barras + 1
+        prev = alvo[i - 1] if i else 0
+        if barras >= EXT_CONF and s in ("VERDE", "VERM"):
+            alvo.append(1 if s == "VERDE" else -1)
+        else:
+            alvo.append(prev)
+    return alvo
+
+
+def extremos_entries(candles: list) -> list:
+    """Entradas do detector kis_extremos (variante "Extremos" registrada como
+    frente aberta no ledger de 16/08). Sobre o alvo de `_alvo_extremos`:
+
+        entrada em i  <=>  alvo[i] != alvo[i-1] e alvo[i] != 0
+        direcao = LONG se alvo[i]==+1, SHORT se -1
+
+    As WARMUP primeiras barras do simbolo nunca geram entrada, como no
+    keepitsimple.
+
+    SEM PARAMETRO DE ESPACAMENTO — e SEP = 0 por construcao, nao por escolha.
+    O alvo e UMA posicao unica que so muda invertendo; entradas consecutivas
+    tem sempre direcao oposta e a anterior fecha exatamente na barra em que a
+    proxima abre. Sobreposicao e impossivel: nao ha o que espacar, e uma
+    carencia so apagaria inversoes deixando a carteira presa no lado errado.
+
+    `hold` = barras ate a PROXIMA entrada — a saida do primario `extremos` E a
+    inversao, nao ha outra. Sem proxima entrada, conta ate a ultima barra da
+    serie. Teto EXT_CAP nos dois casos; `hold_truncado` marca quem bateu no
+    teto (deve ser raro — se nao for, o teto esta errado, nao o detector).
+    Piso 1 barra. Saida indexada sempre por bar_ts."""
+    closes = [c["close"] for c in candles]
+    tss = [c["ts"] for c in candles]
+    st = states(closes)
+    forca, bbw = _descritivos(candles, closes)
+    alvo = _alvo_extremos(st)
+    idx = [i for i in range(max(WARMUP, 1), len(st))
+           if alvo[i] != alvo[i - 1] and alvo[i] != 0]
+    out = []
+    for k, i in enumerate(idx):
+        bruto = (idx[k + 1] if k + 1 < len(idx) else len(st) - 1) - i
+        out.append({"bar_ts": tss[i],
+                    "direction": "LONG" if alvo[i] > 0 else "SHORT",
+                    "hold": min(max(bruto, 1), EXT_CAP),
+                    "hold_truncado": bruto > EXT_CAP,
                     "estado_origem": st[i - 1], "bb_width_rel": bbw[i],
                     "forca_subindo": (None if forca[i] is None
                                       or forca[i - 1] is None

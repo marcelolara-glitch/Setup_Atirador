@@ -370,7 +370,12 @@ def test_fwd_bar_e_consistente_com_fwd():
         upsert_candles(conn, "AAA", "4h", ks)
         m = measure_event(conn, "AAA", 50 * bar, "LONG", tf="4h")
         conn.close()
-    assert m is not None and len(m["fwd_bar"]) == 48
+    # 120 barras com entrada na 50 -> 69 barras de futuro. Antes do horizonte
+    # estendido (FWD_BAR_CAP=256) esta lista vinha com 48; hoje o teto e mais
+    # alto que o futuro disponivel, entao ela vem com o que existe. O que o
+    # keepitsimple consome (NAT_CAP=48) nao muda: o stage1 fatia [:48].
+    assert m is not None and len(m["fwd_bar"]) == 69
+    assert len(m["fwd_bar"][:NAT_CAP]) == 48
     for h in HORIZONS:
         assert m["fwd_bar"][h - 1] == pytest.approx(m["fwd"][h])
     assert isinstance(conn, sqlite3.Connection)

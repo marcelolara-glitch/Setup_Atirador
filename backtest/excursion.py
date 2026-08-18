@@ -24,6 +24,10 @@ from backtest.replay import BAR_15M_MS                                    # noqa
 from backtest.sweep import TIER1, sweep_symbol                            # noqa: E402
 
 HORIZONS = [4, 8, 16, 32, 48]   # BARRAS do tf medido (15m: 1h..12h)
+FWD_BAR_CAP = 256               # teto de `fwd_bar`. ADITIVO: HORIZONS, `fwd`,
+# `mfe`, `mae`, `fav` e `adv` seguem no horizonte antigo (max(HORIZONS)=48) e
+# a regra de exclusao de borda direita continua em 48 barras — estender o teto
+# NAO pode mudar quais eventos sao medidos, so quanto de futuro `fwd_bar` ve.
 _CTX_BARS = 30                  # historico p/ ancorar entry + ATR
 # Duracao de barra por tf. Copia LOCAL: juice importa HORIZONS deste modulo,
 # entao excursion NAO pode importar de juice (circularidade).
@@ -74,13 +78,16 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str,
                   tf: str = "15m"):
     """Mede excursao forward de UM evento, em ATR, no timeframe `tf`
     (default "15m"; tf invalido -> KeyError). Entry = close da barra do
-    sinal (bar_ts); forward = barras bar_ts+1 ... bar_ts+48 do MESMO tf
-    (nunca a propria barra do sinal). atr<=0 -> None. Borda direita do
-    store (< 48 barras forward) -> None. Retorna {symbol, bar_ts,
-    direction, atr, mfe{H}, mae{H}, entry, fwd{H}, fav, adv} — fwd =
+    sinal (bar_ts); forward = barras bar_ts+1 ... bar_ts+FWD_BAR_CAP do MESMO
+    tf (nunca a propria barra do sinal), das quais as 48 primeiras alimentam
+    as reguas classicas. atr<=0 -> None. Borda direita do store (< 48 barras
+    forward) -> None — criterio INALTERADO. Retorna {symbol, bar_ts,
+    direction, atr, mfe{H}, mae{H}, entry, fwd{H}, fav, adv, fwd_bar} — fwd =
     retorno forward ASSINADO no fechamento de cada horizonte, em ATR, sem
     piso (pode ser negativo); fav/adv = excursao favoravel/adversa POR
-    BARRA (listas de 48, em ATR, sem piso). HORIZONS sao BARRAS do tf."""
+    BARRA (listas de 48, em ATR, sem piso); fwd_bar = o mesmo retorno de
+    fechamento por barra, ate FWD_BAR_CAP (comprimento VARIAVEL, ver abaixo).
+    HORIZONS sao BARRAS do tf."""
     bar = _BAR_MS[tf]
     ctx = read_candles(conn, symbol, tf, end_ms=bar_ts)
     if not ctx:
@@ -93,14 +100,17 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str,
 
     fwd = read_candles(conn, symbol, tf,
                        start_ms=bar_ts + bar,
-                       end_ms=bar_ts + max(HORIZONS) * bar)
+                       end_ms=bar_ts + max(max(HORIZONS), FWD_BAR_CAP) * bar)
     if len(fwd) < max(HORIZONS):   # exclusao de borda direita — regra travada
         return None
+    # Janela classica. Tudo que existia antes do teto estendido le SO daqui,
+    # entao a leitura mais longa nao desloca uma virgula das reguas antigas.
+    janela = fwd[:max(HORIZONS)]
 
     is_long = (direction or "").upper() == "LONG"
     mfe, mae = {}, {}
     for h in HORIZONS:
-        win = fwd[:h]
+        win = janela[:h]
         hi = max(c["high"] for c in win)
         lo = min(c["low"] for c in win)
         if is_long:
@@ -113,16 +123,20 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str,
     # consumido pelo bracket (primeiro toque exato); mfe/mae permanecem como
     # reguas de reconciliacao.
     if is_long:
-        fav = [(c["high"] - entry) / atr for c in fwd]
-        adv = [(entry - c["low"]) / atr for c in fwd]
+        fav = [(c["high"] - entry) / atr for c in janela]
+        adv = [(entry - c["low"]) / atr for c in janela]
     else:
-        fav = [(entry - c["low"]) / atr for c in fwd]
-        adv = [(c["high"] - entry) / atr for c in fwd]
+        fav = [(entry - c["low"]) / atr for c in janela]
+        adv = [(c["high"] - entry) / atr for c in janela]
     sign = 1.0 if is_long else -1.0
-    fwd_atr = {h: sign * (fwd[h - 1]["close"] - entry) / atr for h in HORIZONS}
-    # ADITIVO: mesmo retorno de fechamento, mas POR BARRA (48), p/ horizontes
-    # fora de HORIZONS. Invariante: fwd_bar[h-1] == fwd[h] p/ h em HORIZONS.
-    fwd_bar = [sign * (c["close"] - entry) / atr for c in fwd]
+    fwd_atr = {h: sign * (janela[h - 1]["close"] - entry) / atr
+               for h in HORIZONS}
+    # ADITIVO: mesmo retorno de fechamento, mas POR BARRA, ate FWD_BAR_CAP, p/
+    # horizontes fora de HORIZONS. Invariante: fwd_bar[h-1] == fwd[h] p/ h em
+    # HORIZONS. COMPRIMENTO VARIAVEL: >= max(HORIZONS) sempre (a exclusao de
+    # borda garante), mas so chega a FWD_BAR_CAP longe da borda direita do
+    # store. Consumidor que indexa alem de max(HORIZONS) tem que clampar.
+    fwd_bar = [sign * (c["close"] - entry) / atr for c in fwd[:FWD_BAR_CAP]]
     return {"symbol": symbol, "bar_ts": bar_ts, "direction": direction,
             "atr": atr, "mfe": mfe, "mae": mae, "fwd_bar": fwd_bar,
             "entry": entry, "fwd": fwd_atr, "fav": fav, "adv": adv}
