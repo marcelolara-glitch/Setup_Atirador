@@ -826,6 +826,38 @@ EXPECTATIVA REGISTRADA ANTES DO FATO:
 
 CONTABILIDADE: se passar, campanha vai a 13 primárias com 2 passes de MONEY.
 
+### ADENDO ao pré-registro KIS_EXTREMOS (17/08, ANTES da rodada)
+
+CORREÇÃO DE DIAGNÓSTICO: o briefing de revisão afirmava que o clamp de
+`fwd_bar` mordia na borda direita do store. FALSO, e demonstrado pelo Claude
+Code: `hold` conta velas até a inversão (limitado pelo fim da série) e
+`fwd_bar` lê do store sem limite de janela, logo hold <= len(fwd_bar) em série
+CONTÍGUA. O gatilho real da exclusão é BURACO no store — `hold` conta velas,
+`fwd_bar` cobre 256 larguras de barra em TEMPO; atravessando um buraco as
+contagens divergem. Perfil TON/delistagem. A exclusão (`excluida_hold`) fica,
+com a justificativa corrigida.
+
+RESÍDUO DO NULO — aceito com regra de decisão, não corrigido.
+No nulo circular o sinal é deslocado para barra arbitrária; perto da borda o
+clamp ainda morde. Direção do viés: PERMISSIVA (retorno truncado encolhe a
+variância nula, p_shift sai MENOR que o real). Exposição superior medida em
+`cache_curto` (~5% das barras elegíveis); fração efetiva estimada em 1-2%.
+NÃO corrigir estruturalmente: excluir do cache custaria 5,6% do universo e
+encolheria o n do nulo — troca ruim.
+
+REGRA TRAVADA ANTES DO RESULTADO:
+  MONEY é imune (block bootstrap não usa o nulo circular). Se MONEY reprovar,
+  o resíduo é irrelevante e o veredito é MORTO, ponto.
+  Se MONEY PASSAR e p_shift cair em [0.001, 0.010] — faixa marginal em torno
+  do gate de 0.005 — o SKILL é declarado SUSPEITO e o primário NÃO é promovido
+  sem re-rodada com o nulo estruturalmente limpo.
+  p_shift < 0.001 ou > 0.010: o resíduo não pode ter virado o resultado.
+
+MEMÓRIA: VM com 956 MiB totais, 272 disponíveis, cron v9 na mesma máquina.
+Cache com lista Python pedia 928 MiB (déficit 656). array('d') resolve:
+206 MiB medidos, abaixo do baseline de 374 MiB do keepitsimple. Precisão
+provada bit a bit via float.hex(), não por aproximação.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
