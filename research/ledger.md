@@ -858,6 +858,71 @@ Cache com lista Python pedia 928 MiB (déficit 656). array('d') resolve:
 206 MiB medidos, abaixo do baseline de 374 MiB do keepitsimple. Precisão
 provada bit a bit via float.hex(), não por aproximação.
 
+## 2026-08-18 — KIS_EXTREMOS (primária #13) — VEREDITO: MORTO NOS DOIS GATES
+n=3261 (LONG 1627 / SHORT 1634), excluidas_borda 39, excluidas_hold 0.
+  extremos: EV@0 +26.8 | EV@6 +20.8 (iid_p .112)
+            | blockP2.5 -56.5 → MONEY NAO | p_shift 0.117 → SKILL NAO
+MORTO. Nenhum gate. Sem rodada 2, sem varredura, cemitério.
+
+PREVISÃO FALSIFICADA (2a seguida): o pré-registro dizia "[Provável] SKILL passa
+com folga; MONEY reprova por concentração". MONEY reprovou por concentração —
+acertei o mecanismo. SKILL NÃO passou: 0.117, vinte e três vezes o gate.
+Registro: erro do mesmo tipo do de 10/08 (previ morte por custo, morreu por
+variância). O padrão é que eu subestimo sistematicamente quanto do resultado
+aparente vem de ruído. Calibrar para baixo nas próximas.
+
+O ACHADO CENTRAL — a variante "melhorada" tem MENOS skill que o cadáver:
+             EV@6   blockP2.5   p_shift    n
+  Estado nativo  +8.1     -10.6      0.024   10532
+  Extremos      +20.8     -56.5      0.117    3261
+Retorno por trade subiu 2,5x; n caiu 3,2x; líquido AGREGADO ficou 20% MENOR
+(67.829 vs 85.309 bps-trade). O gap média-para-blockP2.5 explodiu de 18.7 para
+77.3 bps. Segurar o pullback não criou dinheiro: concentrou o mesmo dinheiro em
+menos eventos independentes, destruindo o pouco de timing que existia.
+Sem viés direcional para explicar (1627/1634) e com o nulo preservando hold e
+direção, o +20.8 bps está inteiramente dentro da banda de ruído.
+
+CALIBRAÇÃO DA BANCADA VISUAL — registrar e não esquecer:
+No TradingView esta configuração deu resultado médio POSITIVO em 6 de 6 pares
+(+0.093 a +0.993 ATR/trade) e curvas de equity de aparência excelente. O juiz
+reprovou nos dois gates. Divergência explicada, sem bug: (i) seleção — 6
+símbolos escolhidos a dedo vs 20 congelados; (ii) janela — 2024-01→2026-08 na
+bancada vs 2024-05→2026-06 no juiz, 5 meses a mais incluindo hold-out;
+(iii) régua — ATR normaliza por volatilidade, bps por nocional.
+NÃO explica: custo. O juiz usou 6 bps/trade contra 10 bps ida-e-volta da
+bancada — foi MAIS generoso e mesmo assim reprovou.
+CONCLUSÃO OPERACIONAL: a bancada visual serve para GERAR hipótese e para
+depurar mecanismo. Não serve para estimar edge, nem em 6 pares, nem com
+tamanho de ordem fixo. Esta rodada é a medida do tamanho do engano: de
+"+0.38 ATR médio em 6 pares" para "indistinguível de ruído em 20".
+
+RESÍDUO DO NULO: regra travada em 17/08 resolvida sem ambiguidade. p_shift
+0.117 está fora da faixa suspeita [0.001, 0.010] por uma ordem de magnitude;
+cache_curto=4160 não pode ter alterado o veredito.
+
+INFRAESTRUTURA — permanece válida e reutilizável:
+Horizonte estendido (FWD_BAR_CAP=256) era necessário: 452 entradas (14% da
+amostra) têm hold>48 e só existem por causa dele, distribuídas uniformemente
+pelos 20 símbolos. hold_max=197, truncados_no_teto=0, excluidas_hold=0 —
+confirma a demonstração de que série contígua nunca dispara a exclusão (só
+buraco no store dispararia). array('d') no cache: 928→206 MiB, viabilizou a
+rodada numa VM de 956 MiB. Qualquer detector futuro de hold longo já tem
+onde rodar.
+
+CONTABILIDADE: 13 primárias, 1 passe de MONEY.
+P(>=1 por acaso @2.5%) = 28.0% (era 26% com 12).
+
+FRENTE "Keep It Simple": continua ABERTA conforme a emenda de 16/08. O que
+morreu foi esta configuração, não a família. Mas duas configurações desta
+família já morreram, e a segunda com timing PIOR que a primeira.
+
+AUTÓPSIA EM ANDAMENTO (18/08): investigação do formato das saídas em prejuízo
+na bancada visual — contagem de saídas ganho/perda, razão de payoff, fração de
+perdedores "natimortos" (runup < 0.1 ATR) e hold mediano por resultado.
+É diagnóstico descritivo, NÃO varredura de parâmetro. Qualquer configuração
+que emergir desta autópsia é primária NOVA (#14), com pré-registro próprio
+antes do dado. Não herda nada desta rodada.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
