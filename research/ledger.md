@@ -923,6 +923,60 @@ perdedores "natimortos" (runup < 0.1 ATR) e hold mediano por resultado.
 que emergir desta autópsia é primária NOVA (#14), com pré-registro próprio
 antes do dado. Não herda nada desta rodada.
 
+## 2026-08-20 — MUDANÇA DE ABORDAGEM
+
+DIAGNÓSTICO: 13 primárias, todas da família "prever direção em OHLCV".
+Todas mortas. A família está exaurida — não por rigor do juiz, mas porque
+o fenômeno não paga o custo de execução neste horizonte.
+
+CORREÇÃO DE OPERAÇÃO (erro do Claude): desde 09/08 a REGRA 2 diz que o juiz
+histórico é FILA, não certificado. Ele vinha sendo operado como portão de
+aprovação. A partir de agora:
+  - blockP2.5 e p_shift são REPORTADOS, não são veto.
+  - Servem para ORDENAR candidatos na fila do shadow.
+  - Quem aprova ou reprova é o forward. Só ele.
+  - Nenhuma frente fecha por resultado de juiz. Fecha quando Marcelo decide.
+
+PRIORIDADE NOVA: sair da classe "prever direção".
+  1. FUNDING/CARRY (perpétuos): colher pagamento mecânico, delta-neutro.
+     Primeiro passo: baixar histórico de funding dos 20 e somar. Contabilidade,
+     não pesquisa. Sem gate, sem pré-registro.
+  2. FORÇA RELATIVA (cross-section): long nos 5 mais fortes, short nos 5 mais
+     fracos. Remove beta de mercado. Reusa candles_v9.db.
+  3. KIS: permanece aberta enquanto Marcelo quiser.
+
+REGRA DE CONDUTA DO CLAUDE (nova): quando um resultado vier ruim, apresentar
+o que fazer para melhorar OU qual caminho alternativo tomar. Nunca terminar
+em "MORTO" sem uma proposta de próximo passo.
+
+## 2026-08-20 — SIMPLIFICAÇÃO DO CRITÉRIO (decisão do Marcelo)
+
+Os gates blockP2.5 e p_shift DEIXAM DE VETAR. Permanecem calculados e
+registrados para o histórico, mas não reprovam nada e não fecham frente.
+Motivo: viraram muro intransponível e não respondem à pergunta prática.
+A REGRA 2 de 09/08 já dizia que o juiz histórico é FILA, não certificado —
+estava sendo operada ao contrário. Corrigido.
+
+CRITÉRIO NOVO, em uma frase:
+  Ajusta na primeira metade dos dados. Confere na segunda, sem mexer em nada.
+
+CANDIDATA A FORWARD quando:
+  (a) resultado positivo na 1ª metade E na 2ª metade;
+  (b) maioria dos trimestres positivos;
+  (c) pelo menos 30 trades;
+  (d) drawdown máximo tolerável para o Marcelo.
+Sem p-valor, sem percentil, sem multiplicidade.
+
+FOCO POR TOKEN é permitido e legítimo. Não é preciso funcionar em 20.
+Exigência: o encaixe tem que aparecer nas DUAS metades.
+
+NENHUMA FRENTE FECHA por resultado de teste. Fecha quando o Marcelo decide.
+Funding e cross-section ficam na fila, não abrem enquanto o KIS não se
+esgotar por decisão dele.
+
+CONDUTA DO CLAUDE: resultado ruim vem sempre acompanhado da próxima variação
+a testar. Nunca terminar em "MORTO" e esperar comando.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
