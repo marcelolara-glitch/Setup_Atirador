@@ -75,7 +75,7 @@ def collapse_events(signals: list, cooldown_bars: int) -> list:
 
 
 def measure_event(conn, symbol: str, bar_ts: int, direction: str,
-                  tf: str = "15m"):
+                  tf: str = "15m", path_cap: int = 0):
     """Mede excursao forward de UM evento, em ATR, no timeframe `tf`
     (default "15m"; tf invalido -> KeyError). Entry = close da barra do
     sinal (bar_ts); forward = barras bar_ts+1 ... bar_ts+FWD_BAR_CAP do MESMO
@@ -137,9 +137,29 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str,
     # borda garante), mas so chega a FWD_BAR_CAP longe da borda direita do
     # store. Consumidor que indexa alem de max(HORIZONS) tem que clampar.
     fwd_bar = [sign * (c["close"] - entry) / atr for c in fwd[:FWD_BAR_CAP]]
-    return {"symbol": symbol, "bar_ts": bar_ts, "direction": direction,
-            "atr": atr, "mfe": mfe, "mae": mae, "fwd_bar": fwd_bar,
-            "entry": entry, "fwd": fwd_atr, "fav": fav, "adv": adv}
+    out = {"symbol": symbol, "bar_ts": bar_ts, "direction": direction,
+           "atr": atr, "mfe": mfe, "mae": mae, "fwd_bar": fwd_bar,
+           "entry": entry, "fwd": fwd_atr, "fav": fav, "adv": adv}
+    # ADITIVO E OPCIONAL. path_cap=0 (default) nao executa nada aqui e devolve
+    # exatamente as mesmas chaves de antes — os consumidores existentes nao
+    # veem diferenca alguma. Com path_cap>0, acrescenta fav/adv POR BARRA no
+    # horizonte LONGO de fwd_bar (`fav`/`adv` classicos seguem em 48, intactos),
+    # para quem precisa do caminho alem de max(HORIZONS) — hoje so o trail
+    # armado de kis_trail.py, cujo hold vai ate EXT_CAP=256.
+    if path_cap > 0:
+        longa = fwd[:path_cap]
+        # ABERTURA por barra, mesma orientacao de fwd_bar (sinal aplicado). E o
+        # unico preco do futuro que uma ordem stop pode CONSEGUIR quando a barra
+        # atravessa o nivel de uma vez: sem isso o backtest cobra o nivel e
+        # fabrica edge. Consumida por kis_trail.trail_exit.
+        out["open_bar"] = [sign * (c["open"] - entry) / atr for c in longa]
+        if is_long:
+            out["fav_bar"] = [(c["high"] - entry) / atr for c in longa]
+            out["adv_bar"] = [(entry - c["low"]) / atr for c in longa]
+        else:
+            out["fav_bar"] = [(entry - c["low"]) / atr for c in longa]
+            out["adv_bar"] = [(c["high"] - entry) / atr for c in longa]
+    return out
 
 
 def run(store_db: str, symbols: list, start_iso: str, end_iso: str,
