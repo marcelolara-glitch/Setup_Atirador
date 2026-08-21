@@ -19,18 +19,24 @@
 # escalares sobrevivem; o caminho barra a barra morre na mesma iteracao. O teto
 # de RSS e checado a cada simbolo e ABORTA antes de estourar.
 #
-# CAVEAT DE LEITURA — LEIA ANTES DE OLHAR QUALQUER NUMERO. A saida no stop e
-# preenchida no NIVEL do stop, que e a convencao padrao de ordem stop e o que
-# o briefing pediu. Ela e OTIMISTA: quando a barra atravessa o nivel de uma vez,
-# o mercado imprimiu abaixo dele e o backtest cobra o nivel. Medido em bancada
-# (scratchpad, 5 simbolos de passeio aleatorio SEM drift, custo descontado): o
-# controle rende ~1 bps/trade e arme=1/recuo=1 rende ~45 bps/trade — em RUIDO
-# PURO, onde o valor honesto e zero. O vies CRESCE quanto mais apertado o
-# recuo, porque mais saidas viram atravessamento. Consequencia pratica: NAO
-# leia a celula pelo numero absoluto nem prefira a de recuo menor por ela ser
-# maior. A unica leitura defensavel e o desenho — se alguma regiao da grade se
-# sustenta nas DUAS metades e nos trimestres, e onde ela fica — e sempre contra
-# a celula de controle, que nao tem stop e portanto nao tem esse vies.
+# PREENCHIMENTO (corrigido 21/08 — nao afrouxar). A saida no stop e preenchida
+# em min(stop, abertura_da_barra), nunca no nivel do stop puro. Preencher no
+# nivel e a convencao ingenua e FABRICA edge: quando a barra atravessa o nivel
+# de uma vez, o mercado nao negociou la, e o vies cresce quanto mais apertado o
+# recuo — exatamente o eixo que a grade varre. Medido em bancada (passeio
+# aleatorio SEM drift, custo descontado, onde o valor honesto e ZERO; barras
+# chatas H=L=C=O, o caso em que todo stop atingido e atravessamento puro):
+#   celula          antes (fill no nivel)   depois (fill min(stop, abertura))
+#   controle                  1.12 bps               1.12 bps  (nao tem stop)
+#   arme=1/recuo=1           44.86 bps              -5.40 bps
+#   arme=4/recuo=4           15.10 bps             -12.99 bps
+# O vies de +43.7 bps/trade sobre o controle virou -6.5, e o sinal inverteu: o
+# recuo apertado agora PERDE em ruido, que e o correto (ele paga para ser
+# tirado). A abertura e o unico preco que uma ordem stop consegue num
+# atravessamento, entao e o piso honesto. Leitura: cada celula e lida CONTRA a
+# de controle (arme=0, sem stop, sem esse vies) — dai as colunas
+# delta_1a/2a_vs_controle. O "aprovada" sozinho nao discrimina: mesmo depois da
+# correcao, passa 88 de 357 celulas (25%) num store de RUIDO puro.
 #
 # CRITERIO (ledger de 20/08): 1a metade > 0 E 2a metade > 0 E maioria dos
 # trimestres positivos E n >= 30. Sem blockP2.5, sem p_shift — nao sao o
@@ -63,17 +69,19 @@ METADE_2 = ("2025-06-07", "2026-06-21")
 MIN_TRADES = 30                 # (c) do criterio
 
 
-def trail_exit(fav: list, adv: list, fwd_bar, hold: int,
+def trail_exit(fav: list, adv: list, abertura: list, fwd_bar, hold: int,
                arme: float, recuo: float) -> float:
     """Retorno de saida do trade, em ATR, na orientacao A FAVOR da direcao.
     `fav[j]`/`adv[j]` = excursoes favoravel/adversa da barra j (sem piso, ja
-    orientadas), `fwd_bar[j]` = fechamento dela; a barra percorre
-    [-adv[j], +fav[j]]. arme=0 -> sem stop: fecha na barra `hold`-1, que E a
-    inversao. ORDEM INTRABARRA: o stop e checado com o nivel estabelecido ate a
-    barra ANTERIOR, antes de a maxima da barra j poder eleva-lo — nao olha o
-    futuro e nao inventa uma sequencia que os OHLC nao contam (uma barra que
-    arma e tocaria o proprio stop nao tem ordem resolvivel, entao nao resolve).
-    Preenchimento no nivel do stop: ver o CAVEAT no topo do modulo."""
+    orientadas), `abertura[j]`/`fwd_bar[j]` = abertura e fechamento dela; a
+    barra percorre [-adv[j], +fav[j]]. arme=0 -> sem stop: fecha na barra
+    `hold`-1, que E a inversao. ORDEM INTRABARRA: o stop e checado com o nivel
+    estabelecido ate a barra ANTERIOR, antes de a maxima da barra j poder
+    eleva-lo — nao olha o futuro e nao inventa uma sequencia que os OHLC nao
+    contam (uma barra que arma e tocaria o proprio stop nao tem ordem
+    resolvivel, entao nao resolve). PREENCHIMENTO: min(stop, abertura[j]) — a
+    barra que ja ABRE abaixo do nivel atravessou-o, e nesse caso a ordem so
+    consegue a abertura. Ver a nota no topo do modulo."""
     if arme <= 0:
         return fwd_bar[hold - 1]
     mfe = float("-inf")         # melhor preco ate agora, orientado a favor
@@ -81,7 +89,7 @@ def trail_exit(fav: list, adv: list, fwd_bar, hold: int,
         if mfe >= arme:         # armado por alguma barra ANTERIOR a j
             stop = mfe - recuo
             if -adv[j] <= stop:
-                return stop
+                return min(stop, abertura[j])
         if fav[j] > mfe:
             mfe = fav[j]
     return fwd_bar[hold - 1]
@@ -171,8 +179,8 @@ def run(store: str, symbols: list, start_iso: str, end_iso: str, tf: str) -> dic
             # AQUI mora a restricao de memoria: as 17 celulas saem de UMA
             # passada sobre o caminho deste evento, e o caminho e descartado.
             trades.append((ev["bar_ts"], array("d", [
-                trail_exit(m["fav_bar"], m["adv_bar"], m["fwd_bar"],
-                           ev["hold"], a, r) * ap * 1e4 - COST_BPS
+                trail_exit(m["fav_bar"], m["adv_bar"], m["open_bar"],
+                           m["fwd_bar"], ev["hold"], a, r) * ap * 1e4 - COST_BPS
                 for a, r in GRADE])))
         por_sym[sym] = trades
         rss = _rss_mib()
@@ -195,13 +203,24 @@ def linhas(por_sym: dict) -> list:
                    key=lambda t: t[0])
     out = []
     for sym, trades in list(por_sym.items()) + [("UNIVERSO", todos)]:
-        for k, (a, r) in enumerate(GRADE):
-            out.append(dict(symbol=sym, arme=a, recuo=r, **metricas(trades, k)))
+        ms = [metricas(trades, k) for k in range(len(GRADE))]
+        ctl = ms[0]             # GRADE[0] e a celula de controle (arme=0)
+        for (a, r), m in zip(GRADE, ms):
+            # O delta e a leitura que decide: o absoluto de uma celula com stop
+            # nao e comparavel ao de outra, mas a distancia ate o MESMO controle,
+            # nas MESMAS entradas, e. Controle contra si mesmo da 0 por definicao.
+            out.append(dict(
+                symbol=sym, arme=a, recuo=r, **m,
+                delta_1a_vs_controle=(m["ret_1a_metade_bps"]
+                                      - ctl["ret_1a_metade_bps"]),
+                delta_2a_vs_controle=(m["ret_2a_metade_bps"]
+                                      - ctl["ret_2a_metade_bps"])))
     return out
 
 
 CAMPOS = ["symbol", "arme", "recuo", "n_trades", "acerto_pct",
           "ret_1a_metade_bps", "ret_2a_metade_bps", "ret_total_bps",
+          "delta_1a_vs_controle", "delta_2a_vs_controle",
           "dd_max_bps", "trimestres_pos", "trimestres_total"]
 
 
@@ -248,7 +267,7 @@ def main() -> int:
           f"n >= {MIN_TRADES}; drawdown vai REPORTADO, e decisao do Marcelo)")
     print(f"{'symbol':>10} | {'arme':>4} | {'recuo':>5} | {'n':>5} | "
           f"{'acerto':>6} | {'1a(bps)':>9} | {'2a(bps)':>9} | {'tot(bps)':>9} | "
-          f"{'ddmax':>8} | {'trim':>7}")
+          f"{'d1a_ctl':>9} | {'d2a_ctl':>9} | {'ddmax':>8} | {'trim':>7}")
     passou = 0
     for row in rows:
         if not aprovada(row):
@@ -258,7 +277,10 @@ def main() -> int:
               f"{row['n_trades']:>5} | {row['acerto_pct']:>5.1f}% | "
               f"{row['ret_1a_metade_bps']:>9.1f} | "
               f"{row['ret_2a_metade_bps']:>9.1f} | "
-              f"{row['ret_total_bps']:>9.1f} | {row['dd_max_bps']:>8.1f} | "
+              f"{row['ret_total_bps']:>9.1f} | "
+              f"{row['delta_1a_vs_controle']:>+9.1f} | "
+              f"{row['delta_2a_vs_controle']:>+9.1f} | "
+              f"{row['dd_max_bps']:>8.1f} | "
               f"{row['trimestres_pos']:>3}/{row['trimestres_total']:<3}")
     if not passou:
         print("  (nenhuma celula passou — ver o CSV completo para a proxima "

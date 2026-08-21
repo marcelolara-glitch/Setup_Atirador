@@ -148,6 +148,11 @@ def measure_event(conn, symbol: str, bar_ts: int, direction: str,
     # armado de kis_trail.py, cujo hold vai ate EXT_CAP=256.
     if path_cap > 0:
         longa = fwd[:path_cap]
+        # ABERTURA por barra, mesma orientacao de fwd_bar (sinal aplicado). E o
+        # unico preco do futuro que uma ordem stop pode CONSEGUIR quando a barra
+        # atravessa o nivel de uma vez: sem isso o backtest cobra o nivel e
+        # fabrica edge. Consumida por kis_trail.trail_exit.
+        out["open_bar"] = [sign * (c["open"] - entry) / atr for c in longa]
         if is_long:
             out["fav_bar"] = [(c["high"] - entry) / atr for c in longa]
             out["adv_bar"] = [(entry - c["low"]) / atr for c in longa]

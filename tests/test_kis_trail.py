@@ -43,10 +43,11 @@ def test_controle_arme_zero_sai_no_fim_do_hold():
     fav = [9.0, 9.0, 9.0, 9.0]
     adv = [9.0, 9.0, 9.0, 9.0]
     fwd = [0.1, 0.2, 0.3, 0.4]
+    abr = [0.0, 0.1, 0.2, 0.3]
     for recuo in RECUOS:
-        assert trail_exit(fav, adv, fwd, 3, 0, recuo) == 0.3
-    assert trail_exit(fav, adv, fwd, 1, 0, 1) == 0.1
-    assert trail_exit(fav, adv, fwd, 4, 0, 1) == 0.4
+        assert trail_exit(fav, adv, abr, fwd, 3, 0, recuo) == 0.3
+    assert trail_exit(fav, adv, abr, fwd, 1, 0, 1) == 0.1
+    assert trail_exit(fav, adv, abr, fwd, 4, 0, 1) == 0.4
 
 
 def test_nunca_arma_cai_no_fim_do_hold():
@@ -54,7 +55,8 @@ def test_nunca_arma_cai_no_fim_do_hold():
     fav = [0.5, 0.9, 0.4]
     adv = [0.2, 0.1, 0.3]
     fwd = [0.1, 0.2, 0.25]
-    assert trail_exit(fav, adv, fwd, 3, 2, 1) == 0.25
+    abr = [0.0, 0.1, 0.2]
+    assert trail_exit(fav, adv, abr, fwd, 3, 2, 1) == 0.25
 
 
 def test_arma_e_para_no_nivel_do_stop():
@@ -63,7 +65,8 @@ def test_arma_e_para_no_nivel_do_stop():
     fav = [1.0, 3.0, 0.0]
     adv = [0.0, 0.0, 5.0]
     fwd = [0.1, 2.9, -4.0]
-    assert trail_exit(fav, adv, fwd, 3, 2, 1) == 2.0
+    abr = [0.0, 0.1, 2.9]
+    assert trail_exit(fav, adv, abr, fwd, 3, 2, 1) == 2.0
 
 
 def test_stop_encostado_no_nivel_exato_sai():
@@ -71,7 +74,38 @@ def test_stop_encostado_no_nivel_exato_sai():
     fav = [4.0, 0.0]
     adv = [0.0, -3.0]        # minima da barra 1 exatamente em +3.0 ATR
     fwd = [3.9, 3.5]
-    assert trail_exit(fav, adv, fwd, 2, 2, 1) == 3.0
+    abr = [0.0, 3.9]
+    assert trail_exit(fav, adv, abr, fwd, 2, 2, 1) == 3.0
+
+
+def test_barra_chata_abaixo_do_stop_preenche_na_ABERTURA():
+    """Exigencia do briefing. Barra 1 chata (H=L=C=O) inteira abaixo do stop:
+    o mercado NUNCA negociou no nivel, entao o fill e a abertura (-2.0) e nao
+    o nivel do stop (+2.0). Sem isso o backtest fabricaria 4 ATR do nada."""
+    fav = [3.0, -2.0]
+    adv = [0.0, 2.0]         # chata em -2.0: high == low == open == close
+    abr = [0.0, -2.0]
+    fwd = [3.0, -2.0]
+    assert trail_exit(fav, adv, abr, fwd, 2, 2, 1) == -2.0
+
+
+def test_abertura_acima_do_stop_preenche_no_stop():
+    """A barra abre ACIMA do nivel e so depois cai: a ordem stop pega o nivel.
+    E o contraponto do teste anterior — min() nao pode piorar este caso."""
+    fav = [3.0, 0.5]
+    adv = [0.0, 3.0]
+    abr = [0.0, 0.5]         # abre em +0.5, acima do stop em 2.0? nao: abaixo
+    fwd = [3.0, -3.0]
+    assert trail_exit(fav, adv, abr, fwd, 2, 2, 1) == 0.5   # abertura < stop
+    abr2 = [0.0, 2.5]        # agora abre ACIMA do stop
+    assert trail_exit(fav, adv, abr2, fwd, 2, 2, 1) == 2.0  # fill no stop
+
+
+def test_preenchimento_nunca_e_melhor_que_o_stop():
+    """Invariante: o fill e sempre <= nivel do stop, para qualquer abertura."""
+    fav, adv, fwd = [3.0, 0.0], [0.0, 5.0], [2.9, -5.0]
+    for a in (-9.0, -1.0, 0.0, 1.99, 2.0, 7.0):
+        assert trail_exit(fav, adv, [0.0, a], fwd, 2, 2, 1) <= 2.0
 
 
 def test_ordem_intrabarra_a_barra_que_arma_nao_para_em_si_mesma():
@@ -82,7 +116,8 @@ def test_ordem_intrabarra_a_barra_que_arma_nao_para_em_si_mesma():
     fav = [5.0, 8.0, 6.0]
     adv = [9.0, -4.5, -6.0]  # barra 1 inteira ACIMA de +4.5 ATR: nao toca 4.0
     fwd = [1.0, 7.5, 6.2]
-    assert trail_exit(fav, adv, fwd, 3, 2, 1) == 7.0
+    abr = [0.0, 1.0, 7.5]
+    assert trail_exit(fav, adv, abr, fwd, 3, 2, 1) == 7.0
 
 
 def test_recuo_maior_segura_o_trade_por_mais_tempo():
@@ -90,15 +125,18 @@ def test_recuo_maior_segura_o_trade_por_mais_tempo():
     fav = [3.0, 0.0]
     adv = [0.0, 0.5]         # minima da barra 1 em -0.5 ATR
     fwd = [2.9, -0.4]
-    assert trail_exit(fav, adv, fwd, 2, 2, 1) == 2.0      # stop 3-1=2.0: toca
-    assert trail_exit(fav, adv, fwd, 2, 2, 4) == -0.4     # stop 3-4=-1.0: nao
+    abr = [0.0, 2.9]
+    assert trail_exit(fav, adv, abr, fwd, 2, 2, 1) == 2.0      # stop 3-1=2.0: toca
+    assert trail_exit(fav, adv, abr, fwd, 2, 2, 4) == -0.4     # stop 3-4=-1.0: nao
 
 
 def test_arme_maior_nao_arma_e_devolve_o_controle():
     fav = [3.0, 0.0]
     adv = [0.0, 2.0]
     fwd = [2.9, -1.5]
-    assert trail_exit(fav, adv, fwd, 2, 5, 1) == trail_exit(fav, adv, fwd, 2, 0, 1)
+    abr = [0.0, 2.9]
+    assert (trail_exit(fav, adv, abr, fwd, 2, 5, 1)
+            == trail_exit(fav, adv, abr, fwd, 2, 0, 1))
 
 
 def test_hold_limita_a_leitura_do_caminho():
@@ -107,7 +145,8 @@ def test_hold_limita_a_leitura_do_caminho():
     fav = [1.0, 1.0, 9.0]
     adv = [0.0, -0.5, 0.0]   # barra 1 nao encosta no stop (0.5 > 1.0-1.0)
     fwd = [0.4, 0.5, 8.0]
-    assert trail_exit(fav, adv, fwd, 2, 1, 1) == 0.5      # nao ve a barra 2
+    abr = [0.0, 0.4, 0.5]
+    assert trail_exit(fav, adv, abr, fwd, 2, 1, 1) == 0.5      # nao ve a barra 2
 
 
 # ----------------------------------------------------------------- metricas
@@ -216,6 +255,36 @@ def test_universo_ordena_por_data_e_nao_pela_ordem_dos_simbolos():
     assert uni["dd_max_bps"] == 18.0        # 10 -> -8, e nao 20 -> 2
 
 
+def test_delta_vs_controle_e_a_distancia_ate_a_celula_arme_zero():
+    """A coluna que decide a leitura: cada celula contra o MESMO controle, nas
+    MESMAS entradas. O controle contra si mesmo e 0 por definicao."""
+    por_sym = {"AAA": [(_ts("2024-06-01"), [1.0] + [5.0] * (len(GRADE) - 1)),
+                       (_ts("2025-12-01"), [2.0] + [9.0] * (len(GRADE) - 1))]}
+    rows = [r for r in linhas(por_sym) if r["symbol"] == "AAA"]
+    ctl = rows[0]
+    assert (ctl["arme"], ctl["recuo"]) == (0, 0)
+    assert ctl["delta_1a_vs_controle"] == 0.0
+    assert ctl["delta_2a_vs_controle"] == 0.0
+    for r in rows[1:]:
+        assert r["delta_1a_vs_controle"] == 4.0    # 5.0 - 1.0 na 1a metade
+        assert r["delta_2a_vs_controle"] == 7.0    # 9.0 - 2.0 na 2a metade
+
+
+def test_delta_e_por_simbolo_nao_contra_o_controle_do_universo():
+    """Cada grupo de linhas usa o SEU proprio controle; misturar controles
+    entre simbolos daria delta sem significado."""
+    por_sym = {"AAA": [(_ts("2024-06-01"), [1.0] * len(GRADE))],
+               "BBB": [(_ts("2024-06-01"), [50.0] * len(GRADE))]}
+    for r in linhas(por_sym):
+        assert r["delta_1a_vs_controle"] == 0.0
+
+
+def test_campos_do_csv_incluem_os_deltas_na_ordem_declarada():
+    from backtest.kis_trail import CAMPOS
+    assert CAMPOS[8:10] == ["delta_1a_vs_controle", "delta_2a_vs_controle"]
+    assert set(CAMPOS) <= set(linhas({"A": [_trade("2024-06-01", 1.0)]})[0])
+
+
 def test_custo_e_o_mesmo_do_stage1():
     from backtest import stage1
     assert COST_BPS == stage1.GATE_COST
@@ -245,15 +314,19 @@ def test_path_cap_e_aditivo_e_simetrico(monkeypatch):
     assert "fav_bar" not in base and "adv_bar" not in base
 
     longo = exc.measure_event(None, "AAA", ts, "LONG", tf="4h", path_cap=256)
-    assert set(longo) - set(base) == {"fav_bar", "adv_bar"}
+    assert set(longo) - set(base) == {"fav_bar", "adv_bar", "open_bar"}
     for k in base:
         assert longo[k] == base[k]                    # nada antigo se moveu
     assert len(longo["fav_bar"]) == len(longo["fwd_bar"]) > max(exc.HORIZONS)
     assert longo["fav_bar"][:len(base["fav"])] == base["fav"]
     assert longo["adv_bar"][:len(base["adv"])] == base["adv"]
+    assert len(longo["open_bar"]) == len(longo["fwd_bar"])
 
     short = exc.measure_event(None, "AAA", ts, "SHORT", tf="4h", path_cap=256)
     assert all(abs(a - b) < 1e-9
                for a, b in zip(short["fav_bar"], longo["adv_bar"]))
     assert all(abs(a - b) < 1e-9
                for a, b in zip(short["adv_bar"], longo["fav_bar"]))
+    # open_bar e ASSINADO (como fwd_bar), nao espelhado: SHORT = -LONG.
+    assert all(abs(a + b) < 1e-9
+               for a, b in zip(short["open_bar"], longo["open_bar"]))
