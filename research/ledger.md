@@ -977,6 +977,26 @@ esgotar por decisão dele.
 CONDUTA DO CLAUDE: resultado ruim vem sempre acompanhado da próxima variação
 a testar. Nunca terminar em "MORTO" e esperar comando.
 
+## 2026-08-21 — VARREDURA DO TRAIL (exploratória) — nada promove
+
+17 células x 20 tokens, kis_extremos, critério das duas metades.
+TRAIL NÃO FUNCIONA: melhor célula bate o controle em 9 de 20 tokens; com 16
+células testadas, P(alguma chegar a 9 por acaso) = 49%. Sem platô.
+Toda melhora aparente vive na 1ª metade (d_1a +30k a +40k) e some na 2ª
+(d_2a -10k a +3k). Assinatura de ajuste ao passado.
+
+ACHADO PRINCIPAL, independente do trail — a base DECAIU entre as metades:
+  1ª metade (mai/24→jun/25):  +109.181 bps
+  2ª metade (jun/25→jun/26):   -41.245 bps
+10 de 20 tokens negativos na 2ª metade. XRP e DOGE, os melhores da 1ª,
+desabaram na 2ª — demonstração direta do valor do teste das duas metades.
+
+8 tokens positivos NAS DUAS metades: WLD, ADA, ARB, NEAR, SUI, TRX, BNB, BTC.
+ARB é o mais equilibrado. TRX e OP melhoraram na 2ª metade.
+
+PRÓXIMO: o problema não é saída, é ENTRAR sem tendência (58% das perdas foram
+trades que nunca andaram a favor). Varredura A = filtro de regime na entrada.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
