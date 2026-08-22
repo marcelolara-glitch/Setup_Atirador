@@ -1131,6 +1131,29 @@ REGRA DE CONDUTA: um eixo por vez. Nunca dois simultâneos. Cada rodada com
 grade fechada antes, célula de controle explícita, e leitura por platô — nunca
 por pico.
 
+## 2026-08-22 — TRAVA: superfície de importação de keepitsimple congelada
+
+`shadow/kis_regime.py` (coletor forward do KIS+REGIME) roda em produção
+importando de `backtest/keepitsimple.py`: **WARMUP, states, _alvo_extremos,
+_adx**. Esses quatro passam a ser superfície pública: assinatura, valor e
+comportamento padrão não mudam.
+
+Variação de par de EMA vai em **módulo novo**, ou como **argumento opcional com
+default idêntico ao de hoje (8, 21)** — nunca alterando o que a chamada sem
+argumentos extras devolve.
+
+Cadeado: `tests/test_trava_superficie_kis.py`. Golden byte-idêntico (string +
+sha256) para `states` e `_alvo_extremos`, tolerância 1e-12 nos floats do `_adx`,
+e guarda de assinatura que reprova parâmetro novo sem default.
+
+Nota de método, porque a primeira versão do cadeado era falsa: a série trending
+óbvia NÃO discrimina ±1 no período — `states(closes)` com EMA_FAST=9 devolvia o
+mesmo golden, e o teste passava. A série final tem 78 barras construídas para
+cair dentro das frestas entre as EMAs (close entre EMA8 e EMA9; EMA8 entre EMA21
+e EMA22), e o próprio arquivo prova a discriminação: trocar (8,21) por
+(7,21)/(9,21)/(8,20)/(8,22) muda 8/55/12/10 barras. Um cadeado que não foi
+testado contra a mutação que ele deveria pegar não é cadeado.
+
 ## TRAVA (adendo) — fechar a lacuna registrada em 22/08
 A checagem por AST hoje assere o CONJUNTO de nomes importados de
 backtest.keepitsimple por shadow/kis_regime.py. Ela NÃO impede que o coletor
@@ -1139,6 +1162,24 @@ Estender a checagem para uma LISTA BRANCA de módulos-fonte: shadow/kis_regime.p
 só pode importar detector/portão de {backtest.keepitsimple, backtest.kis_regime}.
 Qualquer outra origem reprova o teste e exige reapontar a trava de propósito.
 Vale para o módulo novo de horizonte: ele NÃO entra na lista branca.
+
+FECHADO em 22/08 (mesmo PR da trava). `_origens_de` extrai por AST todo módulo
+de primeira parte importado por `shadow/kis_regime.py` — inclusive os lazy
+dentro de função — usando `sys.stdlib_module_names` para separar stdlib (lista
+do interpretador, não uma lista minha, que envelheceria). Lista branca de sinal:
+{backtest.keepitsimple, backtest.kis_regime}; infra do shadow
+({shadow.donchian_a, shadow.vigia}) é permitida à parte porque não é detector.
+Import relativo reprova, para a origem nunca ficar ambígua. Alargar a lista
+exige editar a asserção — que é o "reapontar de propósito".
+Mutação que confirma: trocar a origem do detector para `backtest.kis_horizonte`
+MANTENDO os quatro nomes reprova 3 testes; origem nova de primeira parte
+reprova 3; import relativo reprova 2.
+
+CORREÇÃO APLICADA no mesmo PR: o docstring do coletor e a linha do [VIGIA]
+diziam "hold-out REPROVADO". Com o registro de 22/08 isso passou a afirmar
+veredito onde há número provisório. Passaram a dizer "-769 bps (PROVISÓRIO,
+remedição ~05/09)", sem afrouxar o "não promoção".
+
 
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.

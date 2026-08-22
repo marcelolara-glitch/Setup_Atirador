@@ -6,13 +6,16 @@
 # Uso (via cron):
 #   run-shadow.sh            -> scan pos-fechamento 4h  (python -m shadow.donchian_a)
 #   run-shadow.sh --vigia    -> relatorio diario [VIGIA] (python -m shadow.vigia)
-# stdout/stderr sao anexados a ~/cron-shadow-donchian.log (o cron redireciona).
+#   run-shadow.sh --kis      -> scan do COLETOR KIS+REGIME (shadow.kis_regime)
+# stdout/stderr vao p/ ~/cron-shadow-donchian.log (~/cron-shadow-kis.log no --kis).
 
 set -u
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="$HOME/.env_atirador"
 LOG_FILE="$HOME/cron-shadow-donchian.log"
+# O coletor KIS escreve em log PROPRIO: nada dele entra no log do DONCHIAN-A.
+[ "${1:-}" = "--kis" ] && LOG_FILE="$HOME/cron-shadow-kis.log"
 
 # Carrega tokens (Telegram etc.), como run-scan.sh. Ausencia nao e fatal aqui:
 # o motor loga e o envio do [VIGIA] falha em silencio (observabilidade).
@@ -38,6 +41,9 @@ TS="$(date -u '+%Y-%m-%d %H:%M:%S')"
 if [ "${1:-}" = "--vigia" ]; then
     echo "--- $TS UTC --- [VIGIA] diario ---" >> "$LOG_FILE"
     "$PY" -m shadow.vigia >> "$LOG_FILE" 2>&1
+elif [ "${1:-}" = "--kis" ]; then
+    echo "--- $TS UTC --- shadow KIS+REGIME 4h ---" >> "$LOG_FILE"
+    "$PY" -m shadow.kis_regime >> "$LOG_FILE" 2>&1
 else
     echo "--- $TS UTC --- shadow scan 4h ---" >> "$LOG_FILE"
     "$PY" -m shadow.donchian_a >> "$LOG_FILE" 2>&1
