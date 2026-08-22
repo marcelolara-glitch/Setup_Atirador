@@ -1060,6 +1060,33 @@ RESSALVA DE PODER: 66 trades é amostra pequena; isto não é rejeição forte d
 sinal, é o cumprimento de um critério pré-comprometido. Registrado para que
 ninguém releia daqui a seis meses como "provado que não funciona".
 
+## 2026-08-22 — DONCHIAN-A: leitura honesta do forward (registrar ANTES do fechamento)
+
+ΣR +36,08 acumulado. MAS a decomposição desmonta a leitura otimista:
+  20/07 a 18/08 (30 dias): 37 trades,  2 wins, ΣR -19,92
+  19/08 a 22/08 (4 dias):  24 trades, 16 wins, ΣR +56,00
+16 das 18 vitórias em QUATRO dias consecutivos = UM episódio de mercado.
+Apenas 3 episódios de ganho em toda a amostra (29/07, 06/08, 19-22/08).
+
+É BETA, NÃO HABILIDADE — os 16 vencedores do episódio foram TODOS LONG.
+  no episódio:  LONG 16W/2L (+62R) | SHORT 0W/5L (-5R)
+  fora dele:    LONG 1W/12L (-8R)  | SHORT 1W/20L/4E (-12,92R)
+Amostra inteira: LONG 17W/14L (55%, +54R) | SHORT 1W/25L (3,8%, -17,92R).
+O lado SHORT tem 1 vitória em 26 fechados. Não é variância.
+
+FALHA DE DESENHO DA JANELA: 80 trades / 84 dias conta TRADES. O N efetivo de
+um seguidor de tendência são EPISÓDIOS. Em 34 dias houve UM, unidirecional.
+Fechar em outubro com 2 episódios NÃO produzirá veredito — produzirá esta
+mesma discussão. Registrado agora para não virar racionalização depois.
+VIGIA segue rodando (custo zero). O veredito de outubro deve ser declarado
+INCONCLUSIVO POR CONTAGEM DE EPISÓDIOS, salvo aparecer uma queda forte que
+teste o lado short.
+
+CLAUDE ERROU DUAS VEZES NESTA ANÁLISE: em 09/08 registrou "foi o falso-positivo
+dos 22%"; em 22/08 leu a virada como "a estratégia funcionou". Marcelo apontou
+a concentração no cisne e estava certo nas duas vezes. Padrão: Claude reage ao
+número mais recente em vez de decompor primeiro.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
