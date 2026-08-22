@@ -228,7 +228,8 @@ def _default_send(text: str) -> bool:
 
 
 def run(db_path: str = DB_PATH, now: datetime | None = None,
-        send_fn=None, log: logging.Logger | None = None):
+        send_fn=None, log: logging.Logger | None = None,
+        kis_db: str | None = None):
     """Gera e envia o [VIGIA] uma vez. Envio e I/O de observabilidade: falha
     vira warning, NUNCA excecao propagada (principio vigente)."""
     log = log or _setup_logger()
@@ -239,6 +240,19 @@ def run(db_path: str = DB_PATH, now: datetime | None = None,
         msg = build_report(conn, now)
     finally:
         conn.close()
+    # SEGUNDO bloco, MESMA mensagem: coletor KIS+REGIME (DB proprio). O bloco do
+    # DONCHIAN-A acima fica intocado. Import lazy e try/except largo: o bloco
+    # extra e observabilidade de um coletor REPROVADO — se ele falhar, o [VIGIA]
+    # do DONCHIAN-A sai igual, sozinho.
+    try:
+        from shadow.kis_regime import DB_PATH as KIS_DB, build_block
+        kconn = _connect(kis_db or KIS_DB)
+        try:
+            msg += "\n\n" + build_block(kconn, now)
+        finally:
+            kconn.close()
+    except Exception as e:
+        log.warning(f"[vigia] bloco KIS indisponivel: {type(e).__name__}: {e}")
     try:
         ok = bool(send_fn(msg))
         if not ok:

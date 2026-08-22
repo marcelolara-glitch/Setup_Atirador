@@ -1,0 +1,20 @@
+# Setup Atirador — shadow COLETOR KIS+REGIME (ledger 21/08).
+# NAO E PROMOCAO: a celula (0.02/11, 6 tokens) foi REPROVADA no hold-out
+# (-769 bps). Este cron so ACUMULA TRADES REAIS. Sem stop: cauda ilimitada.
+# Arquivo SEPARADO do cron-atirador-shadow-donchian de proposito — o shadow do
+# DONCHIAN-A nao muda em nada, nem no agendamento.
+#
+# INSTALACAO (feita pelo Marcelo via SSH, NAO pelo Code):
+#   sudo cp ~/Setup_Atirador/deploy/cron-atirador-shadow-kis \
+#           /etc/cron.d/cron-atirador-shadow-kis            # nome SEM ponto
+#   sudo chown root:root /etc/cron.d/cron-atirador-shadow-kis
+#   sudo chmod 644       /etc/cron.d/cron-atirador-shadow-kis
+#
+# Horarios em UTC. Minuto 12: deslocado do scan v9 (*/30), do shadow DONCHIAN-A
+# (min 8) e do [VIGIA] (min 20), para nao competir por rede/CPU na VM de 956 MiB.
+SHELL=/bin/bash
+HOME=/home/ubuntu
+# Mesmas 6 barras 4h pos-fechamento do DONCHIAN-A — 00,04,08,12,16,20 UTC.
+12 0,4,8,12,16,20 * * * ubuntu /home/ubuntu/Setup_Atirador/deploy/run-shadow.sh --kis >> /home/ubuntu/cron-shadow-kis.log 2>&1
+# SEM linha de relatorio: o bloco KIS entra na MESMA mensagem do [VIGIA] diario,
+# que ja e disparada pelo cron-atirador-shadow-donchian as 00:20 UTC.
