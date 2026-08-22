@@ -1037,7 +1037,29 @@ CRITÉRIO DE LEITURA — TRAVADO ANTES DO NÚMERO:
   NÃO se ajusta célula nem lista de tokens depois de ver o hold-out. Se o
   resultado for ruim e vier a tentação de "testar só mais uma célula", isso
   seria queimar a última amostra limpa da família inteira.
-  
+
+  ## 2026-08-21 — HOLD-OUT DO KIS+REGIME — REPROVADO (critério travado em 21/08)
+
+Célula 0.02/11, 6 tokens congelados, entradas de 18/06 a 21/08/2026.
+  ARB -409 | BNB -278 | BTC -1.294 | SUI -939 | TRX -137 | WLD +2.288
+  SOMA -769 bps em 66 trades (-11,6 bps/trade). 1 de 6 positivos.
+CRITÉRIO EXIGIA: soma > 0 E >= 4 de 6. NÃO PASSOU.
+A frente KIS se esgota NESTA FORMA. Nenhuma célula nova, nenhuma lista nova.
+O hold-out foi gasto. Não há mais amostra limpa nesta família.
+
+O QUE SOBREVIVEU — registrar separado do veredito:
+  controle sem filtro no mesmo hold-out: -4.162 bps
+  com o filtro de regime:                  -769 bps
+  diferença: +3.393 bps EM DADO VIRGEM.
+O portão de regime (inclinação EMA21 >= 0.02 ATR/barra + ADX(13) >= 11) é o
+ÚNICO componente da campanha que melhorou fora da amostra onde foi calibrado.
+Fica disponível como COMPONENTE REUTILIZÁVEL para qualquer sinal futuro.
+Conclusão que se separa: o SINAL do KIS está morto; o PORTÃO não está.
+
+RESSALVA DE PODER: 66 trades é amostra pequena; isto não é rejeição forte do
+sinal, é o cumprimento de um critério pré-comprometido. Registrado para que
+ninguém releia daqui a seis meses como "provado que não funciona".
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
