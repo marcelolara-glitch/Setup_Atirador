@@ -1087,6 +1087,50 @@ dos 22%"; em 22/08 leu a virada como "a estratégia funcionou". Marcelo apontou
 a concentração no cisne e estava certo nas duas vezes. Padrão: Claude reage ao
 número mais recente em vez de decompor primeiro.
 
+## 2026-08-22 — ROADMAP DE EXPLORAÇÃO (registro de caminhos abertos)
+
+CORREÇÃO: o hold-out do KIS (-769 bps) é PROVISÓRIO, não veredito. A regra de
+borda (48 barras) e a exclusão por hold removeram da medição as entradas a
+partir de ~13/08 — o episódio de 19-22/08 está majoritariamente AUSENTE.
+Rerodar em ~05/09 com o store estendido. O critério travado em 21/08 continua
+valendo; só será aplicado sobre dados completos.
+
+EIXOS ABERTOS, em ordem de prioridade e com justificativa:
+
+1. HORIZONTE DO SINAL em 4h — EMA (8,21) controle | (13,34) | (21,55) | (34,89)
+   Por quê primeiro: dados prontos, uma constante, e testa diretamente a
+   hipótese levantada pelo contraste Donchian (canal 20d, capturou a alta) vs
+   KIS 8/21 (girou a cada 3 dias e foi picotado dentro dela).
+
+2. TIMEFRAME DIÁRIO — mesma hipótese por outro caminho. Exige verificar
+   cobertura no store; se não houver, coletar. Menos trades, custo relativo
+   menor por trade.
+
+3. LONG-ONLY — no shadow do DONCHIAN-A o lado SHORT tem 1 vitória em 26
+   fechados (3,8%). Se o mesmo padrão aparecer no KIS, desligar SHORT é uma
+   linha de código. ATENÇÃO: seria escolha PÓS-HOC; precisa de pré-registro
+   próprio e do hold-out para valer.
+
+4. TIMEFRAMES MENORES (1h, 15m) — [Provável] piores: mais trades, e a 5 bps
+   por perna o custo domina. Testar por último, e mais para fechar a questão
+   do que por expectativa.
+
+5. VARREDURA B (RSI como teto + extensão do preço) — pré-declarada em 20/08,
+   segue disponível. Rebaixada de prioridade: é mais um filtro de ENTRADA
+   sobre um sinal cuja escala de tempo pode ser o problema real.
+
+6. REVERSÃO À MÉDIA — única classe complementar nunca testada em 13 primárias.
+   Reaproveita o portão de regime invertido (entrar quando NÃO há tendência).
+
+COMPONENTE VALIDADO E REUTILIZÁVEL: o portão de regime (inclinação EMA21 >=
+0.02 ATR/barra + ADX(13) >= 11) melhorou +3.393 bps em dado virgem. É o único
+componente da campanha que sobreviveu fora da amostra de calibração. Aplicável
+a qualquer sinal futuro, não pertence ao KIS.
+
+REGRA DE CONDUTA: um eixo por vez. Nunca dois simultâneos. Cada rodada com
+grade fechada antes, célula de controle explícita, e leitura por platô — nunca
+por pico.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
