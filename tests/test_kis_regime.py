@@ -42,8 +42,8 @@ def test_grade_tem_16_celulas_com_um_unico_controle():
 
 
 def test_grade_e_a_do_briefing():
-    assert LIMIARES == (0.00, 0.01, 0.02, 0.04)
-    assert ADX_MINS == (0, 15, 20, 25)
+    assert LIMIARES == (0.00, 0.01, 0.02, 0.03)
+    assert ADX_MINS == (0, 11, 14, 17)
 
 
 # ------------------------------------------------------------------ ATR14
