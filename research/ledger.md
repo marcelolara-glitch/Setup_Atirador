@@ -1131,6 +1131,15 @@ REGRA DE CONDUTA: um eixo por vez. Nunca dois simultâneos. Cada rodada com
 grade fechada antes, célula de controle explícita, e leitura por platô — nunca
 por pico.
 
+## TRAVA (adendo) — fechar a lacuna registrada em 22/08
+A checagem por AST hoje assere o CONJUNTO de nomes importados de
+backtest.keepitsimple por shadow/kis_regime.py. Ela NÃO impede que o coletor
+passe a importar o detector de um módulo NOVO.
+Estender a checagem para uma LISTA BRANCA de módulos-fonte: shadow/kis_regime.py
+só pode importar detector/portão de {backtest.keepitsimple, backtest.kis_regime}.
+Qualquer outra origem reprova o teste e exige reapontar a trava de propósito.
+Vale para o módulo novo de horizonte: ele NÃO entra na lista branca.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
