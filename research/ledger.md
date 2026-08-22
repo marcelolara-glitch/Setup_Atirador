@@ -997,6 +997,47 @@ ARB é o mais equilibrado. TRX e OP melhoraram na 2ª metade.
 PRÓXIMO: o problema não é saída, é ENTRAR sem tendência (58% das perdas foram
 trades que nunca andaram a favor). Varredura A = filtro de regime na entrada.
 
+## 2026-08-21 — CONGELAMENTO KIS + FILTRO DE REGIME (antes do hold-out)
+
+CÉLULA CONGELADA: kis_extremos com filtro de regime, limiar = 0.02, adx_min = 11.
+  entrada só se: inclinacao(EMA21, 5 barras, em ATR/barra) >= +0.02 para LONG
+                 e <= -0.02 para SHORT, E ADX(13) >= 11.
+  Escolhida como CENTRO do platô, não como pico. A linha limiar=0.02 tem três
+  células vizinhas com as duas deltas positivas (adx 0, 11, 14); as bordas
+  degradam dos dois lados (limiar 0.03 piora; adx 17 destrói a 1a metade).
+  0.02/14 tinha a melhor 2a metade (+13.390) mas é BORDA, vizinha de 0.02/17
+  que colapsa. Pegar o pico foi rejeitado deliberadamente.
+
+TOKENS CONGELADOS (6): ARB, BNB, BTC, SUI, TRX, WLD.
+  Critério: positivos nas DUAS metades em TODAS as quatro configurações
+  testadas (controle sem filtro, 0.02/15 da grade antiga, 0.02/14 e 0.02/11
+  da grade fina). Estabilidade, não magnitude.
+  1a metade +33.046 | 2a metade +22.820 | total +55.866 bps.
+  FORA: XRP — no controle sem filtro a 2a metade era -1.895; só vira positivo
+  COM o filtro, o que é o filtro salvando o token, não edge do token.
+  FORA: LINK — 2a metade -2.268 nesta célula contra +22 na vizinha. A virada
+  de +10.488 bps observada na grade antiga não se sustentou. Ruído confirmado.
+
+PROCEDÊNCIA HONESTA: célula e lista de tokens foram escolhidas OLHANDO as duas
+metades de 2024-05-22 a 2026-06-17. Essa janela deixou de ser teste. O único
+dado limpo restante é o hold-out abaixo.
+
+HOLD-OUT: entradas de 2026-06-18 a 2026-08-21 (65 dias, ~390 barras 4h por
+símbolo, ~106 trades estimados nos 6 tokens). Coletado via backfill_okx em
+21/08 ANTES de qualquer análise. GASTA-SE UMA VEZ SÓ.
+Ressalva registrada: eventos com entrada até 17/06 e saída depois disso já
+consomem uma fatia fina do hold-out — inevitável pela regra de borda, ~1-2%.
+
+CRITÉRIO DE LEITURA — TRAVADO ANTES DO NÚMERO:
+  (a) soma dos 6 tokens POSITIVA no hold-out  E
+  (b) pelo menos 4 dos 6 positivos individualmente
+  ⇒ CANDIDATO A FORWARD (Estágio 2), entra na fila atrás do DONCHIAN-A.
+  Qualquer resultado abaixo disso ⇒ a frente KIS se esgota NESTA FORMA e o
+  próximo passo é a varredura B (RSI como teto + extensão do preço).
+  NÃO se ajusta célula nem lista de tokens depois de ver o hold-out. Se o
+  resultado for ruim e vier a tentação de "testar só mais uma célula", isso
+  seria queimar a última amostra limpa da família inteira.
+  
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
