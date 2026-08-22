@@ -1060,6 +1060,29 @@ RESSALVA DE PODER: 66 trades é amostra pequena; isto não é rejeição forte d
 sinal, é o cumprimento de um critério pré-comprometido. Registrado para que
 ninguém releia daqui a seis meses como "provado que não funciona".
 
+## 2026-08-22 — TRAVA: superfície de importação de keepitsimple congelada
+
+`shadow/kis_regime.py` (coletor forward do KIS+REGIME) roda em produção
+importando de `backtest/keepitsimple.py`: **WARMUP, states, _alvo_extremos,
+_adx**. Esses quatro passam a ser superfície pública: assinatura, valor e
+comportamento padrão não mudam.
+
+Variação de par de EMA vai em **módulo novo**, ou como **argumento opcional com
+default idêntico ao de hoje (8, 21)** — nunca alterando o que a chamada sem
+argumentos extras devolve.
+
+Cadeado: `tests/test_trava_superficie_kis.py`. Golden byte-idêntico (string +
+sha256) para `states` e `_alvo_extremos`, tolerância 1e-12 nos floats do `_adx`,
+e guarda de assinatura que reprova parâmetro novo sem default.
+
+Nota de método, porque a primeira versão do cadeado era falsa: a série trending
+óbvia NÃO discrimina ±1 no período — `states(closes)` com EMA_FAST=9 devolvia o
+mesmo golden, e o teste passava. A série final tem 78 barras construídas para
+cair dentro das frestas entre as EMAs (close entre EMA8 e EMA9; EMA8 entre EMA21
+e EMA22), e o próprio arquivo prova a discriminação: trocar (8,21) por
+(7,21)/(9,21)/(8,20)/(8,22) muda 8/55/12/10 barras. Um cadeado que não foi
+testado contra a mutação que ele deveria pegar não é cadeado.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de

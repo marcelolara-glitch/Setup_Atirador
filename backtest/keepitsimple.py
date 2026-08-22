@@ -4,6 +4,13 @@
 # evento com bar_ts=tss[i], espacamento por direcao em TEMPO, direcao "LONG"/
 # "SHORT". Zero parametro configuravel: 8/21/13/21x1.3 sao pre-registro.
 # stdlib puro (sem pandas/pandas_ta) -> coleta e roda no sandbox.
+#
+# TRAVA (22/08): WARMUP, states, _alvo_extremos e _adx sao importados por
+# shadow/kis_regime.py, que roda em PRODUCAO. Assinatura, valor e
+# comportamento PADRAO desses quatro NAO mudam. Par de EMA variavel vai em
+# modulo NOVO, ou como argumento OPCIONAL com default identico ao de hoje
+# (8, 21). O cadeado e tests/test_trava_superficie_kis.py — se ele falhar,
+# desfaz-se a mudanca, nao o teste.
 from __future__ import annotations
 
 EMA_FAST, EMA_SLOW = 8, 21
