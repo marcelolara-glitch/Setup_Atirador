@@ -76,8 +76,8 @@ ATR_LEN = 14                    # ATR de Wilder por barra, denominador da rampa
 INCL_LOOKBACK = 5               # barras entre as duas leituras da EMA21
 # GRADE FECHADA, definida no briefing e NAO ajustavel depois do fato: 1 celula
 # de controle (sem filtro) + 4 limiares x 4 pisos de ADX.
-LIMIARES = (0.00, 0.01, 0.02, 0.04)   # 0.00 desliga a rampa: ADX PURO
-ADX_MINS = (0, 15, 20, 25)
+LIMIARES = (0.00, 0.01, 0.02, 0.03)   # 0.00 desliga a rampa: ADX PURO
+ADX_MINS = (0, 11, 14, 17)   # 20 e penhasco: retencao 82% -> 50%
 GRADE = [(0.0, 0)] + [(l, a) for l in LIMIARES for a in ADX_MINS
                       if not (l == 0.0 and a == 0)]   # 16: (0, 0) uma so vez
 
