@@ -33,16 +33,16 @@ def _c(h: float, l: float, c: float, o: float = None) -> dict:
 
 # ------------------------------------------------------------ grade fechada
 
-def test_grade_tem_17_celulas_com_um_unico_controle():
-    assert len(GRADE) == 17
+def test_grade_tem_16_celulas_com_um_unico_controle():
+    assert len(GRADE) == 16
     assert GRADE[0] == (0.0, 0)                     # controle: sem filtro
     assert GRADE.count((0.0, 0)) == 1
-    assert set(GRADE[1:]) == {(l, a) for l in LIMIARES for a in ADX_MINS}
+    assert set(GRADE) == {(l, a) for l in LIMIARES for a in ADX_MINS}
     assert len(set(GRADE)) == len(GRADE)
 
 
 def test_grade_e_a_do_briefing():
-    assert LIMIARES == (0.05, 0.10, 0.15, 0.20)
+    assert LIMIARES == (0.00, 0.01, 0.02, 0.04)
     assert ADX_MINS == (0, 15, 20, 25)
 
 

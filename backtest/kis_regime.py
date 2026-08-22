@@ -47,8 +47,8 @@
 # reporta max|dif|, que precisa dar 0.00e+00.
 #
 # MEMORIA: mesma disciplina do kis_trail (a VM tem 956 MiB TOTAIS com o cron na
-# mesma maquina). As 17 celulas saem de UMA passada por evento e so escalares
-# sobrevivem — aqui, 2 floats + 1 inteiro de 17 bits por trade, porque a SAIDA
+# mesma maquina). As 16 celulas saem de UMA passada por evento e so escalares
+# sobrevivem — aqui, 2 floats + 1 inteiro de 16 bits por trade, porque a SAIDA
 # nao muda entre celulas: o retorno do trade e um so, muda a filiacao. O teto de
 # RSS e checado a cada simbolo e ABORTA antes de estourar.
 #
@@ -76,9 +76,10 @@ ATR_LEN = 14                    # ATR de Wilder por barra, denominador da rampa
 INCL_LOOKBACK = 5               # barras entre as duas leituras da EMA21
 # GRADE FECHADA, definida no briefing e NAO ajustavel depois do fato: 1 celula
 # de controle (sem filtro) + 4 limiares x 4 pisos de ADX.
-LIMIARES = (0.05, 0.10, 0.15, 0.20)
+LIMIARES = (0.00, 0.01, 0.02, 0.04)   # 0.00 desliga a rampa: ADX PURO
 ADX_MINS = (0, 15, 20, 25)
-GRADE = [(0.0, 0)] + [(l, a) for l in LIMIARES for a in ADX_MINS]  # 17 celulas
+GRADE = [(0.0, 0)] + [(l, a) for l in LIMIARES for a in ADX_MINS
+                      if not (l == 0.0 and a == 0)]   # 16: (0, 0) uma so vez
 
 
 def _atr_series(candles: list, n: int = ATR_LEN) -> list:
@@ -131,7 +132,7 @@ def passa(direction: str, incl, adx, limiar: float, adx_min: float) -> bool:
 
 
 def mascara(direction: str, incl, adx) -> int:
-    """Filiacao do sinal nas 17 celulas, num inteiro de 17 bits (bit k = passou
+    """Filiacao do sinal nas 16 celulas, num inteiro de 16 bits (bit k = passou
     na GRADE[k]). O bit 0 e o controle e vale SEMPRE 1."""
     return sum(1 << k for k, (lim, amin) in enumerate(GRADE)
                if passa(direction, incl, adx, lim, amin))
