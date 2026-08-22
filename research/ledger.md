@@ -1060,6 +1060,77 @@ RESSALVA DE PODER: 66 trades é amostra pequena; isto não é rejeição forte d
 sinal, é o cumprimento de um critério pré-comprometido. Registrado para que
 ninguém releia daqui a seis meses como "provado que não funciona".
 
+## 2026-08-22 — DONCHIAN-A: leitura honesta do forward (registrar ANTES do fechamento)
+
+ΣR +36,08 acumulado. MAS a decomposição desmonta a leitura otimista:
+  20/07 a 18/08 (30 dias): 37 trades,  2 wins, ΣR -19,92
+  19/08 a 22/08 (4 dias):  24 trades, 16 wins, ΣR +56,00
+16 das 18 vitórias em QUATRO dias consecutivos = UM episódio de mercado.
+Apenas 3 episódios de ganho em toda a amostra (29/07, 06/08, 19-22/08).
+
+É BETA, NÃO HABILIDADE — os 16 vencedores do episódio foram TODOS LONG.
+  no episódio:  LONG 16W/2L (+62R) | SHORT 0W/5L (-5R)
+  fora dele:    LONG 1W/12L (-8R)  | SHORT 1W/20L/4E (-12,92R)
+Amostra inteira: LONG 17W/14L (55%, +54R) | SHORT 1W/25L (3,8%, -17,92R).
+O lado SHORT tem 1 vitória em 26 fechados. Não é variância.
+
+FALHA DE DESENHO DA JANELA: 80 trades / 84 dias conta TRADES. O N efetivo de
+um seguidor de tendência são EPISÓDIOS. Em 34 dias houve UM, unidirecional.
+Fechar em outubro com 2 episódios NÃO produzirá veredito — produzirá esta
+mesma discussão. Registrado agora para não virar racionalização depois.
+VIGIA segue rodando (custo zero). O veredito de outubro deve ser declarado
+INCONCLUSIVO POR CONTAGEM DE EPISÓDIOS, salvo aparecer uma queda forte que
+teste o lado short.
+
+CLAUDE ERROU DUAS VEZES NESTA ANÁLISE: em 09/08 registrou "foi o falso-positivo
+dos 22%"; em 22/08 leu a virada como "a estratégia funcionou". Marcelo apontou
+a concentração no cisne e estava certo nas duas vezes. Padrão: Claude reage ao
+número mais recente em vez de decompor primeiro.
+
+## 2026-08-22 — ROADMAP DE EXPLORAÇÃO (registro de caminhos abertos)
+
+CORREÇÃO: o hold-out do KIS (-769 bps) é PROVISÓRIO, não veredito. A regra de
+borda (48 barras) e a exclusão por hold removeram da medição as entradas a
+partir de ~13/08 — o episódio de 19-22/08 está majoritariamente AUSENTE.
+Rerodar em ~05/09 com o store estendido. O critério travado em 21/08 continua
+valendo; só será aplicado sobre dados completos.
+
+EIXOS ABERTOS, em ordem de prioridade e com justificativa:
+
+1. HORIZONTE DO SINAL em 4h — EMA (8,21) controle | (13,34) | (21,55) | (34,89)
+   Por quê primeiro: dados prontos, uma constante, e testa diretamente a
+   hipótese levantada pelo contraste Donchian (canal 20d, capturou a alta) vs
+   KIS 8/21 (girou a cada 3 dias e foi picotado dentro dela).
+
+2. TIMEFRAME DIÁRIO — mesma hipótese por outro caminho. Exige verificar
+   cobertura no store; se não houver, coletar. Menos trades, custo relativo
+   menor por trade.
+
+3. LONG-ONLY — no shadow do DONCHIAN-A o lado SHORT tem 1 vitória em 26
+   fechados (3,8%). Se o mesmo padrão aparecer no KIS, desligar SHORT é uma
+   linha de código. ATENÇÃO: seria escolha PÓS-HOC; precisa de pré-registro
+   próprio e do hold-out para valer.
+
+4. TIMEFRAMES MENORES (1h, 15m) — [Provável] piores: mais trades, e a 5 bps
+   por perna o custo domina. Testar por último, e mais para fechar a questão
+   do que por expectativa.
+
+5. VARREDURA B (RSI como teto + extensão do preço) — pré-declarada em 20/08,
+   segue disponível. Rebaixada de prioridade: é mais um filtro de ENTRADA
+   sobre um sinal cuja escala de tempo pode ser o problema real.
+
+6. REVERSÃO À MÉDIA — única classe complementar nunca testada em 13 primárias.
+   Reaproveita o portão de regime invertido (entrar quando NÃO há tendência).
+
+COMPONENTE VALIDADO E REUTILIZÁVEL: o portão de regime (inclinação EMA21 >=
+0.02 ATR/barra + ADX(13) >= 11) melhorou +3.393 bps em dado virgem. É o único
+componente da campanha que sobreviveu fora da amostra de calibração. Aplicável
+a qualquer sinal futuro, não pertence ao KIS.
+
+REGRA DE CONDUTA: um eixo por vez. Nunca dois simultâneos. Cada rodada com
+grade fechada antes, célula de controle explícita, e leitura por platô — nunca
+por pico.
+
 ## 2026-08-22 — TRAVA: superfície de importação de keepitsimple congelada
 
 `shadow/kis_regime.py` (coletor forward do KIS+REGIME) roda em produção
@@ -1082,6 +1153,33 @@ cair dentro das frestas entre as EMAs (close entre EMA8 e EMA9; EMA8 entre EMA21
 e EMA22), e o próprio arquivo prova a discriminação: trocar (8,21) por
 (7,21)/(9,21)/(8,20)/(8,22) muda 8/55/12/10 barras. Um cadeado que não foi
 testado contra a mutação que ele deveria pegar não é cadeado.
+
+## TRAVA (adendo) — fechar a lacuna registrada em 22/08
+A checagem por AST hoje assere o CONJUNTO de nomes importados de
+backtest.keepitsimple por shadow/kis_regime.py. Ela NÃO impede que o coletor
+passe a importar o detector de um módulo NOVO.
+Estender a checagem para uma LISTA BRANCA de módulos-fonte: shadow/kis_regime.py
+só pode importar detector/portão de {backtest.keepitsimple, backtest.kis_regime}.
+Qualquer outra origem reprova o teste e exige reapontar a trava de propósito.
+Vale para o módulo novo de horizonte: ele NÃO entra na lista branca.
+
+FECHADO em 22/08 (mesmo PR da trava). `_origens_de` extrai por AST todo módulo
+de primeira parte importado por `shadow/kis_regime.py` — inclusive os lazy
+dentro de função — usando `sys.stdlib_module_names` para separar stdlib (lista
+do interpretador, não uma lista minha, que envelheceria). Lista branca de sinal:
+{backtest.keepitsimple, backtest.kis_regime}; infra do shadow
+({shadow.donchian_a, shadow.vigia}) é permitida à parte porque não é detector.
+Import relativo reprova, para a origem nunca ficar ambígua. Alargar a lista
+exige editar a asserção — que é o "reapontar de propósito".
+Mutação que confirma: trocar a origem do detector para `backtest.kis_horizonte`
+MANTENDO os quatro nomes reprova 3 testes; origem nova de primeira parte
+reprova 3; import relativo reprova 2.
+
+CORREÇÃO APLICADA no mesmo PR: o docstring do coletor e a linha do [VIGIA]
+diziam "hold-out REPROVADO". Com o registro de 22/08 isso passou a afirmar
+veredito onde há número provisório. Passaram a dizer "-769 bps (PROVISÓRIO,
+remedição ~05/09)", sem afrouxar o "não promoção".
+
 
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.

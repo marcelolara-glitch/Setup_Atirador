@@ -206,7 +206,9 @@ def _ms(day, hour):
 def test_bloco_cabecalho_e_disclaimer(tmp_path):
     msg = kr.build_block(_seed_bloco(tmp_path), NOW)
     assert "[VIGIA] KIS+REGIME" in msg and DAY in msg
-    assert "COLETOR" in msg and "REPROVADO" in msg and "SEM stop" in msg
+    assert "COLETOR" in msg and "-769 bps" in msg and "SEM stop" in msg
+    # O numero e PROVISORIO (ledger 22/08): a linha nao pode afirmar veredito.
+    assert "PROVISÓRIO" in msg and "REPROVADO" not in msg
 
 
 def test_bloco_liquido_desconta_dois_takers(tmp_path):

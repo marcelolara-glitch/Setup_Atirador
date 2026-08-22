@@ -1,9 +1,13 @@
 # shadow/kis_regime.py — COLETOR forward do kis_extremos + PORTAO DE REGIME.
-# ISTO NAO E PROMOCAO: a celula congelada (limiar 0.02 / ADX 11, 6 tokens) foi
-# REPROVADA no hold-out de 65 dias — -769 bps em 66 trades, 1 de 6 tokens
-# positivo, contra criterio travado ANTES do numero (ledger 21/08). O SINAL esta
-# morto pelo criterio; o que sobreviveu foi o PORTAO (-769 contra -4.162 bps do
-# controle sem filtro, em dado virgem), e portao nao se mede sozinho. Este shadow
+# ISTO NAO E PROMOCAO: a celula congelada (limiar 0.02 / ADX 11, 6 tokens) levou
+# -769 bps em 66 trades no hold-out de 65 dias, 1 de 6 tokens positivo, contra
+# criterio travado ANTES do numero (ledger 21/08). Numero PROVISORIO (ledger
+# 22/08): a regra de borda tirou da medicao as entradas a partir de ~13/08, e a
+# remedicao sai em ~05/09 com o store estendido — o criterio de 21/08 continua
+# valendo, mas so se aplica sobre dado completo. Nem reprovado em definitivo,
+# nem aprovado: por isso COLETOR. O que ja sobreviveu fora da amostra de
+# calibracao foi o PORTAO (-769 contra -4.162 bps do controle sem filtro), e
+# portao nao se mede sozinho — precisa de um sinal carregando ele. Este shadow
 # existe para ACUMULAR TRADES REAIS, nao porque a estrategia foi aprovada.
 # SEM STOP, SEM ALVO, SEM CAP DE TEMPO: posicao sempre-no-mercado, so inverte —
 # a cauda de perda de um trade e ILIMITADA. COLETOR DE DADOS, NAO desenho
@@ -179,8 +183,8 @@ def build_block(conn, now: datetime) -> str:
         return (f"  {t['symbol']} {t['direction']} {t['status']} "
                 f"{_fmt_bps(_liq(t))} bps")
     L = [f"🧪 <b>[VIGIA] KIS+REGIME</b> — {day} (UTC)", "",
-         "  ⚠️ COLETOR: hold-out REPROVADO (-769 bps, 21/08) e SEM stop (cauda "
-         "ilimitada). Observação, não promoção.",
+         "  ⚠️ COLETOR: hold-out -769 bps (PROVISÓRIO, remedição ~05/09) e SEM "
+         "stop (cauda ilimitada). Observação, não promoção.",
          f"<b>ACUMULADO</b> · dia {obs} · fechados {len(res)}",
          f"  WIN {wins} · LOSS {len(res) - wins} · Σlíq "
          f"{_fmt_bps(sum(lg) + sum(sh))} bps (2×{TAKER_FEE_BPS:.0f} taker; "

@@ -10,6 +10,13 @@ Este arquivo e o cadeado. Se um teste daqui falhar, a mudanca quebra o coletor
 em producao: nao se conserta o teste, se desfaz a mudanca (ou se move a
 variacao para modulo novo).
 
+ADENDO (ledger 22/08) — a checagem de nomes nao impedia o coletor de trocar a
+ORIGEM: importar o detector de um modulo NOVO passava batido. Fechado por LISTA
+BRANCA de fontes: detector e portao de shadow/kis_regime.py so podem vir de
+{backtest.keepitsimple, backtest.kis_regime}. Qualquer outra origem de primeira
+parte reprova. O modulo novo de horizonte (EMA 13/34, 21/55, 34/89) NAO entra na
+lista — quando ele existir, quem o consumir e outro coletor, com trava propria.
+
 A serie do golden nao e decorativa. As 78 primeiras barras sao aritmetica
 simples e cobrem os 5 estados; as 78 seguintes foram CONSTRUIDAS barra a barra
 para cair DENTRO das frestas entre as EMAs (close entre EMA8 e EMA9; EMA8 entre
@@ -31,6 +38,10 @@ from backtest import keepitsimple as k
 
 ROOT = Path(__file__).resolve().parents[1]
 CONGELADOS = ("WARMUP", "states", "_alvo_extremos", "_adx")
+# LISTA BRANCA (adendo 22/08). De onde o coletor pode tirar detector e portao:
+FONTES_SINAL = {"backtest.keepitsimple", "backtest.kis_regime"}
+# Infra do proprio shadow (DB, fetch, formatadores do [VIGIA]) — nao e sinal.
+FONTES_INFRA = {"shadow.donchian_a", "shadow.vigia"}
 
 # Cauda construida (ver docstring): fresta entre EMA8/EMA9 e entre EMA21/EMA22.
 _CAUDA = [
@@ -212,3 +223,51 @@ def test_kis_regime_importa_exatamente_a_lista_congelada():
              if isinstance(no, ast.ImportFrom)
              and no.module == "backtest.keepitsimple" for a in no.names}
     assert nomes == set(CONGELADOS)
+
+
+def _origens_de(rel: str) -> set:
+    """Todo modulo de PRIMEIRA PARTE importado por `rel`, inclusive os lazy
+    dentro de funcao (ast.walk ve o arquivo inteiro). Stdlib fica de fora pela
+    lista oficial do interpretador — nao por uma lista minha, que envelheceria."""
+    import sys
+    arv = ast.parse((ROOT / rel).read_text())
+    fora = set()
+    for no in ast.walk(arv):
+        if isinstance(no, ast.ImportFrom):
+            assert no.level == 0, f"{rel}: import relativo ({no.module}) proibido"
+            mods = [no.module]
+        elif isinstance(no, ast.Import):
+            mods = [a.name for a in no.names]
+        else:
+            continue
+        for m in mods:
+            if m and m.split(".")[0] not in sys.stdlib_module_names:
+                fora.add(m)
+    return fora
+
+
+def test_lista_branca_e_exatamente_estas_duas_fontes():
+    # Alargar a lista exige EDITAR esta linha — que e o "reapontar a trava de
+    # proposito" do adendo. Nunca acontece por acidente num import solto.
+    assert FONTES_SINAL == {"backtest.keepitsimple", "backtest.kis_regime"}
+
+
+def test_kis_regime_nao_importa_fonte_fora_da_lista_branca():
+    fora = _origens_de("shadow/kis_regime.py") - FONTES_SINAL - FONTES_INFRA
+    assert not fora, f"origem fora da lista branca: {sorted(fora)}"
+
+
+def test_kis_regime_importa_de_backtest_so_a_lista_branca():
+    # O caso que o adendo mira: detector vindo de um modulo NOVO de horizonte
+    # (backtest.kis_horizonte, p.ex.) reprova aqui, mesmo com os nomes iguais.
+    de_backtest = {m for m in _origens_de("shadow/kis_regime.py")
+                   if m.split(".")[0] == "backtest"}
+    assert de_backtest == FONTES_SINAL
+
+
+def test_portao_vem_de_kis_regime_da_bancada():
+    arv = ast.parse((ROOT / "shadow" / "kis_regime.py").read_text())
+    nomes = {a.name for no in ast.walk(arv)
+             if isinstance(no, ast.ImportFrom)
+             and no.module == "backtest.kis_regime" for a in no.names}
+    assert nomes == {"inclinacoes", "passa"}
