@@ -42,7 +42,10 @@ class SetupSpec:
             adaptador que os interpreta, não o schema.
         direcoes: direções permitidas.
         custo_bps_por_perna: custo por perna em bps, para o pnl líquido.
-        mode: ``"shadow"`` | ``"live"``.
+        mode: ``"shadow"`` | ``"live"`` | ``"backtest"``. Não é rótulo: o
+            adaptador `reverse` lê este campo para decidir se pode sair no
+            preço da barra da inversão (só no ``backtest``, onde não há
+            execução a simular) ou no da barra corrente (todo o resto).
         estado_ciclo: onde o setup está no ciclo (``"proposto"``,
             ``"em_bancada"``, ``"promovido"``, ``"arquivado"``).
         aviso: ressalva conhecida que acompanha qualquer leitura do resultado.

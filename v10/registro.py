@@ -11,13 +11,14 @@ A instância em produção de cada shadow NÃO muda: cron, módulo e banco segue
 como estão. O v10 roda em paralelo, no `trades_v10`, e no caso do DONCHIAN-A só
 LÊ o banco do shadow — para provar que reproduz o histórico dele barra a barra.
 
-DIFERENÇA CONHECIDA (KIS+REGIME): o shadow fecha a posição comparando o alvo
-VIGENTE na última barra, então uma run perdida ATRASA a saída para a barra
-seguinte. O adaptador `reverse` fecha na barra em que o alvo de fato inverteu.
-Nas runs completas os dois coincidem; num buraco de cobertura, o v10 sai antes
-e mais barato. Não é bug de nenhum dos dois — é o shadow medindo o que o cron
-entregou e o v10 medindo o desenho. Está dito aqui para não virar surpresa
-quando os dois números forem comparados.
+DIFERENÇA CONHECIDA (KIS+REGIME) — RESOLVIDA no PR-C: o shadow fecha a posição
+comparando o alvo VIGENTE na última barra, então uma run perdida ATRASA a saída
+para a barra seguinte. O `reverse` DETECTA a inversão na barra em que ela de
+fato ocorreu, mas em `mode="shadow"`/`"live"` SAI no close da barra corrente —
+o mesmo preço que o shadow consegue, porque é o único que ainda existe. Os dois
+números voltam a ser comparáveis. O preço da barra da inversão continua gravado
+como `preco_ideal` em `exit_state_json`, ao lado do `preco_real`: a diferença
+entre eles é o custo da run perdida, medido em vez de suposto.
 """
 
 from __future__ import annotations

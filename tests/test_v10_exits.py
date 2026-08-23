@@ -219,17 +219,73 @@ def test_bracket_abrir_nao_inventa_coluna_de_saida():
 
 # --- reverse: valores fechados a mao -----------------------------------------
 def test_reverse_fecha_quando_o_alvo_inverte():
+    # Inversao na ULTIMA barra processada (run em dia): ideal == real, atraso 0.
     sp = _spec("reverse")
     est = _abre(Reverse, sp, _plano())
     novo, status, preco = Reverse.avaliar(sp, est, [
         _v(1, 105.0, 99.0, close=105.0, alvo=1),         # segue LONG
         _v(2, 103.0, 90.0, close=98.0, alvo=-1),         # inverteu -> fecha
-        _v(3, 200.0, 1.0, close=150.0, alvo=-1),         # nunca chega aqui
     ])
     assert (status, preco) == ("REVERTIDO", 98.0)
-    assert novo["exit_state"]["alvo_saida"] == -1
-    assert novo["exit_state"]["max_runup"] == 5.0        # (105-100)/100
-    assert novo["exit_state"]["max_drawdown"] == 10.0    # (100-90)/100
+    st = novo["exit_state"]
+    assert st["alvo_saida"] == -1
+    assert (st["preco_ideal"], st["preco_real"], st["barras_atraso"]) == (
+        98.0, 98.0, 0)
+    assert st["max_runup"] == 5.0                        # (105-100)/100
+    assert st["max_drawdown"] == 10.0                    # (100-90)/100
+
+
+# --- reverse: saida retroativa (run perdida) ---------------------------------
+def test_reverse_run_perdida_sai_na_barra_corrente_nao_na_da_inversao():
+    # 3 barras varridas de uma vez: a inversao ficou 2 barras para tras. Sair no
+    # close dela seria vender num preco que ja passou — look-ahead. O trade sai
+    # no close da barra CORRENTE, e os dois precos ficam gravados.
+    sp = _spec("reverse")                                # mode default: shadow
+    est = _abre(Reverse, sp, _plano())
+    novo, status, preco = Reverse.avaliar(sp, est, [
+        _v(1, 103.0, 99.0, close=102.0, alvo=-1),        # inverteu AQUI
+        _v(2, 102.0, 95.0, close=96.0, alvo=-1),
+        _v(3, 97.0, 90.0, close=91.0, alvo=-1),          # barra corrente
+    ])
+    st = novo["exit_state"]
+    assert status == "REVERTIDO"
+    assert (st["preco_ideal"], st["preco_real"]) == (102.0, 91.0)
+    assert st["preco_real"] != st["preco_ideal"]
+    assert preco == st["preco_real"] == 91.0             # o pnl usa o REAL
+    assert st["barras_atraso"] == 2
+    assert st["exit_ts_ms"] == 3 * M15                   # carimbo da barra corrente
+    # a posicao seguiu nas maos ate a barra 3: o fundo 90 conta no drawdown.
+    assert st["max_drawdown"] == 10.0
+
+
+def test_reverse_backtest_mantem_a_barra_da_inversao():
+    # No backtest o objeto de estudo e o DESENHO: nao ha execucao a simular, e
+    # a saida fica onde a regra disse. Os dois precos continuam gravados.
+    sp = _spec("reverse")
+    sp.mode = "backtest"
+    est = _abre(Reverse, sp, _plano())
+    novo, status, preco = Reverse.avaliar(sp, est, [
+        _v(1, 103.0, 99.0, close=102.0, alvo=-1),        # inverteu AQUI
+        _v(2, 102.0, 95.0, close=96.0, alvo=-1),
+        _v(3, 97.0, 90.0, close=91.0, alvo=-1),
+    ])
+    st = novo["exit_state"]
+    assert (status, preco) == ("REVERTIDO", 102.0)
+    assert (st["preco_ideal"], st["preco_real"]) == (102.0, 91.0)
+    assert st["exit_ts_ms"] == 1 * M15                   # carimbo da inversao
+    assert st["max_drawdown"] == 1.0                     # so a barra 1: fundo 99
+
+
+def test_reverse_custo_da_run_perdida_e_a_diferenca_dos_dois_precos():
+    # O numero que ninguem tinha: quanto custou o buraco de cobertura.
+    sp = _spec("reverse")
+    est = _abre(Reverse, sp, _plano())
+    novo, _, _ = Reverse.avaliar(sp, est, [
+        _v(1, 103.0, 99.0, close=102.0, alvo=-1),
+        _v(2, 97.0, 90.0, close=91.0, alvo=-1),
+    ])
+    st = novo["exit_state"]
+    assert st["preco_real"] - st["preco_ideal"] == -11.0  # LONG: 11 de preco perdido
 
 
 def test_reverse_alvo_neutro_nao_fecha():
