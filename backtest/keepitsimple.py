@@ -90,12 +90,18 @@ def _descritivos(candles: list, closes: list) -> tuple:
     return forca, bbw
 
 
-def states(closes: list) -> list:
+def states(closes: list, ema_fast: int = EMA_FAST,
+           ema_slow: int = EMA_SLOW) -> list:
     """Estado por barra a partir de EMA(8)=curta e EMA(21)=longa:
     VERDE close>curta e curta>longa | AZUL close<curta e curta>longa |
     ROXO close>curta e curta<longa  | VERM close<curta e curta<longa |
-    CINZA caso contrario (empate exato de float, ou warmup da EMA)."""
-    fast, slow = _ema(closes, EMA_FAST), _ema(closes, EMA_SLOW)
+    CINZA caso contrario (empate exato de float, ou warmup da EMA).
+
+    O par de EMAs e ARGUMENTO OPCIONAL com default 8/21, na forma que a TRAVA
+    de 22/08 autoriza: a chamada sem argumento extra segue byte-identica. Quem
+    passa valor explicito e a ficha do setup (`SetupSpec.detector_params`), pra
+    que o parametro esteja NO hash da configuracao e nao escondido aqui."""
+    fast, slow = _ema(closes, ema_fast), _ema(closes, ema_slow)
     out = []
     for i, c in enumerate(closes):
         f, s = fast[i], slow[i]
@@ -148,7 +154,7 @@ def keepitsimple_entries(candles: list, sep_bars: int, bar_ms: int) -> list:
     return out
 
 
-def _alvo_extremos(st: list) -> list:
+def _alvo_extremos(st: list, confirmacao: int = EXT_CONF) -> list:
     """Posicao-alvo por barra da regra "Extremos" (stop-and-reverse puro):
 
         barras_no_estado[i] = 1 se estado[i] != estado[i-1], senao +1
@@ -161,12 +167,15 @@ def _alvo_extremos(st: list) -> list:
     nao confirmado tambem carrega — e por isso que uma ida a AZUL e volta a
     VERDE nao gera segunda entrada, e que um extremo de 1 barra que reverte
     nao gera entrada nenhuma. alvo[0] = 0 por construcao (barras=1 < EXT_CONF,
-    e as primeiras barras sao CINZA de qualquer forma pelo warmup da EMA)."""
+    e as primeiras barras sao CINZA de qualquer forma pelo warmup da EMA).
+
+    `confirmacao` e OPCIONAL com default EXT_CONF (=2), mesma regra do par de
+    EMAs em `states`: sem argumento extra nada muda."""
     alvo, barras = [], 0
     for i, s in enumerate(st):
         barras = 1 if (i == 0 or s != st[i - 1]) else barras + 1
         prev = alvo[i - 1] if i else 0
-        if barras >= EXT_CONF and s in ("VERDE", "VERM"):
+        if barras >= confirmacao and s in ("VERDE", "VERM"):
             alvo.append(1 if s == "VERDE" else -1)
         else:
             alvo.append(prev)

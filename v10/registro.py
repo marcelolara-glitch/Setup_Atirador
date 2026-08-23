@@ -1,11 +1,21 @@
 """v10/registro.py — os dois setups do ciclo v10, declarados como ficha.
 
-Nada aqui é lógica nova. O detector e o portão de cada setup são IMPORTADOS do
-módulo que já roda em produção (`shadow/kis_regime.py`, `shadow/donchian_a.py`)
-e da bancada (`backtest/`). Reimplementar seria abrir espaço para o v10 divergir
+Nada aqui é lógica nova. O detector e o portão de cada setup são IMPORTADOS da
+bancada (`backtest/`) e, no caso do DONCHIAN-A, do módulo que roda em produção
+(`shadow/donchian_a.py`). Reimplementar seria abrir espaço para o v10 divergir
 em silêncio da instância que está medindo — o oposto do que este registro serve.
-As funções `detector_*` aqui são TRADUÇÃO: recebem velas, chamam o que já
-existe, devolvem o sinal no contrato do runner. Zero decisão própria.
+As funções `detector_*` aqui são TRADUÇÃO: recebem velas MAIS os parâmetros da
+ficha, chamam o que já existe, devolvem o sinal no contrato do runner. Zero
+decisão própria e — desde o PR-E — zero parâmetro próprio: nenhum número que
+mude o que o detector mede vive dentro dele. Todos saem de
+`SetupSpec.detector_params`, que é o que os põe dentro do `config_hash`.
+
+KIS+REGIME NÃO IMPORTA MAIS DO SHADOW. O cron de `shadow/kis_regime.py` foi
+desativado em 23/08; a máquina oficial não pode depender de um apêndice
+aposentado. A conta de `avaliar` foi para `backtest/kis_regime.py` — a bancada,
+que já era a dona do portão (`passa`) e da rampa (`inclinacoes`) e é stdlib
+puro. O shadow fica INTOCADO com a cópia dele, e um teste trava as duas contas
+uma contra a outra para que "cópia" nunca vire "divergência".
 
 A instância em produção de cada shadow NÃO muda: cron, módulo e banco seguem
 como estão. O v10 roda em paralelo, no `trades_v10`, e no caso do DONCHIAN-A só
@@ -23,17 +33,14 @@ entre eles é o custo da run perdida, medido em vez de suposto.
 
 from __future__ import annotations
 
-from backtest.keepitsimple import _alvo_extremos, states
-from backtest.kis_regime import passa
-from shadow.donchian_a import (BAR_MS, CTX_BARS, H_BARS, N, S_ATR, T_ATR,
-                               donchian_signal, wilder_atr)
+from backtest.kis_regime import alvos, avaliar, passa
+from shadow.donchian_a import (ATR_PERIOD, BAR_MS, CTX_BARS, H_BARS, N, S_ATR,
+                               T_ATR, donchian_signal, wilder_atr)
 from shadow.donchian_a import SYMBOLS as SYMBOLS_DONCHIAN
-from shadow.kis_regime import ADX_MIN, LIMIAR, MIN_BARS
-from shadow.kis_regime import SYMBOLS as SYMBOLS_KIS
-from shadow.kis_regime import avaliar as avaliar_kis
 from v10.spec import SetupSpec
 
-__all__ = ["ATIVOS", "DONCHIAN_A_4H", "KIS_REGIME_4H", "REGISTRO",
+__all__ = ["ATIVOS", "DONCHIAN_A_4H", "KIS_REGIME_4H", "PARAMS_DONCHIAN_A",
+           "PARAMS_KIS_REGIME", "REGISTRO", "SYMBOLS_KIS",
            "detector_donchian_a", "detector_kis_regime"]
 
 TF = "4H"          # barra no formato da API; o `tf` do shadow ("4h") é rótulo
@@ -41,26 +48,57 @@ TAKER_BPS = 5.0    # OKX perp taker não-VIP — mesmo valor de shadow/vigia.py:
 
 
 # --- KIS + REGIME ------------------------------------------------------------
-def detector_kis_regime(velas: list):
+# A CONFIGURAÇÃO do detector, por extenso e num lugar só. Célula congelada em
+# 21/08 (limiar 0.02 / ADX 11) mais os períodos que a compõem: EMA 8/21 e
+# confirmação de 2 barras vêm do `keepitsimple`, ATR 14 e ADX 13 da rampa e do
+# Wilder. Nenhum valor MUDA aqui — eles só saíram de dentro das funções e
+# entraram na ficha, que é o que os põe dentro do `config_hash`. Mexer em
+# qualquer um destes números passa a mudar o hash, e é exatamente esse o ponto:
+# a série de trades de uma configuração não se mistura com a de outra.
+PARAMS_KIS_REGIME = {"limiar": 0.02, "adx_min": 11, "ema_fast": 8,
+                     "ema_slow": 21, "atr_len": 14, "adx_len": 13,
+                     "confirmacao": 2}
+# Universo e warmup do coletor, verbatim de shadow/kis_regime.py:35,37 — agora
+# declarados aqui porque são campos da ficha (`symbols`, `warmup_barras`) e já
+# entravam no hash por conta própria. MIN_BARS: ADX(13) fecha em 2n-1=25, o
+# resto é folga para EMA21 + ATR14.
+SYMBOLS_KIS = ["ARBUSDT", "BNBUSDT", "BTCUSDT", "SUIUSDT", "TRXUSDT", "WLDUSDT"]
+MIN_BARS_KIS = 60
+
+
+def detector_kis_regime(velas: list, params: dict):
     """Inversão do alvo do keepitsimple, filtrada pelo portão de regime.
 
-    `avaliar` (shadow) devolve (alvo, direction, inclinação, ADX) e só põe
+    `avaliar` (bancada) devolve (alvo, direction, inclinação, ADX) e só põe
     `direction` na barra em que o alvo MUDOU; `passa` (bancada) é o portão, e
     warmup (None) VETA. Vetar não adia: a próxima entrada é a próxima inversão.
+
+    `params` é OBRIGATÓRIO e vem de `spec.detector_params`. Não há default: um
+    default aqui seria justamente o parâmetro fora do hash que este PR fecha.
     """
-    alvo, direction, incl, adx = avaliar_kis(velas)
-    if direction is None or not passa(direction, incl, adx, LIMIAR, ADX_MIN):
+    alvo, direction, incl, adx = avaliar(
+        velas, ema_fast=params["ema_fast"], ema_slow=params["ema_slow"],
+        confirmacao=params["confirmacao"], adx_len=params["adx_len"],
+        atr_len=params["atr_len"])
+    if direction is None or not passa(direction, incl, adx,
+                                      params["limiar"], params["adx_min"]):
         return None
     return {"direction": direction, "entry_price": velas[-1]["close"],
-            "evidence": {"inclinacao": incl, "adx": adx, "limiar": LIMIAR,
-                         "adx_min": ADX_MIN, "alvo": alvo,
+            "evidence": {"inclinacao": incl, "adx": adx,
+                         "limiar": params["limiar"],
+                         "adx_min": params["adx_min"], "alvo": alvo,
                          "close": velas[-1]["close"], "tf": TF}}
 
 
-def _anotar_kis_regime(velas: list) -> list:
+def _anotar_kis_regime(velas: list, params: dict) -> list:
     """Carimba o alvo vigente em cada vela — é o que o `reverse` lê para saber
-    que o detector mudou de lado. Cópia rasa: não muta a lista do chamador."""
-    alvo = _alvo_extremos(states([v["close"] for v in velas]))
+    que o detector mudou de lado. Cópia rasa: não muta a lista do chamador.
+
+    Os MESMOS períodos do detector, pela mesma ficha: se o alvo do anotador e o
+    do detector pudessem ser calculados com pares de EMA diferentes, a saída
+    inverteria num lugar em que a entrada nunca inverteu."""
+    alvo = alvos([v["close"] for v in velas], params["ema_fast"],
+                 params["ema_slow"], params["confirmacao"])
     return [dict(v, alvo=alvo[i]) for i, v in enumerate(velas)]
 
 
@@ -72,9 +110,10 @@ KIS_REGIME_4H = SetupSpec(
     tf=TF,
     cadencia_barras=1,
     symbols=list(SYMBOLS_KIS),
-    warmup_barras=MIN_BARS,
+    warmup_barras=MIN_BARS_KIS,
     exit_model="reverse",
     exit_params={},
+    detector_params=dict(PARAMS_KIS_REGIME),
     custo_bps_por_perna=TAKER_BPS,
     mode="shadow",
     estado_ciclo="reprovado_holdout",
@@ -86,27 +125,42 @@ KIS_REGIME_4H = SetupSpec(
 
 
 # --- DONCHIAN-A --------------------------------------------------------------
-def detector_donchian_a(velas: list):
+# O que era IMPLÍCITO no detector: canal de N=120 barras, ATR de Wilder de 14 e
+# a janela de contexto de 30 barras que alimenta esse ATR. Os valores continuam
+# vindo de `shadow/donchian_a.py`, que é a instância que está medindo a janela
+# pré-registrada — a ficha COPIA, não decide. `donchian_signal` lê o N dele
+# próprio (o shadow está congelado por sha256 e não recebe parâmetro), então a
+# igualdade dos dois é travada em teste: mexer aqui sem mexer lá muda o hash sem
+# mudar o comportamento, que seria a mentira exata que este campo existe para
+# impedir. O que é da SAÍDA (s_atr/t_atr/h_bars) fica em `exit_params`.
+PARAMS_DONCHIAN_A = {"n": N, "atr_period": ATR_PERIOD, "ctx_barras": CTX_BARS}
+
+
+def detector_donchian_a(velas: list, params: dict):
     """Rompimento do canal Donchian de N barras, com ATR de Wilder na entrada.
 
     Canal (`donchian_signal`) e ATR (`wilder_atr`) vêm do shadow. Empate não é
     sinal; ATR <= 0 anula o sinal — sem unidade de risco não há trade.
 
-    Uma coisa do shadow NÃO é replicada de propósito: o snapshot de best
-    bid/ask na evidência. É I/O ao vivo, e o runner não fala com a corretora.
+    Duas coisas do shadow NÃO são replicadas na evidência, de propósito: o
+    snapshot de best bid/ask (é I/O ao vivo, e o runner não fala com a
+    corretora) e o par `s_atr`/`t_atr`. Esses dois não são do detector — são da
+    SAÍDA, e já vão gravados em `exit_params_json` na MESMA linha. Repeti-los
+    aqui obrigaria o detector a ler configuração de saída de constante de
+    módulo, que é justamente o que a ficha veio desfazer.
     """
+    n, ctx = int(params["n"]), int(params["ctx_barras"])
     closes = [v["close"] for v in velas]
     direction = donchian_signal(closes)
     if direction is None:
         return None
-    atr = wilder_atr(velas[-CTX_BARS:])
+    atr = wilder_atr(velas[-ctx:], int(params["atr_period"]))
     if atr <= 0:
         return None
-    janela = closes[-(N + 1):-1]
+    janela = closes[-(n + 1):-1]
     return {"direction": direction, "entry_price": closes[-1], "atr_value": atr,
             "evidence": {"channel_high": max(janela), "channel_low": min(janela),
-                         "close": closes[-1], "atr": atr, "n": N,
-                         "s_atr": S_ATR, "t_atr": T_ATR, "tf": TF}}
+                         "close": closes[-1], "atr": atr, "n": n, "tf": TF}}
 
 
 DONCHIAN_A_4H = SetupSpec(
@@ -120,6 +174,7 @@ DONCHIAN_A_4H = SetupSpec(
     # h_bars é horizonte E espaçamento por direção — no shadow é o mesmo 48.
     exit_params={"s_atr": S_ATR, "t_atr": T_ATR, "h_bars": H_BARS,
                  "bar_ms": BAR_MS, "espacamento_barras": H_BARS},
+    detector_params=dict(PARAMS_DONCHIAN_A),
     custo_bps_por_perna=TAKER_BPS,
     mode="shadow",
     # NÃO EXECUTA. A ficha fica no registro — o relatório diário a lista, e ela

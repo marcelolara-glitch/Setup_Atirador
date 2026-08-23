@@ -23,13 +23,18 @@ runner. No DONCHIAN-A ele coincide com o horizonte `h_bars` de propósito.
 
 Contrato do detector: recebe as velas fechadas (crescentes) e devolve ``None``
 ou um sinal com ``direction`` e ``entry_price``; ``atr_value`` e ``evidence``
-são opcionais. Se o detector expuser um atributo ``anotar``, o runner o usa
-para carimbar as velas antes de entregá-las ao adaptador — é assim que o
-modelo `reverse` enxerga o alvo vigente sem que o runner saiba o que é alvo.
+são opcionais. Se o detector declarar um SEGUNDO parâmetro, o runner entrega
+nele o ``spec.detector_params`` — é por aqui que limiar e período saem de
+constante de módulo e passam a viver na ficha, dentro do ``config_hash``. Um
+detector de um parâmetro só continua sendo chamado como sempre. Se o detector
+expuser um atributo ``anotar``, o runner o usa para carimbar as velas antes de
+entregá-las ao adaptador (mesma regra de aridade) — é assim que o modelo
+`reverse` enxerga o alvo vigente sem que o runner saiba o que é alvo.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import sqlite3
@@ -59,6 +64,20 @@ def _pnl_pct(direction: str, entry: float, saida: float) -> float:
         return 0.0
     move = (saida - entry) if direction == "LONG" else (entry - saida)
     return move / float(entry) * 100.0
+
+
+def _chamar(fn, velas, params):
+    """Chama detector/anotador respeitando a aridade que ele declara.
+
+    Dois parâmetros: recebe `detector_params` da ficha. Um só: chamado como
+    sempre. A ficha é a ÚNICA fonte do parâmetro — não há default escondido
+    aqui —, e é por isso que mudar um limiar muda o ``config_hash``.
+    """
+    try:
+        n = len(inspect.signature(fn).parameters)
+    except (TypeError, ValueError):        # builtin/C sem assinatura legível
+        n = 1
+    return fn(velas, dict(params or {})) if n >= 2 else fn(velas)
 
 
 def _campo(sinal, nome, default=None):
@@ -116,7 +135,7 @@ def _abrir(spec, adap, conn, symbol, velas, bar_ms) -> int:
     cadencia = max(int(spec.cadencia_barras or 1), 1)
     if (bar_ts // bar_ms) % cadencia:
         return 0
-    sinal = spec.detector(velas)
+    sinal = _chamar(spec.detector, velas, getattr(spec, "detector_params", None))
     if not sinal:
         return 0
     direction = _campo(sinal, "direction")
@@ -169,6 +188,7 @@ def rodar(spec, conn, agora_ms, velas_fn=None, log=None) -> dict:
     warmup = int(spec.warmup_barras)
     n = max(warmup + FOLGA_BARRAS, 2)
     anotar = getattr(spec.detector, "anotar", None)
+    det_params = getattr(spec, "detector_params", None) or {}
     r = {"setup_id": spec.setup_id, "config_hash": spec.config_hash,
          "ok": 0, "falhas": 0, "abertos": 0, "fechados": 0, "falha_symbols": []}
     for symbol in spec.symbols:
@@ -179,7 +199,7 @@ def rodar(spec, conn, agora_ms, velas_fn=None, log=None) -> dict:
             if len(velas) < warmup:
                 raise ValueError(f"barras insuficientes: {len(velas)} < {warmup}")
             if anotar is not None:
-                velas = anotar(velas)
+                velas = _chamar(anotar, velas, det_params)
             r["fechados"] += _atualizar(spec, adap, conn, symbol, velas, agora_ms)
             r["abertos"] += _abrir(spec, adap, conn, symbol, velas, bar_ms)
             r["ok"] += 1

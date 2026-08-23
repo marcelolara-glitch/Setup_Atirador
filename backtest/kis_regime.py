@@ -66,8 +66,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from backtest.keepitsimple import (EMA_SLOW, EXT_CAP, _adx,      # noqa: E402
-                                   _ema, extremos_entries)
+from backtest.keepitsimple import (ADX_LEN, EMA_FAST, EMA_SLOW,  # noqa: E402
+                                   EXT_CAP, EXT_CONF, _adx, _alvo_extremos,
+                                   _ema, extremos_entries, states)
 from backtest.kis_trail import (COST_BPS, MIN_TRADES,            # noqa: E402
                                 RSS_CEILING_MIB, _rss_mib, aprovada,
                                 metricas, trail_exit)
@@ -101,18 +102,23 @@ def _atr_series(candles: list, n: int = ATR_LEN) -> list:
     return out
 
 
-def inclinacoes(candles: list, closes: list) -> list:
+def inclinacoes(candles: list, closes: list, atr_len: int = ATR_LEN,
+                ema_slow: int = EMA_SLOW,
+                lookback: int = INCL_LOOKBACK) -> list:
     """inclinacao[i] = (EMA21[i] - EMA21[i-5]) / 5 / ATR14[i]: deslocamento da
     EMA longa POR BARRA, medido em ATRs da propria barra i. Adimensional, entao
     compara entre simbolos e entre epocas sem renormalizar nada. None enquanto
-    EMA21[i-5] ou ATR14[i] nao existirem, ou se ATR14[i] <= 0."""
-    ema, atr = _ema(closes, EMA_SLOW), _atr_series(candles)
+    EMA21[i-5] ou ATR14[i] nao existirem, ou se ATR14[i] <= 0.
+
+    Os tres periodos sao OPCIONAIS com o default de hoje: a varredura da grade
+    chama sem argumento e nada muda; quem passa explicito e a ficha do setup."""
+    ema, atr = _ema(closes, ema_slow), _atr_series(candles, atr_len)
     out = [None] * len(closes)
-    for i in range(INCL_LOOKBACK, len(closes)):
-        ini, fim, a = ema[i - INCL_LOOKBACK], ema[i], atr[i]
+    for i in range(lookback, len(closes)):
+        ini, fim, a = ema[i - lookback], ema[i], atr[i]
         if ini is None or fim is None or a is None or a <= 0:
             continue
-        out[i] = (fim - ini) / INCL_LOOKBACK / a
+        out[i] = (fim - ini) / lookback / a
     return out
 
 
@@ -136,6 +142,43 @@ def mascara(direction: str, incl, adx) -> int:
     na GRADE[k]). O bit 0 e o controle e vale SEMPRE 1."""
     return sum(1 << k for k, (lim, amin) in enumerate(GRADE)
                if passa(direction, incl, adx, lim, amin))
+
+
+def alvos(closes: list, ema_fast: int = EMA_FAST, ema_slow: int = EMA_SLOW,
+          confirmacao: int = EXT_CONF) -> list:
+    """Serie do alvo vigente por barra — `_alvo_extremos` sobre `states`, com os
+    tres periodos EXPLICITOS. Existe para que quem precisa do alvo (o modelo de
+    saida `reverse` do v10) nao tenha que reproduzir a composicao a mao."""
+    return _alvo_extremos(states(closes, ema_fast, ema_slow), confirmacao)
+
+
+def avaliar(candles: list, ema_fast: int = EMA_FAST, ema_slow: int = EMA_SLOW,
+            confirmacao: int = EXT_CONF, adx_len: int = ADX_LEN,
+            atr_len: int = ATR_LEN,
+            incl_lookback: int = INCL_LOOKBACK) -> tuple:
+    """ULTIMA barra fechada -> (alvo_vigente, direction, incl, adx). `alvo` sai
+    de `alvos` (EMA 8/21, confirmacao >= 2 barras); `direction` so e nao-None
+    quando o alvo MUDOU nesta barra — a inversao e a unica entrada do detector.
+    O portao (`passa`) NAO e aplicado aqui: quem entra decide isso.
+
+    MESMA conta de `shadow/kis_regime.avaliar`, agora na bancada e com os
+    periodos como PARAMETRO. Motivo (adendo de 23/08): o cron do shadow foi
+    desativado, e a maquina oficial (v10) nao pode importar logica de um
+    apendice aposentado. O shadow fica intocado com a copia dele; a igualdade
+    das duas contas e travada por teste, nao por confianca. O warmup segue a
+    EMA longa (`WARMUP == EMA_SLOW` no keepitsimple), entao acompanha o
+    parametro em vez de ficar preso em 21."""
+    closes = [c["close"] for c in candles]
+    alvo = alvos(closes, ema_fast, ema_slow, confirmacao)
+    i = len(closes) - 1
+    if i < max(ema_slow, 1):
+        return 0, None, None, None
+    d = None
+    if alvo[i] != alvo[i - 1] and alvo[i] != 0:
+        d = "LONG" if alvo[i] > 0 else "SHORT"
+    return (alvo[i], d,
+            inclinacoes(candles, closes, atr_len, ema_slow, incl_lookback)[i],
+            _adx(candles, adx_len)[i])
 
 
 def celula(trades: list, k: int) -> list:
