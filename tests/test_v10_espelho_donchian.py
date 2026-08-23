@@ -22,6 +22,10 @@ senao abriria um trade que o historico nao tem. Antes da primeira linha de
 `shadow_runs` (a tabela nasceu depois dos primeiros trades) a grade volta a ser
 completa, porque ali nao ha registro de falha para reproduzir.
 
+AUSENCIA ESTRUTURAL. Simbolo delistado nao volta: `SEM_COBERTURA_ESTRUTURAL` os
+declara NOMINALMENTE, com a razao junto. Isentar COBERTURA nao isenta COMPARACAO
+— a guarda exige janela de resolucao inteira, senao a constante viraria tapete.
+
 SE DIVERGIR: o teste falha e imprime cada divergencia. NAO se ajusta o v10 para
 bater — a divergencia e o achado, e ela sobe para o Marcelo como esta.
 """
@@ -39,6 +43,8 @@ SHADOW_DB = ROOT / "journal" / "shadow_donchian_a.db"
 STORE_DB = ROOT / "backtest" / "candles_v9.db"
 TF_STORE = "4h"                                    # rotulo do candle_store
 FECHADOS = ("WIN", "LOSS", "EXPIRED")
+# Buraco IRRECUPERAVEL, nominal e com razao. Buraco de backfill nao entra aqui.
+SEM_COBERTURA_ESTRUTURAL = {"TONUSDT": "delistada da OKX 07/2026 (ledger)"}
 
 pytestmark = pytest.mark.skipif(
     not (SHADOW_DB.exists() and STORE_DB.exists()),
@@ -71,7 +77,7 @@ def replay():
     sombra = _abrir(SHADOW_DB)
     trades = sombra.execute(
         "SELECT symbol, direction, bar_ts_entry, expiry_bar_ts, status, "
-        "r_multiple FROM shadow_trades").fetchall()
+        "exit_ts, r_multiple FROM shadow_trades").fetchall()
     runs = [r["run_ts"] for r in sombra.execute("SELECT run_ts FROM shadow_runs")]
     sombra.close()
 
@@ -95,13 +101,18 @@ def replay():
     loja.close()
 
     inicio = grade[0] - SPEC.warmup_barras * BAR_MS
-    buracos = {}
-    for symbol, serie in series.items():
-        tss = {c["ts"] for c in serie}
-        faltando = [t for t in range(inicio, grade[-1] + BAR_MS, BAR_MS)
-                    if t not in tss]
-        if faltando:
-            buracos[symbol] = len(faltando)
+    presentes = {s: {c["ts"] for c in serie} for s, serie in series.items()}
+    cheia = range(inicio, grade[-1] + BAR_MS, BAR_MS)
+    faltas = {s: n for s, tss in presentes.items()
+              if (n := sum(1 for t in cheia if t not in tss))}
+    buracos = {s: n for s, n in faltas.items() if s not in SEM_COBERTURA_ESTRUTURAL}
+    isentos = {s: n for s, n in faltas.items() if s in SEM_COBERTURA_ESTRUTURAL}
+    # GUARDA: isencao vale para a JANELA, nunca para um trade — falta barra
+    dependentes = sorted(                      # entre entrada e saida, reprova
+        (t["symbol"], int(t["bar_ts_entry"])) for t in fechados
+        if t["symbol"] in isentos and not (t["exit_ts"] and set(range(
+            int(t["bar_ts_entry"]), int(t["exit_ts"]) + BAR_MS, BAR_MS)
+        ) <= presentes[t["symbol"]]))
 
     cursor = {"ms": 0}
 
@@ -129,11 +140,17 @@ def replay():
         "r_multiple": t["r_multiple"]} for t in fechados}
     resumo = {"grade": len(grade), "runs": len(runs), "fechados": len(fechados),
               "abertos_shadow": len(trades) - len(fechados),
-              "v10": len(obtido), "buracos": buracos}
+              "v10": len(obtido), "buracos": buracos, "isentos": isentos,
+              "dependentes": dependentes}
     print(f"\n[espelho] grade={resumo['grade']} barras "
           f"({len(barras_de_run)} de shadow_runs, {len(anteriores)} anteriores) | "
           f"shadow: {len(fechados)} fechados + {resumo['abertos_shadow']} abertos | "
           f"v10: {len(obtido)} trades | buracos no store: {buracos or 'nenhum'}")
+    nomes = ", ".join(f"{k} ({SEM_COBERTURA_ESTRUTURAL[k]}, {v} barras)"
+                      for k, v in sorted(isentos.items())) or "nenhum"
+    print(f"[espelho] cobertura: {len(presentes) - len(buracos) - len(isentos)} "
+          f"simbolos OK | isentos: {nomes} | trades comparados que dependeram "
+          f"de barra ausente: {len(dependentes)}")
     return esperado, obtido, resumo
 
 
@@ -144,6 +161,14 @@ def test_o_store_cobre_a_janela_inteira(replay):
     assert not resumo["buracos"], (
         f"candles_v9.db incompleto no 4h: {resumo['buracos']} — o replay nao "
         "pode ser julgado sobre dado faltante")
+
+
+def test_nenhum_trade_comparado_dependeu_de_barra_ausente(replay):
+    # Trade de isento resolvido sobre barra que falta = comparacao de ficcao.
+    _esp, _obt, resumo = replay
+    assert not resumo["dependentes"], (
+        f"{len(resumo['dependentes'])} trade(s) de simbolo isento resolvidos "
+        f"sobre barra ausente: {resumo['dependentes'][:10]}")
 
 
 def test_todo_trade_fechado_do_shadow_existe_no_v10(replay):
