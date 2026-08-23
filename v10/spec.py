@@ -37,7 +37,7 @@ class SetupSpec:
         symbols: universo do setup.
         warmup_barras: barras descartadas antes do primeiro sinal válido.
         exit_model: chave em :data:`v10.exits.ADAPTADORES`
-            (``"bracket_multi"`` | ``"reverse"``).
+            (``"bracket_multi"`` | ``"reverse"`` | ``"bracket_simples"``).
         exit_params: parâmetros do adaptador de saída. Formato livre — é o
             adaptador que os interpreta, não o schema.
         direcoes: direções permitidas.

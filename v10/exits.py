@@ -18,7 +18,8 @@ from typing import Any
 from config import TRADE_TIMEOUT_HOURS
 from risk import TradePlan, TradeState, update_trade_state
 
-__all__ = ["ADAPTADORES", "BracketMulti", "Reverse", "adaptador"]
+__all__ = ["ADAPTADORES", "BracketMulti", "BracketSimples", "Reverse",
+           "adaptador"]
 
 _MS_POR_HORA = 3_600_000.0
 
@@ -224,7 +225,99 @@ class Reverse:
         return novo, None, None
 
 
-ADAPTADORES = {BracketMulti.nome: BracketMulti, Reverse.nome: Reverse}
+class BracketSimples:
+    """Stop e alvo fixos em ATR, com horizonte em barras. Sem parciais.
+
+    Porta de ``shadow.donchian_a.resolve_bracket`` + ``_pnl`` — a regra de saida
+    do DONCHIAN-A, que o v10 tem de reproduzir barra a barra. As tres decisoes
+    que a definem, todas preservadas aqui:
+
+    1. empate alvo+stop na MESMA vela -> STOP (pessimista);
+    2. sem toque ate a barra de expiracao -> EXPIRED no ``close`` dessa barra;
+    3. barra de expiracao ausente (buraco de dado) -> segue OPEN, nao expira.
+
+    A unidade de risco e ``s_atr * atr`` — o mesmo denominador do shadow —, e o
+    ``r_multiple`` fica em ``exit_state``, nao em coluna: o schema do v10 nao
+    tem campo de modelo de saida.
+
+    Le de ``spec.exit_params``: ``s_atr``, ``t_atr``, ``h_bars`` e ``bar_ms``.
+    ``bar_ms`` vem declarado em vez de deduzido do ``tf`` para que a expiracao
+    seja um parametro congelado da ficha, e nao um mapa escondido aqui dentro.
+    """
+
+    nome = "bracket_simples"
+
+    @staticmethod
+    def abrir(spec: Any, sinal: Any, vela: Any) -> dict:
+        cfg = spec.exit_params or {}
+        plano = _plano(sinal)
+        direction = _campo(plano, "direction")
+        entry = float(_campo(plano, "entry_price"))
+        atr = float(_campo(plano, "atr_value", 0.0) or 0.0)
+        s_atr, t_atr = float(cfg["s_atr"]), float(cfg["t_atr"])
+        lado = 1.0 if direction == "LONG" else -1.0
+        entry_ts = _ts(vela)
+        params = {
+            "direction": direction, "entry_price": entry, "atr_value": atr,
+            "s_atr": s_atr, "t_atr": t_atr,
+            "sl_price": entry - lado * s_atr * atr,
+            "tp_price": entry + lado * t_atr * atr,
+            "entry_ts_ms": entry_ts,
+            "expiry_ts_ms": None if entry_ts is None else (
+                entry_ts + int(cfg["h_bars"]) * int(cfg["bar_ms"])),
+        }
+        estado = {"status": "OPEN", "max_runup": 0.0, "max_drawdown": 0.0,
+                  "r_multiple": None, "exit_ts_ms": None}
+        return {"exit_params": params, "exit_state": estado}
+
+    @staticmethod
+    def avaliar(spec: Any, estado: dict, velas_novas: list, agora_ms=None) -> tuple:
+        p, s = estado["exit_params"], dict(estado["exit_state"])
+        novo = {"exit_params": p, "exit_state": s}
+        if s["status"] != "OPEN":
+            return novo, s["status"], None
+        entry, direction = float(p["entry_price"]), p["direction"]
+        sl, tp = float(p["sl_price"]), float(p["tp_price"])
+        expiry = None if p["expiry_ts_ms"] is None else int(p["expiry_ts_ms"])
+        e_long = direction == "LONG"
+        for v in _novas(velas_novas, p["entry_ts_ms"]):
+            ts = _ts(v)
+            if expiry is not None and ts is not None and ts > expiry:
+                break                     # janela do horizonte acabou
+            try:
+                hi, lo = float(_campo(v, "high")), float(_campo(v, "low"))
+            except (TypeError, ValueError):
+                continue                  # vela malformada e pulada, como no v9
+            ru, dd = _extremos(direction, entry, hi, lo)
+            s["max_runup"] = max(s["max_runup"], ru)
+            s["max_drawdown"] = max(s["max_drawdown"], dd)
+            se_stop = lo <= sl if e_long else hi >= sl
+            se_alvo = hi >= tp if e_long else lo <= tp
+            if se_stop:                   # cobre o empate alvo+stop: pessimista
+                fim = ("LOSS", sl)
+            elif se_alvo:
+                fim = ("WIN", tp)
+            elif expiry is not None and ts == expiry:
+                fim = ("EXPIRED", float(_campo(v, "close")))
+            else:
+                continue
+            s.update(status=fim[0], exit_ts_ms=ts,
+                     r_multiple=BracketSimples.r_multiple(p, fim[1]))
+            return novo, fim[0], fim[1]
+        return novo, None, None
+
+    @staticmethod
+    def r_multiple(params: dict, exit_price: float) -> float:
+        """Retorno em unidades de risco. Denominador = ``s_atr * atr`` (shadow
+        ``_pnl``); risco nao-positivo devolve 0.0 em vez de dividir por zero."""
+        risco = float(params["s_atr"]) * float(params["atr_value"])
+        entry = float(params["entry_price"])
+        move = ((exit_price - entry) if params["direction"] == "LONG"
+                else (entry - exit_price))
+        return move / risco if risco > 0 else 0.0
+
+
+ADAPTADORES = {a.nome: a for a in (BracketMulti, Reverse, BracketSimples)}
 
 
 def adaptador(exit_model: str):
