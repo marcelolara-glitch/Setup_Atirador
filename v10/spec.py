@@ -14,6 +14,12 @@ misturam com as da configuração anterior.
 TODOS os campos entram no hash, inclusive ``estado_ciclo`` e ``aviso``. É de
 propósito: um resultado gerado sob "proposto" não deve se confundir com o
 mesmo setup depois de promovido, mesmo que os números sejam idênticos.
+
+UMA exceção, declarada em :data:`FORA_DO_HASH`: ``executar``. Ele não descreve
+COMO o setup mede — descreve se o orquestrador o chama nesta rodada. Um setup
+desligado não produz linha nenhuma; religá-lo tem de devolver as linhas novas à
+MESMA série das antigas. Se ``executar`` entrasse no hash, pausar e retomar
+partiria o histórico em dois, que é o oposto exato do que o hash serve.
 """
 
 from __future__ import annotations
@@ -22,6 +28,11 @@ import hashlib
 import json
 from dataclasses import dataclass, field, fields
 from typing import Any, Callable
+
+# Campos que NÃO entram no hash. Lista fechada e curta de propósito: cada nome
+# aqui é uma promessa de que o campo não muda o que o setup mede. Acrescentar um
+# nome nesta tupla é decisão de projeto, não conveniência de teste.
+FORA_DO_HASH: tuple[str, ...] = ("executar",)
 
 
 @dataclass
@@ -49,6 +60,10 @@ class SetupSpec:
         estado_ciclo: onde o setup está no ciclo (``"proposto"``,
             ``"em_bancada"``, ``"promovido"``, ``"arquivado"``).
         aviso: ressalva conhecida que acompanha qualquer leitura do resultado.
+        executar: se ``False``, :func:`v10.runner.rodar_todos` PULA o setup —
+            a ficha continua no registro (documentação, relatório), mas
+            nenhuma barra é avaliada e nenhuma linha é gravada. Fora do hash
+            (:data:`FORA_DO_HASH`).
     """
 
     setup_id: str
@@ -64,6 +79,7 @@ class SetupSpec:
     mode: str = "shadow"
     estado_ciclo: str = "proposto"
     aviso: str = ""
+    executar: bool = True
 
     @property
     def config_hash(self) -> str:
@@ -96,7 +112,8 @@ def _canon(valor: Any) -> Any:
 
 def config_dict(spec: SetupSpec) -> dict:
     """Dicionário de configuração canônico — o que de fato é hasheado."""
-    return {f.name: _canon(getattr(spec, f.name)) for f in fields(spec)}
+    return {f.name: _canon(getattr(spec, f.name)) for f in fields(spec)
+            if f.name not in FORA_DO_HASH}
 
 
 def config_hash(spec: SetupSpec, tamanho: int = 12) -> str:

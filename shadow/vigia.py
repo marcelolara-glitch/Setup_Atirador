@@ -228,11 +228,26 @@ def _default_send(text: str) -> bool:
 
 
 def run(db_path: str = DB_PATH, now: datetime | None = None,
-        send_fn=None, log: logging.Logger | None = None,
-        kis_db: str | None = None, v10_db: str | None = None,
-        v10_specs=None):
+        send_fn=None, log: logging.Logger | None = None):
     """Gera e envia o [VIGIA] uma vez. Envio e I/O de observabilidade: falha
-    vira warning, NUNCA excecao propagada (principio vigente)."""
+    vira warning, NUNCA excecao propagada (principio vigente).
+
+    UM BLOCO SO, desde o desligamento do shadow KIS: o 9A do DONCHIAN-A. Os dois
+    blocos que conviveram aqui durante a transicao sairam, cada um por um
+    motivo diferente:
+
+    - KIS+REGIME shadow: DESLIGADO. O papel dele passou para o v10, que roda o
+      mesmo detector no `trades_v10`. O banco `shadow_kis_regime.db` fica para
+      historico, e `shadow/kis_regime.py` continua intocado (trava sha256) — o
+      que saiu foi a chamada, nao o modulo.
+    - v10: mudou de mensagem, nao sumiu. O quadro completo do v10 agora e
+      mensagem PROPRIA (`python -m v10.relatorio`, 00:20 UTC), e o que muda a
+      cada 4h vai no delta (`python -m v10.runner`). Mante-lo aqui mandaria o
+      mesmo quadro duas vezes no mesmo minuto.
+
+    O [VIGIA] volta a ser o que era: o apendice do DONCHIAN-A legado, ate a
+    janela pre-registrada do Estagio 2 fechar. A fonte da verdade e o v10.
+    """
     log = log or _setup_logger()
     now = now or datetime.now(timezone.utc)
     send_fn = send_fn or _default_send
@@ -241,34 +256,6 @@ def run(db_path: str = DB_PATH, now: datetime | None = None,
         msg = build_report(conn, now)
     finally:
         conn.close()
-    # SEGUNDO bloco, MESMA mensagem: coletor KIS+REGIME (DB proprio). O bloco do
-    # DONCHIAN-A acima fica intocado. Import lazy e try/except largo: o bloco
-    # extra e observabilidade de um coletor REPROVADO — se ele falhar, o [VIGIA]
-    # do DONCHIAN-A sai igual, sozinho.
-    try:
-        from shadow.kis_regime import DB_PATH as KIS_DB, build_block
-        kconn = _connect(kis_db or KIS_DB)
-        try:
-            msg += "\n\n" + build_block(kconn, now)
-        finally:
-            kconn.close()
-    except Exception as e:
-        log.warning(f"[vigia] bloco KIS indisponivel: {type(e).__name__}: {e}")
-    # TERCEIRO bloco, MESMA mensagem: o relatorio generico do v10 (um sub-bloco
-    # por setup do REGISTRO, DB proprio). Os dois blocos acima ficam INTOCADOS —
-    # durante a transicao os tres convivem, e a comparacao lado a lado e o que
-    # prova que o v10 reproduz o legado. Import lazy e try/except largo, pela
-    # mesma razao do bloco KIS: se o v10 falhar, o [VIGIA] sai como sempre saiu.
-    try:
-        from v10.relatorio import build_report as _v10_report
-        from v10.schema import connect as _v10_connect
-        vconn = _v10_connect() if v10_db is None else _v10_connect(v10_db)
-        try:
-            msg += "\n\n" + _v10_report(vconn, now, specs=v10_specs)
-        finally:
-            vconn.close()
-    except Exception as e:
-        log.warning(f"[vigia] bloco v10 indisponivel: {type(e).__name__}: {e}")
     try:
         ok = bool(send_fn(msg))
         if not ok:

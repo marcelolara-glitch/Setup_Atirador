@@ -38,7 +38,7 @@ from v10.data import velas as _velas_padrao
 from v10.exits import adaptador
 from v10.schema import TABELA
 
-__all__ = ["BAR_MS", "rodar", "rodar_todos"]
+__all__ = ["BAR_MS", "main", "rodar", "rodar_todos"]
 
 BAR_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000,
           "1h": 3_600_000, "4h": 14_400_000}
@@ -194,10 +194,20 @@ def rodar(spec, conn, agora_ms, velas_fn=None, log=None) -> dict:
 
 def rodar_todos(specs, conn, agora_ms, velas_fn=None, log=None) -> list:
     """Roda vários setups. Um setup que estoure NÃO impede os seguintes: entra
-    no resultado com ``erro`` preenchido e o laço continua."""
+    no resultado com ``erro`` preenchido e o laço continua.
+
+    ``spec.executar == False`` PULA o setup — sem avaliar barra, sem gravar
+    linha. Pular não é sumir: a ficha entra no resultado com ``pulado``, para
+    que "não rodou" seja um fato registrado e não uma ausência a interpretar.
+    """
     log = log or logging.getLogger("v10.runner")
     saida = []
     for spec in specs:
+        if not getattr(spec, "executar", True):
+            sid = getattr(spec, "setup_id", "?")
+            log.info(f"[v10] {sid} PULADO (executar=False)")
+            saida.append({"setup_id": sid, "pulado": True})
+            continue
         try:
             saida.append(rodar(spec, conn, agora_ms, velas_fn=velas_fn, log=log))
         except Exception as e:
@@ -206,3 +216,53 @@ def rodar_todos(specs, conn, agora_ms, velas_fn=None, log=None) -> list:
             saida.append({"setup_id": getattr(spec, "setup_id", "?"),
                           "erro": f"{type(e).__name__}: {e}"})
     return saida
+
+
+def main(argv=None) -> int:
+    """Entry point de linha de comando: ``python -m v10.runner``.
+
+    Uma passada sobre o registro — os setups com ``executar=False`` saem no log
+    como PULADO e nada mais — e, em seguida, o envio do delta da janela. As duas coisas na mesma invocação de propósito: a mensagem
+    é sobre o que ESTA run mudou, e separá-las abriria a janela entre gravar e
+    reportar. O relógio é lido UMA vez e passado adiante — duas leituras de
+    ``now()`` na mesma run poderiam cair em barras diferentes.
+
+    ``--sem-envio`` roda e não manda nada (útil para a primeira execução na VM,
+    quando se quer ver o log antes de acordar o Telegram).
+    """
+    import argparse
+    from datetime import datetime, timezone
+
+    p = argparse.ArgumentParser(
+        prog="python -m v10.runner",
+        description="Roda os setups ativos do registro v10 e envia o delta.")
+    p.add_argument("--sem-envio", action="store_true",
+                   help="roda e grava, mas NAO envia o delta ao Telegram")
+    args = p.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s")
+    log = logging.getLogger("v10.runner")
+
+    from v10.registro import REGISTRO
+    from v10.schema import connect
+
+    # REGISTRO inteiro, não `ATIVOS`: quem decide o que roda é o campo
+    # `executar`, e passar por `rodar_todos` faz o "PULADO" aparecer no log a
+    # cada run. Filtrar antes esconderia a ficha desligada do próprio registro
+    # de execução — "não rodou" tem de ser um fato escrito, não uma ausência.
+    agora = datetime.now(timezone.utc)
+    conn = connect()
+    try:
+        rodar_todos(list(REGISTRO.values()), conn,
+                    int(agora.timestamp() * 1000), log=log)
+    finally:
+        conn.close()
+    if not args.sem_envio:
+        from v10.relatorio import run_delta
+        run_delta(now=agora, log=log)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

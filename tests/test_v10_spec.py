@@ -8,7 +8,8 @@ from dataclasses import fields, replace
 from pathlib import Path
 
 from v10.schema import COLUNAS, DDL, TABELA, connect
-from v10.spec import SetupSpec, config_dict, config_hash
+from v10.spec import (FORA_DO_HASH, SetupSpec, config_dict,
+                      config_hash)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -77,7 +78,10 @@ _VARIACOES = {
 
 
 def test_todo_campo_do_spec_esta_coberto_pelas_variacoes():
-    assert set(_VARIACOES) == {f.name for f in fields(SetupSpec)}
+    # Cada campo esta OU nas variacoes (entra no hash) OU em FORA_DO_HASH (nao
+    # entra). Campo novo sem decisao explicita reprova aqui, que e o ponto.
+    assert set(_VARIACOES) | set(FORA_DO_HASH) == {f.name for f in fields(SetupSpec)}
+    assert not set(_VARIACOES) & set(FORA_DO_HASH)
 
 
 def test_qualquer_parametro_muda_o_hash():
@@ -104,6 +108,21 @@ def test_reload_do_detector_nao_muda_o_hash():
 def test_int_e_float_nao_colidem():
     assert (_spec(custo_bps_por_perna=6).config_hash
             != _spec(custo_bps_por_perna=6.0).config_hash)
+
+
+# --- a excecao declarada: FORA_DO_HASH ---------------------------------------
+def test_fora_do_hash_e_curta_e_declarada():
+    # Lista fechada. Crescer aqui e decisao de projeto, e este teste obriga a
+    # tomar essa decisao em vez de deixar o campo escorregar para fora do hash.
+    assert FORA_DO_HASH == ("executar",)
+
+
+def test_executar_nao_muda_o_hash():
+    # `executar` diz se o ORQUESTRADOR chama o setup, nao o que o setup mede.
+    # Se entrasse no hash, pausar e retomar partiria o historico em duas series
+    # — exatamente o oposto do que o hash serve.
+    assert _spec(executar=False).config_hash == _spec(executar=True).config_hash
+    assert "executar" not in config_dict(_spec())
 
 
 def test_config_hash_funcao_e_propriedade_concordam():

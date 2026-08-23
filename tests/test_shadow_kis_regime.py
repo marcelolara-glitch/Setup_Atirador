@@ -230,24 +230,39 @@ def test_bloco_db_vazio_nao_quebra(tmp_path):
     assert "— nenhuma" in msg and "— nenhum" in msg and "runs 0/6" in msg
 
 
-# --- REGRESSAO: bloco do DONCHIAN-A intocado ---------------------------------
-def test_vigia_donchian_byte_identico_com_bloco_kis(tmp_path):
-    d_db, k_db = str(tmp_path / "d.db"), str(tmp_path / "k.db")
-    _seed_bloco(tmp_path)                          # popula k.db
+# --- REGRESSAO: o [VIGIA] volta a ser SO o bloco 9A --------------------------
+def test_vigia_nao_carrega_mais_o_bloco_kis(tmp_path):
+    """O shadow KIS foi DESLIGADO: o papel dele passou para o v10, que roda o
+    mesmo detector no `trades_v10`. A mensagem diaria volta a ser o 9A do
+    DONCHIAN-A e nada mais — byte a byte, sem sequer um separador sobrando."""
+    d_db = str(tmp_path / "d.db")
+    _seed_bloco(tmp_path)                          # k.db populado: e IGNORADO
     sent = []
     msg, ok = vigia.run(d_db, now=NOW, send_fn=lambda t: sent.append(t) or True,
-                        log=QUIET, kis_db=k_db)
+                        log=QUIET)
     esperado = vigia.build_report(sd._connect(d_db), NOW)
-    assert ok and msg.startswith(esperado + "\n\n")
-    assert msg.split("\n\n", 1)[0] or True         # bloco 9A na frente, inteiro
-    assert "[VIGIA] KIS+REGIME" in msg and sent == [msg]
+    assert ok and msg == esperado                  # BYTE-IDENTICO e sozinho
+    assert "KIS+REGIME" not in msg and sent == [msg]
 
 
-def test_vigia_sobrevive_a_bloco_kis_quebrado(tmp_path, monkeypatch):
-    d_db = str(tmp_path / "d.db")
-    monkeypatch.setattr(kr, "build_block",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
-    msg, ok = vigia.run(d_db, now=NOW, send_fn=lambda t: True, log=QUIET,
-                        kis_db=str(tmp_path / "k.db"))
-    assert ok and "KIS+REGIME" not in msg          # [VIGIA] sai sozinho, inteiro
-    assert msg == vigia.build_report(sd._connect(d_db), NOW)
+def test_build_block_do_kis_continua_intacto(tmp_path):
+    """Desligado nao e removido. `shadow/kis_regime.py` esta na trava sha256 e o
+    banco `shadow_kis_regime.db` fica para historico: o que saiu foi a CHAMADA
+    dentro do [VIGIA], nao o modulo. Quem quiser ler o coletor ainda le."""
+    msg = kr.build_block(_seed_bloco(tmp_path), NOW)
+    assert "[VIGIA] KIS+REGIME" in msg
+
+
+def test_vigia_nao_importa_nem_chama_mais_o_bloco_kis():
+    """Guarda contra religar por descuido. Olha o CODIGO, nao a prosa: o
+    docstring do `run` explica por que o bloco saiu, e explicar nao e religar.
+    O que nao pode voltar e o import e a chamada."""
+    import ast
+    import inspect
+    arvore = ast.parse(inspect.getsource(vigia))
+    importados = {a.name for n in ast.walk(arvore)
+                  if isinstance(n, ast.ImportFrom) and "kis_regime" in (n.module or "")
+                  for a in n.names}
+    chamadas = {n.func.id for n in ast.walk(arvore)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    assert not importados and "build_block" not in chamadas

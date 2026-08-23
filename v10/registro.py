@@ -33,8 +33,8 @@ from shadow.kis_regime import SYMBOLS as SYMBOLS_KIS
 from shadow.kis_regime import avaliar as avaliar_kis
 from v10.spec import SetupSpec
 
-__all__ = ["DONCHIAN_A_4H", "KIS_REGIME_4H", "REGISTRO", "detector_donchian_a",
-           "detector_kis_regime"]
+__all__ = ["ATIVOS", "DONCHIAN_A_4H", "KIS_REGIME_4H", "REGISTRO",
+           "detector_donchian_a", "detector_kis_regime"]
 
 TF = "4H"          # barra no formato da API; o `tf` do shadow ("4h") é rótulo
 TAKER_BPS = 5.0    # OKX perp taker não-VIP — mesmo valor de shadow/vigia.py:27
@@ -122,6 +122,14 @@ DONCHIAN_A_4H = SetupSpec(
                  "bar_ms": BAR_MS, "espacamento_barras": H_BARS},
     custo_bps_por_perna=TAKER_BPS,
     mode="shadow",
+    # NÃO EXECUTA. A ficha fica no registro — o relatório diário a lista, e ela
+    # documenta que o DONCHIAN-A existe e o que ele é. Mas rodá-la aqui abriria
+    # uma SEGUNDA instância do mesmo desenho, e o Estágio 2 mede uma janela
+    # pré-registrada cujo relógio de observação não pode reiniciar: duas
+    # instâncias em paralelo não somam evidência, dividem a leitura. A instância
+    # que conta é a legada (shadow/donchian_a.py, banco próprio, cron próprio),
+    # e ela segue intocada até a janela fechar em out/2026.
+    executar=False,
     estado_ciclo="estagio2_em_janela",
     aviso=("janela pré-registrada fecha out/2026 — a INSTÂNCIA em produção "
            "segue no caminho legado (shadow/donchian_a.py, banco próprio, cron "
@@ -130,3 +138,8 @@ DONCHIAN_A_4H = SetupSpec(
 )
 
 REGISTRO = {s.setup_id: s for s in (KIS_REGIME_4H, DONCHIAN_A_4H)}
+
+# O que o cron de fato roda. Derivado do REGISTRO, nunca uma segunda lista
+# escrita à mão: uma ficha nova entra aqui pelo próprio campo `executar`, e não
+# há como esquecer de acrescentá-la em dois lugares.
+ATIVOS = [s for s in REGISTRO.values() if s.executar]

@@ -4,8 +4,8 @@ Tres coisas provadas aqui:
   1. o bloco: numeros fechados a mao (saldo, USDT/%, LONG/SHORT, pior mergulho,
      abertas com marcacao corrente, fechados recentes, rodape do nocional);
   2. o isolamento: um setup que estoura vira LINHA DE ERRO, os outros saem;
-  3. a integracao: o bloco 9A (DONCHIAN-A) sai BYTE-IDENTICO com o bloco do v10
-     na mesma mensagem, e o bloco do KIS shadow continua no lugar.
+  3. a separacao: o quadro do v10 e MENSAGEM PROPRIA (`relatorio.run`), e o
+     [VIGIA] volta a ser so o bloco 9A do DONCHIAN-A, byte a byte.
 
 Stdlib-only no que interessa: `v10.relatorio` puxa `v10.runner` (que puxa
 `risk`/numpy) — o mesmo que os outros testes de v10 ja puxam.
@@ -210,11 +210,10 @@ def test_build_report_aceita_o_registro_como_dict(tmp_path):
     assert txt.index("a_4h") < txt.index("b_4h")         # ordem do registro
 
 
-# --- integracao no [VIGIA] ---------------------------------------------------
-def _vigia_dbs(tmp_path):
-    """DBs vazios dos tres blocos + um trade no v10, p/ o bloco nao ficar mudo."""
+# --- separacao: o quadro do v10 saiu do [VIGIA] ------------------------------
+def _dbs(tmp_path):
+    """DB do DONCHIAN-A vazio + um trade no v10, p/ o quadro nao ficar mudo."""
     sd._connect(str(tmp_path / "donchian.db")).close()
-    sd._connect(str(tmp_path / "kis.db")).close()
     conn = connect(str(tmp_path / "v10.db"))
     sp = _spec(setup_id="alfa_4h")
     _fechado(conn, sp, "BTCUSDT", "LONG", T0, T0 + BAR_4H, 100.0)
@@ -222,42 +221,49 @@ def _vigia_dbs(tmp_path):
     return sp
 
 
-def test_bloco_9a_sai_byte_identico_com_o_v10_na_mesma_mensagem(tmp_path):
-    sp = _vigia_dbs(tmp_path)
-    conn = sd._connect(str(tmp_path / "donchian.db"))
-    try:
-        sozinho = vigia.build_report(conn, NOW)          # 9A isolado, a referencia
-    finally:
-        conn.close()
-    msg, _ = vigia.run(db_path=str(tmp_path / "donchian.db"), now=NOW,
-                       send_fn=lambda t: True, log=QUIET,
-                       kis_db=str(tmp_path / "kis.db"),
-                       v10_db=str(tmp_path / "v10.db"), v10_specs=[sp])
-    assert msg.startswith(sozinho)                       # BYTE-IDENTICO, e primeiro
-    assert msg.split("\n\n\n")[0].startswith("🛡️ <b>[VIGIA] DONCHIAN-A</b>")
-
-
-def test_os_tres_blocos_convivem_na_mesma_mensagem(tmp_path):
-    sp = _vigia_dbs(tmp_path)
-    msg, ok = vigia.run(db_path=str(tmp_path / "donchian.db"), now=NOW,
-                        send_fn=lambda t: True, log=QUIET,
-                        kis_db=str(tmp_path / "kis.db"),
-                        v10_db=str(tmp_path / "v10.db"), v10_specs=[sp])
+def test_vigia_e_so_o_bloco_9a(tmp_path):
+    """O quadro do v10 virou mensagem propria (00:20 UTC, `-m v10.relatorio`).
+    Mante-lo aqui mandaria o MESMO quadro duas vezes no mesmo minuto."""
+    _dbs(tmp_path)
+    d_db = str(tmp_path / "donchian.db")
+    msg, ok = vigia.run(db_path=d_db, now=NOW, send_fn=lambda t: True, log=QUIET)
     assert ok
-    assert "[VIGIA] DONCHIAN-A" in msg                   # 9A legado
-    assert "[VIGIA] KIS+REGIME" in msg                   # KIS shadow
-    assert "[V10] alfa_4h" in msg                        # relatorio novo
-    assert msg.index("DONCHIAN-A") < msg.index("KIS+REGIME") < msg.index("[V10]")
+    assert msg == vigia.build_report(sd._connect(d_db), NOW)   # BYTE-IDENTICO
+    assert "[V10]" not in msg and "KIS+REGIME" not in msg
 
 
-def test_v10_indisponivel_nao_derruba_o_vigia(tmp_path):
-    sd._connect(str(tmp_path / "donchian.db")).close()
-    sd._connect(str(tmp_path / "kis.db")).close()
+def test_quadro_do_v10_e_mensagem_propria(tmp_path):
+    sp = _dbs(tmp_path)
+    enviadas = []
+    msg, ok = relatorio.run(now=NOW, db_path=str(tmp_path / "v10.db"),
+                            specs=[sp], log=QUIET,
+                            send_fn=lambda t: enviadas.append(t) or True)
+    assert ok and enviadas == [msg]
+    assert "[V10] alfa_4h" in msg and "<b>ACUMULADO</b>" in msg
+    assert "[VIGIA]" not in msg              # nao carrega o legado junto
+
+
+def test_quadro_nao_derruba_por_setup_quebrado(tmp_path):
+    """Isolamento tambem no caminho de envio: o setup que estoura vira linha de
+    erro DENTRO da mensagem, e a mensagem sai."""
+    _dbs(tmp_path)
     quebrado = _spec(setup_id="quebrado_9x")
-    quebrado.tf = "3s"
-    msg, ok = vigia.run(db_path=str(tmp_path / "donchian.db"), now=NOW,
-                        send_fn=lambda t: True, log=QUIET,
-                        kis_db=str(tmp_path / "kis.db"),
-                        v10_db=str(tmp_path / "v10.db"), v10_specs=[quebrado])
-    assert ok and "[VIGIA] DONCHIAN-A" in msg
-    assert "bloco indisponível: KeyError" in msg         # erro visivel, nao silencio
+    quebrado.tf = "3s"                                   # tf desconhecido
+    msg, ok = relatorio.run(now=NOW, db_path=str(tmp_path / "v10.db"),
+                            specs=[quebrado, _spec(setup_id="bom_4h")],
+                            send_fn=lambda t: True, log=QUIET)
+    assert ok and "bloco indisponível: KeyError" in msg
+    assert "bom_4h" in msg and "<b>ACUMULADO</b>" in msg
+
+
+def test_envio_que_falha_nao_levanta(tmp_path):
+    """Envio e I/O de observabilidade: falha vira warning, nunca excecao. A
+    mensagem volta montada — o banco e a fonte de verdade, nao o Telegram."""
+    _dbs(tmp_path)
+
+    def _boom(_):
+        raise RuntimeError("telegram fora do ar")
+
+    msg, ok = relatorio.run(now=NOW, db_path=str(tmp_path / "v10.db"),
+                            specs=[_spec()], send_fn=_boom, log=QUIET)
+    assert ok is False and "<b>ACUMULADO</b>" in msg
