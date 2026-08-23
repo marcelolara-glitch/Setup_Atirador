@@ -1180,6 +1180,13 @@ diziam "hold-out REPROVADO". Com o registro de 22/08 isso passou a afirmar
 veredito onde há número provisório. Passaram a dizer "-769 bps (PROVISÓRIO,
 remedição ~05/09)", sem afrouxar o "não promoção".
 
+LIMITAÇÃO CONHECIDA do config_hash (PR-A, 22/08): o detector entra no hash por
+NOME (modulo.qualname), não por conteúdo. Mudar o CORPO de um detector sem
+mudar o nome NÃO muda o hash, e os trades se misturam no journal.
+REGRA: alterou comportamento de detector, incrementa o setup_id
+(ex.: kis_regime_4h -> kis_regime_4h_v2). Não há checagem automática.
+Para keepitsimple isso já é coberto por tests/test_trava_superficie_kis.py;
+para detectores futuros, é disciplina.
 
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
