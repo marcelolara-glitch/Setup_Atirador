@@ -82,6 +82,15 @@ def _atualizar(spec, adap, conn, symbol, velas, agora_ms) -> int:
         s = novo["exit_state"]
         ru, dd = float(s.get("max_runup") or 0.0), float(s.get("max_drawdown") or 0.0)
         if status is None:                       # segue aberta: só o rastro
+            # Marcação corrente: o relatório precisa do resultado em aberto e é
+            # puro (não fala com a corretora). Quem tem a última barra é o
+            # runner, então é aqui que ela vira número — não lá.
+            if velas:
+                s["ultimo_close"] = float(velas[-1]["close"])
+                s["ultimo_ts_ms"] = int(velas[-1]["ts"])
+                s["pnl_corrente_pct"] = _pnl_pct(
+                    novo["exit_params"].get("direction"), float(r["entry_price"]),
+                    s["ultimo_close"])
             conn.execute(
                 f"UPDATE {TABELA} SET exit_state_json=?, max_runup=?, "
                 "max_drawdown=? WHERE id=?", (json.dumps(s), ru, dd, r["id"]))

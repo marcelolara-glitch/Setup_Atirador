@@ -61,6 +61,20 @@ def _extremos(direction: str, entry: float, hi: float, lo: float) -> tuple:
     return (entry - lo) / entry * 100.0, (hi - entry) / entry * 100.0
 
 
+def _acumular(s: dict, direction: str, entry: float, vela: Any) -> bool:
+    """Soma os extremos de `vela` em `s`. False se a vela for malformada (pulada,
+    como no v9). Existe para que a mesma acumulação sirva ao laço e à cauda de
+    barras posteriores à inversão."""
+    try:
+        hi, lo = float(_campo(vela, "high")), float(_campo(vela, "low"))
+    except (TypeError, ValueError):
+        return False
+    ru, dd = _extremos(direction, entry, hi, lo)
+    s["max_runup"] = max(s["max_runup"], ru)
+    s["max_drawdown"] = max(s["max_drawdown"], dd)
+    return True
+
+
 class BracketMulti:
     """Porta de journal._check_one_trade: TP1/TP2/TP3/SL/EXPIRED com parciais.
 
@@ -178,8 +192,26 @@ class Reverse:
 
     "Inverte" é troca de lado: +1 -> -1 ou -1 -> +1. Alvo 0 (neutro) NÃO fecha —
     o detector deixou de opinar, não mudou de opinião. Cada vela carrega o alvo
-    vigente na chave `alvo`; vela sem `alvo` não decide nada. Saída no `close`
-    da vela que inverteu, e o novo alvo fica registrado para auditoria.
+    vigente na chave `alvo`; vela sem `alvo` não decide nada. O novo alvo fica
+    registrado em `alvo_saida` para auditoria.
+
+    PREÇO DE SAÍDA — a inversão pode ser detectada numa barra ANTERIOR à última
+    processada (uma run perdida pelo cron faz a passada seguinte varrer várias
+    barras de uma vez). Nesse caso existem DOIS preços, e os dois ficam
+    gravados em ``exit_state``:
+
+    - ``preco_ideal``: o ``close`` da barra em que o alvo inverteu. É o desenho.
+    - ``preco_real``: o ``close`` da barra CORRENTE (a última processada). É o
+      único preço em que ainda dá para vender — o outro já passou.
+
+    Quem sai é o ``mode`` da ficha: ``backtest`` usa o ideal (lá o objeto de
+    estudo é o desenho, e não há execução a simular); ``shadow`` e ``live``
+    usam o real, porque sair num preço que já passou é olhar para trás — o
+    número ficaria melhor do que a operação conseguiria ser.
+
+    A diferença ``preco_real - preco_ideal`` é a MEDIDA do custo de uma run
+    perdida, em ``barras_atraso`` barras. Sem gravar os dois esse custo não
+    existe em lugar nenhum.
     """
 
     nome = "reverse"
@@ -196,6 +228,8 @@ class Reverse:
             "alvo": 1 if direction == "LONG" else -1,
             "alvo_saida": None, "status": "OPEN",
             "max_runup": 0.0, "max_drawdown": 0.0,
+            "preco_ideal": None, "preco_real": None, "barras_atraso": 0,
+            "exit_ts_ms": None,
         }
         return {"exit_params": params, "exit_state": estado}
 
@@ -207,22 +241,43 @@ class Reverse:
         if s["status"] != "OPEN":
             return novo, s["status"], None
 
-        for v in _novas(velas_novas, p["entry_ts_ms"]):
-            try:
-                hi, lo = float(_campo(v, "high")), float(_campo(v, "low"))
-            except (TypeError, ValueError):
+        velas = _novas(velas_novas, p["entry_ts_ms"])
+        backtest = str(_campo(spec, "mode", "shadow")) == "backtest"
+        for i, v in enumerate(velas):
+            if not _acumular(s, direction, entry, v):
                 continue
-            ru, dd = _extremos(direction, entry, hi, lo)
-            s["max_runup"] = max(s["max_runup"], ru)
-            s["max_drawdown"] = max(s["max_drawdown"], dd)
             novo_alvo = _campo(v, "alvo", None)
             if novo_alvo is None:
                 continue
             novo_alvo = int(novo_alvo)
-            if novo_alvo != 0 and novo_alvo == -alvo:
-                s.update(status="REVERTIDO", alvo_saida=novo_alvo)
-                return novo, "REVERTIDO", float(_campo(v, "close"))
+            if novo_alvo == 0 or novo_alvo != -alvo:
+                continue
+            # Fora do backtest a posição SEGUE nas mãos até a barra corrente —
+            # os extremos dessas barras aconteceram de verdade e entram. Omiti-
+            # los daria um max_drawdown menor do que o que o trade sofreu.
+            if not backtest:
+                for w in velas[i + 1:]:
+                    _acumular(s, direction, entry, w)
+            return novo, "REVERTIDO", Reverse._fechar(
+                s, novo_alvo, v, velas[-1], len(velas) - 1 - i, backtest)
         return novo, None, None
+
+    @staticmethod
+    def _fechar(s: dict, novo_alvo: int, vela_inv, vela_corrente, atraso: int,
+                backtest: bool) -> float:
+        """Grava ideal e real em `s` e devolve o preço em que este `mode` sai.
+
+        `atraso` é quantas barras a inversão ficou para trás. Zero — o caso das
+        runs em dia — faz ideal e real coincidirem, e a correção some do número:
+        ela só aparece onde de fato houve buraco de cobertura.
+        """
+        ideal = float(_campo(vela_inv, "close"))
+        real = float(_campo(vela_corrente, "close"))
+        saida, vela_saida = (ideal, vela_inv) if backtest else (real, vela_corrente)
+        s.update(status="REVERTIDO", alvo_saida=novo_alvo, preco_ideal=ideal,
+                 preco_real=real, barras_atraso=int(atraso),
+                 exit_ts_ms=_ts(vela_saida))
+        return saida
 
 
 class BracketSimples:

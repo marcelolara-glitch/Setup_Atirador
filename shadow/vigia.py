@@ -229,7 +229,8 @@ def _default_send(text: str) -> bool:
 
 def run(db_path: str = DB_PATH, now: datetime | None = None,
         send_fn=None, log: logging.Logger | None = None,
-        kis_db: str | None = None):
+        kis_db: str | None = None, v10_db: str | None = None,
+        v10_specs=None):
     """Gera e envia o [VIGIA] uma vez. Envio e I/O de observabilidade: falha
     vira warning, NUNCA excecao propagada (principio vigente)."""
     log = log or _setup_logger()
@@ -253,6 +254,21 @@ def run(db_path: str = DB_PATH, now: datetime | None = None,
             kconn.close()
     except Exception as e:
         log.warning(f"[vigia] bloco KIS indisponivel: {type(e).__name__}: {e}")
+    # TERCEIRO bloco, MESMA mensagem: o relatorio generico do v10 (um sub-bloco
+    # por setup do REGISTRO, DB proprio). Os dois blocos acima ficam INTOCADOS —
+    # durante a transicao os tres convivem, e a comparacao lado a lado e o que
+    # prova que o v10 reproduz o legado. Import lazy e try/except largo, pela
+    # mesma razao do bloco KIS: se o v10 falhar, o [VIGIA] sai como sempre saiu.
+    try:
+        from v10.relatorio import build_report as _v10_report
+        from v10.schema import connect as _v10_connect
+        vconn = _v10_connect() if v10_db is None else _v10_connect(v10_db)
+        try:
+            msg += "\n\n" + _v10_report(vconn, now, specs=v10_specs)
+        finally:
+            vconn.close()
+    except Exception as e:
+        log.warning(f"[vigia] bloco v10 indisponivel: {type(e).__name__}: {e}")
     try:
         ok = bool(send_fn(msg))
         if not ok:
