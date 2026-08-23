@@ -1,0 +1,30 @@
+# Setup Atirador — ciclo v10 (runner + relatorio). A MAQUINA e a FONTE DA
+# VERDADE: o que nao passa pelo v10 nao entra na conta. Os shadows legados que
+# sobrevivem a este cron sao apendice de documentacao, nao fonte.
+#
+# INSTALACAO (feita pelo Marcelo via SSH, NAO pelo Code):
+#   sudo cp ~/Setup_Atirador/deploy/cron-atirador-v10 \
+#           /etc/cron.d/cron-atirador-v10                # nome SEM ponto
+#   sudo chown root:root /etc/cron.d/cron-atirador-v10
+#   sudo chmod 644       /etc/cron.d/cron-atirador-v10
+#
+# DESLIGAR O SHADOW KIS (mesmo passo, na mesma sessao — o papel dele passa para
+# o v10, que roda o MESMO detector). O ponto no fim faz o cron ignorar o
+# arquivo, o mesmo mecanismo do v8/v9 desativados; o banco
+# journal/shadow_kis_regime.db PERMANECE, para historico:
+#   sudo mv /etc/cron.d/cron-atirador-shadow-kis \
+#           /etc/cron.d/cron-atirador-shadow-kis.
+#   ls -la /etc/cron.d/ | grep -E 'kis|v10'              # conferencia
+# O cron-atirador-shadow-donchian NAO e tocado: a janela pre-registrada do
+# Estagio 2 esta correndo e o relogio dela nao pode reiniciar.
+SHELL=/bin/bash
+HOME=/home/ubuntu
+# Horarios em UTC. Minuto 16: deslocado do scan v9 (*/30), do shadow DONCHIAN-A
+# (min 8) e do antigo shadow KIS (min 12), para nao competir por rede/CPU na VM
+# de 956 MiB. Mesmas 6 barras 4h pos-fechamento — 00,04,08,12,16,20 UTC.
+16 0,4,8,12,16,20 * * * ubuntu /home/ubuntu/Setup_Atirador/deploy/run-v10.sh >> /home/ubuntu/cron-v10.log 2>&1
+# Quadro completo — 1x/dia, 00:20 UTC. Mesma hora do [VIGIA] de proposito: os
+# dois relatorios diarios chegam juntos, e este e o que substitui o bloco do v10
+# que ate aqui viajava DENTRO da mensagem do [VIGIA]. So le o banco e faz um
+# POST: nao disputa rede com o scan.
+20 0 * * * ubuntu /home/ubuntu/Setup_Atirador/deploy/run-v10.sh --relatorio >> /home/ubuntu/cron-v10.log 2>&1
