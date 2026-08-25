@@ -27,17 +27,25 @@
 #
 # PORTAO FIXO, NAO VARIAVEL — decisao do briefing, documentada aqui porque e o
 # ponto mais facil de "corrigir" por engano depois: a inclinacao do portao le a
-# EMA21 SEMPRE, em toda celula, inclusive nas de par 13/34, 21/55 e 34/89. Nao e
+# EMA21 SEMPRE, em toda celula, inclusive nas de par 34/89, 55/144 e 89/233. Nao e
 # a EMA lenta do par. Motivo: (limiar 0.02, adx_min 11) sobre a EMA21 e o
 # componente validado em dado virgem (+3.393 bps) e entra EXATAMENTE como foi
 # validado. Trocar a EMA de referencia junto com o par confundiria dois efeitos
 # num numero so — e a varredura ficaria sem resposta para a pergunta que ela faz.
 #
-# WARMUP POR CELULA = EMA LENTA DO PAR (21, 34, 55, 89). As `slow` primeiras
+# WARMUP POR CELULA = EMA LENTA DO PAR (21, 89, 144, 233). As `slow` primeiras
 # barras de cada simbolo sao descartadas, na mesma forma do `max(WARMUP, 1)` do
 # keepitsimple. Pares longos perdem mais warmup E invertem menos: geram menos
 # sinais por construcao. Isso e ESPERADO, nao e bug, e por isso o n de CADA
 # celula sai no CSV e no resumo.
+#
+# ALERTA DE PODER (grade de 25/08 estendida): em 89/233 sao 233 barras de 4h —
+# ~39 dias — descartadas POR SIMBOLO, e o n cai para a casa de 15-20 trades por
+# token, ABAIXO do MIN_TRADES do criterio. Celula com mediana de trades por
+# token abaixo do MIN_TRADES sai marcada `amos` = INCONCLUSIVA POR AMOSTRA, e
+# NAO reprovada: o criterio de 20/08 nao se aplica onde a amostra nao existe.
+# Confundir "nao ha evidencia" com "ha evidencia contraria" e o erro que essa
+# marca existe para evitar.
 #
 # REUSO (e o que ele custa): o alvo por barra vem de `kis_regime.alvos`, que ja
 # e `_alvo_extremos(states(closes, fast, slow), conf)` — a composicao com os
@@ -64,6 +72,7 @@ import csv
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -78,7 +87,12 @@ from backtest.kis_trail import (COST_BPS, MIN_TRADES,          # noqa: E402
 # portao desligado/ligado = 8 celulas. (8, 21) e o par de hoje, entao
 # ((8, 21), False) e o CONTROLE — mesma populacao e mesmos retornos do arme=0 do
 # kis_trail, por construcao.
-PARES = ((8, 21), (13, 34), (21, 55), (34, 89))
+# ESTENDIDA (25/08): o melhor da primeira grade ficou na BORDA — 34/89 com
+# portao deu 2a metade +54.2 bps/trade contra -12.5 do controle, 1a plana. Borda
+# vencendo significa otimo possivelmente FORA da grade: a janela anda para
+# 55/144 e 89/233, 34/89 fica de ancora, e 13/34 e 21/55 saem (ja medidos, e
+# 13/34 foi PIOR que o controle na 2a metade).
+PARES = ((8, 21), (34, 89), (55, 144), (89, 233))
 PORTAO = (False, True)
 GRADE = [(p, g) for p in PARES for g in PORTAO]
 CONTROLE = (PARES[0], False)
@@ -235,6 +249,29 @@ def valida_portao(store: str, symbols: list, start_iso: str, end_iso: str,
     return dif, n_a, n_b
 
 
+def inconclusivas(rows: list) -> set:
+    """Celulas (ema_fast, ema_slow, portao) cuja MEDIANA de trades POR TOKEN
+    fica abaixo do MIN_TRADES. Le as linhas por simbolo e NUNCA a do UNIVERSO:
+    somar 40 tokens de 18 trades da 720 e esconde justamente o que isto mede.
+    O n cai por CONSTRUCAO do warmup, nao por merito da celula — dai `amos` em
+    vez do item (c) do criterio: sem amostra nao ha o que aprovar NEM o que
+    reprovar (ver ALERTA DE PODER no cabecalho)."""
+    por_celula: dict = {}
+    for r in rows:
+        if r["symbol"] != "UNIVERSO":
+            por_celula.setdefault((r["ema_fast"], r["ema_slow"],
+                                   r["portao"]), []).append(r["n_trades"])
+    return {c for c, ns in por_celula.items() if ns and median(ns) < MIN_TRADES}
+
+
+def _marca(row: dict, inconc: set) -> str:
+    """`amos` vence `ok`: sem amostra por token nada e aprovado nem reprovado,
+    seja qual for o sinal do que a celula mediu."""
+    if (row["ema_fast"], row["ema_slow"], row["portao"]) in inconc:
+        return "amos"
+    return "ok" if aprovada(row) else "  "
+
+
 CAMPOS = ["symbol", "ema_fast", "ema_slow", "portao", "n_trades",
           "pct_sinais_mantidos", "acerto_pct", "ret_1a_metade_bps",
           "ret_2a_metade_bps", "ret_total_bps", "delta_1a_vs_controle",
@@ -303,9 +340,14 @@ def main() -> int:
     print(f"CSV: {out}")
 
     print("\n===== RESUMO — TODAS as celulas, por simbolo e UNIVERSO =====")
+    inconc = inconclusivas(rows)
     print(f"(ok = criterio de 20/08: 1a > 0 E 2a > 0 E trimestres_pos/total "
           f">= 0.5 E n >= {MIN_TRADES}; drawdown vai REPORTADO, e decisao do "
           f"Marcelo. A hipotese se le na coluna d2a_ctl, nao no total.)")
+    print(f"(amos = INCONCLUSIVA POR AMOSTRA: mediana de trades POR TOKEN < "
+          f"{MIN_TRADES}. NAO e reprovacao — e ausencia de amostra, pelo "
+          f"warmup da EMA lenta. O n por token esta nas linhas por simbolo; a "
+          f"do UNIVERSO soma tokens e NAO serve para essa leitura.)")
     print(f"{'symbol':>10} | {'par':>7} | {'ptao':>4} | {'n':>5} | "
           f"{'mantid':>6} | {'acerto':>6} | {'1a(bps)':>9} | {'2a(bps)':>9} | "
           f"{'tot(bps)':>9} | {'d1a_ctl':>9} | {'d2a_ctl':>9} | {'ddmax':>8} | "
@@ -323,10 +365,12 @@ def main() -> int:
               f"{row['delta_2a_vs_controle']:>+9.1f} | "
               f"{row['dd_max_bps']:>8.1f} | "
               f"{row['trimestres_pos']:>3}/{row['trimestres_total']:<3} | "
-              f"{'ok' if aprovada(row) else '  '}")
-    print(f"\ncelulas aprovadas: {sum(1 for r_ in rows if aprovada(r_))} de "
-          f"{len(rows)} avaliadas (inclui as linhas UNIVERSO). EXPLORATORIO: "
-          f"nada aqui promove nada.")
+              f"{_marca(row, inconc)}")
+    apr = sum(1 for r_ in rows if aprovada(r_) and _marca(r_, inconc) == 'ok')
+    print(f"\ncelulas aprovadas: {apr} de {len(rows)} avaliadas (inclui as "
+          f"linhas UNIVERSO); {len(inconc)} celulas INCONCLUSIVAS POR AMOSTRA: "
+          f"{sorted(inconc) if inconc else '(nenhuma)'}. EXPLORATORIO: nada "
+          f"aqui promove nada.")
     return 0
 
 
