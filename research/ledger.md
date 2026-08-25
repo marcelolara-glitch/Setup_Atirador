@@ -1188,6 +1188,28 @@ REGRA: alterou comportamento de detector, incrementa o setup_id
 Para keepitsimple isso já é coberto por tests/test_trava_superficie_kis.py;
 para detectores futuros, é disciplina.
 
+## 2026-08-25 — PR-E: parâmetros do detector dentro do config_hash
+
+Os sete parâmetros do KIS (limiar 0.02, adx_min 11, EMA 8/21, ATR 14, ADX 13,
+confirmação 2) viviam DENTRO de detector_kis_regime e não entravam no hash —
+mudar qualquer um deles não mudava a identidade da série. Agora vão em
+SetupSpec.detector_params e entram. Nenhum valor mudou: pipeline rodado antes
+e depois sobre a mesma série, 49 trades, zero divergências.
+  kis_regime_4h   53f05ad99e8a -> e63ec120e131
+  donchian_a_4h   40497232d65b -> 250170cc8dc0
+trades_v10 estava VAZIA no merge — nenhuma linha órfã, sem migração.
+
+DEPENDÊNCIA CORTADA: v10/registro.py não importa mais de shadow/kis_regime.py
+(apêndice aposentado em 23/08). `avaliar` foi para backtest/kis_regime.py — a
+bancada, que já era dona de `passa` e `inclinacoes`. A lista branca da trava
+de superfície passou a cobrir os DOIS consumidores (shadow/kis_regime.py e
+v10/registro.py), com teste reprovando reintrodução do import.
+
+DÍVIDA ANOTADA PARA OUTUBRO: v10/registro.py ainda importa de
+shadow/donchian_a.py. Hoje é legítimo — aquele shadow está VIVO e a ficha do
+v10 é espelho dele. Quando a janela do Estágio 2 fechar e o shadow for
+desativado, esse import vira a mesma dívida que o PR-E acabou de pagar.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
