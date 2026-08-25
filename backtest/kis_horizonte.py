@@ -57,6 +57,15 @@
 # extracao de entradas: `extremos_entries` prende WARMUP em 21 e o par em 8/21,
 # entao a versao parametrizada por (fast, slow) mora aqui.
 #
+# QUEBRA POR DIRECAO — o teste de BETA. O forward do DONCHIAN-A (canal de 20
+# dias, horizonte VIZINHO da EMA89 em 4h) fez 16 de 18 vitorias num UNICO
+# episodio de alta, TODAS LONG, zero short vencedor. Se o ganho de 34/89 na 2a
+# metade for a mesma coisa — LONG carregando tudo, SHORT em zero ou negativo —
+# a varredura mediu o mercado subindo, nao a escala de tempo do detector, e a
+# hipotese do briefing NAO foi testada. Um par que so ganha de um lado num
+# regime de alta e indistinguivel de comprar e segurar; dai `--buyhold` ao
+# lado. E AGREGACAO do `direction` que o trade ja carrega: nenhum retorno muda.
+#
 # MEMORIA: mesma disciplina do kis_regime e do kis_trail (a VM tem 956 MiB
 # TOTAIS com o cron na mesma maquina). So escalares sobrevivem — 2 floats + 1
 # inteiro de 2 bits por trade, por par. O teto de RSS e checado a cada par de
@@ -79,9 +88,9 @@ sys.path.insert(0, str(ROOT))
 
 from backtest.keepitsimple import EXT_CAP, EXT_CONF, _adx      # noqa: E402
 from backtest.kis_regime import alvos, inclinacoes, passa      # noqa: E402
-from backtest.kis_trail import (COST_BPS, MIN_TRADES,          # noqa: E402
-                                RSS_CEILING_MIB, _rss_mib, aprovada,
-                                metricas, trail_exit)
+from backtest.kis_trail import (COST_BPS, METADE_1, METADE_2,  # noqa: E402
+                                MIN_TRADES, RSS_CEILING_MIB, _dentro,
+                                _rss_mib, aprovada, metricas, trail_exit)
 
 # GRADE FECHADA, definida no briefing e NAO ajustavel depois do fato: 4 pares x
 # portao desligado/ligado = 8 celulas. (8, 21) e o par de hoje, entao
@@ -140,14 +149,32 @@ def mascara(direction: str, incl, adx) -> int:
 def celula(trades: list, bit: int) -> list:
     """Trades da celula no formato que `kis_trail.metricas` le: (bar_ts,
     sequencia indexavel de retornos), lida com indice 0."""
-    return [(ts, (r,)) for ts, r, mask in trades if mask >> bit & 1]
+    return [(ts, (r,)) for ts, r, mask, _lg in trades if mask >> bit & 1]
+
+
+def por_direcao(trades: list, bit: int) -> dict:
+    """Os seis campos da quebra de UMA celula. Reusa `metricas` nos dois
+    subconjuntos em vez de reimplementar as metades: mesmo corte por data de
+    ENTRADA, entao long + short fecha EXATO no total (tem teste). O bit da
+    celula filtra antes do lado — senao a celula com portao reportaria a
+    quebra da celula sem ele."""
+    lados = {}
+    for nome, alvo in (("long", True), ("short", False)):
+        lados[nome] = metricas([(ts, (r,)) for ts, r, mask, lg in trades
+                                if mask >> bit & 1 and lg is alvo], 0)
+    return {f"n_{n}": lados[n]["n_trades"] for n in lados} | {
+        f"ret_{m}_{n}_bps": lados[n][f"ret_{m}_metade_bps"]
+        for n in lados for m in ("1a", "2a")}
 
 
 def run(store: str, symbols: list, start_iso: str, end_iso: str, tf: str) -> dict:
     """Por simbolo: le as velas UMA vez, calcula inclinacao/ADX UMA vez (o
     portao nao depende do par) e roda os 4 pares sobre elas, guardando por par
-    (bar_ts, retorno, mascara de 2 bits). `measure_event` roda por par porque as
-    entradas mudam com o par — e o custo real de varrer horizonte.
+    (bar_ts, retorno, mascara de 2 bits, is_long). `measure_event` roda por par
+    porque as entradas mudam com o par — e o custo real de varrer horizonte.
+    A direcao vai num 4o campo, FORA da mascara: mascara e filiacao em celula, e
+    juntar as duas coisas num inteiro so cobra o preco na primeira vez que
+    alguem iterar os bits achando que todos sao celulas.
     Imports pesados sao lazy p/ os testes coletarem no sandbox."""
     from backtest.candle_store import connect, read_candles          # noqa: E402
     from backtest.excursion import _iso_to_ms, measure_event         # noqa: E402
@@ -182,7 +209,8 @@ def run(store: str, symbols: list, start_iso: str, end_iso: str, tf: str) -> dic
                                   m["fwd_bar"], ev["hold"], 0, 0)
                        * ap * 1e4 - COST_BPS)
                 trades.append((ev["bar_ts"], ret,
-                               mascara(ev["direction"], incl[i], adx[i])))
+                               mascara(ev["direction"], incl[i], adx[i]),
+                               ev["direction"] == "LONG"))
             por_par[par] = trades
             rss = _rss_mib()
             if rss > RSS_CEILING_MIB:
@@ -216,6 +244,7 @@ def linhas(por_sym: dict) -> list:
             out.append(dict(
                 symbol=sym, ema_fast=par[0], ema_slow=par[1],
                 portao=int(portao), **m,
+                **por_direcao(por_par[par], 1 if portao else 0),
                 pct_sinais_mantidos=(100.0 * m["n_trades"] / ctl["n_trades"]
                                      if ctl["n_trades"] else 0.0),
                 delta_1a_vs_controle=(m["ret_1a_metade_bps"]
@@ -249,6 +278,36 @@ def valida_portao(store: str, symbols: list, start_iso: str, end_iso: str,
     return dif, n_a, n_b
 
 
+def buyhold(store: str, symbols: list, start_iso: str, end_iso: str,
+            tf: str) -> dict:
+    """Primeiro close da metade -> ultimo close da metade, em bps, por simbolo.
+    SO leitura do store: sem detector, sem portao e SEM CUSTO de proposito —
+    cobrar corretagem da referencia adulteraria a favor do detector a resposta
+    de "ganhou do mercado ou junto com ele?". UNIVERSO e media SIMPLES entre
+    simbolos, nao soma (somar bps de tokens diferentes nao significa nada).
+    Metade sem dois candles devolve None e fica FORA da media, em vez de virar
+    zero e diluir a referencia."""
+    from backtest.candle_store import connect, read_candles          # noqa: E402
+    from backtest.excursion import _iso_to_ms                        # noqa: E402
+    conn = connect(store)
+    start_ms, end_ms = _iso_to_ms(start_iso), _iso_to_ms(end_iso)
+    out: dict = {}
+    for sym in symbols:
+        cndl = read_candles(conn, sym, tf, start_ms=start_ms, end_ms=end_ms)
+        linha = {}
+        for nome, faixa in (("1a", METADE_1), ("2a", METADE_2)):
+            d = [c for c in cndl if _dentro(c["ts"], faixa)]
+            linha[nome] = (1e4 * (d[-1]["close"] / d[0]["close"] - 1.0)
+                           if len(d) >= 2 and d[0]["close"] > 0 else None)
+        out[sym] = linha
+    conn.close()
+    out["UNIVERSO"] = {}
+    for nome in ("1a", "2a"):
+        vs = [x[nome] for x in out.values() if x.get(nome) is not None]
+        out["UNIVERSO"][nome] = sum(vs) / len(vs) if vs else None
+    return out
+
+
 def inconclusivas(rows: list) -> set:
     """Celulas (ema_fast, ema_slow, portao) cuja MEDIANA de trades POR TOKEN
     fica abaixo do MIN_TRADES. Le as linhas por simbolo e NUNCA a do UNIVERSO:
@@ -273,8 +332,10 @@ def _marca(row: dict, inconc: set) -> str:
 
 
 CAMPOS = ["symbol", "ema_fast", "ema_slow", "portao", "n_trades",
-          "pct_sinais_mantidos", "acerto_pct", "ret_1a_metade_bps",
-          "ret_2a_metade_bps", "ret_total_bps", "delta_1a_vs_controle",
+          "n_long", "n_short", "ret_1a_long_bps", "ret_1a_short_bps",
+          "ret_2a_long_bps", "ret_2a_short_bps", "pct_sinais_mantidos",
+          "acerto_pct", "ret_1a_metade_bps", "ret_2a_metade_bps",
+          "ret_total_bps", "delta_1a_vs_controle",
           "delta_2a_vs_controle", "dd_max_bps", "trimestres_pos",
           "trimestres_total"]
 
@@ -292,6 +353,8 @@ def main() -> int:
                     help="default: logs/sweep_horizonte_<data>.csv")
     ap.add_argument("--valida-portao", action="store_true",
                     help="roda tambem o kis_regime e prova max|dif| = 0")
+    ap.add_argument("--buyhold", action="store_true",
+                    help="linha de base: comprar e segurar, por metade")
     args = ap.parse_args()
     from backtest.sweep import TIER1                                 # noqa: E402
     symbols = args.symbols if args.symbols else TIER1
@@ -367,6 +430,34 @@ def main() -> int:
               f"{row['trimestres_pos']:>3}/{row['trimestres_total']:<3} | "
               f"{_marca(row, inconc)}")
     apr = sum(1 for r_ in rows if aprovada(r_) and _marca(r_, inconc) == 'ok')
+    print("\n===== QUEBRA POR DIRECAO — o teste de BETA =====")
+    print("(se o ganho de um par estiver TODO no lado long e o short ficar em "
+          "zero ou negativo, o que foi medido e o mercado subindo, nao a escala "
+          "de tempo. Comparar com --buyhold antes de concluir qualquer coisa.)")
+    print(f"{'symbol':>10} | {'par':>7} | {'ptao':>4} | {'nL':>4} | {'nS':>4} | "
+          f"{'1a_long':>9} | {'1a_short':>9} | {'2a_long':>9} | "
+          f"{'2a_short':>9} | ok")
+    for row in rows:
+        par = "{}/{}".format(row["ema_fast"], row["ema_slow"])
+        print(f"{row['symbol']:>10} | {par:>7} | {row['portao']:>4} | "
+              f"{row['n_long']:>4} | {row['n_short']:>4} | "
+              f"{row['ret_1a_long_bps']:>9.1f} | "
+              f"{row['ret_1a_short_bps']:>9.1f} | "
+              f"{row['ret_2a_long_bps']:>9.1f} | "
+              f"{row['ret_2a_short_bps']:>9.1f} | {_marca(row, inconc)}")
+
+    if args.buyhold:
+        bh = buyhold(args.store, symbols, args.start, args.end, args.tf)
+        print("\n===== LINHA DE BASE: COMPRAR E SEGURAR (sem custo) =====")
+        print("(primeiro close da metade -> ultimo close da metade. UNIVERSO e "
+              "media SIMPLES entre simbolos. Celula que nao bate isto no MESMO "
+              "periodo nao tem o que promover.)")
+        print(f"{'symbol':>10} | {'1a(bps)':>10} | {'2a(bps)':>10}")
+        for sym, meias in bh.items():
+            f1, f2 = (f"{meias[m]:>10.1f}" if meias[m] is not None
+                      else f"{'s/dado':>10}" for m in ("1a", "2a"))
+            print(f"{sym:>10} | {f1} | {f2}")
+
     print(f"\ncelulas aprovadas: {apr} de {len(rows)} avaliadas (inclui as "
           f"linhas UNIVERSO); {len(inconc)} celulas INCONCLUSIVAS POR AMOSTRA: "
           f"{sorted(inconc) if inconc else '(nenhuma)'}. EXPLORATORIO: nada "

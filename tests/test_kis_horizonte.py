@@ -142,13 +142,15 @@ def test_inclinacao_do_portao_usa_a_ema21_por_default():
 # ----------------------------------------------------------------- celulas
 
 def test_celula_le_pelo_bit_certo_e_preserva_o_retorno():
-    trades = [(1, 10.0, 0b11), (2, -5.0, 0b01), (3, 7.0, 0b11)]
+    trades = [(1, 10.0, 0b11, True), (2, -5.0, 0b01, False),
+              (3, 7.0, 0b11, True)]
     assert celula(trades, 0) == [(1, (10.0,)), (2, (-5.0,)), (3, (7.0,))]
     assert celula(trades, 1) == [(1, (10.0,)), (3, (7.0,))]
 
 
 def test_celula_com_portao_e_subconjunto_da_sem_portao():
-    trades = [(1, 10.0, 0b11), (2, -5.0, 0b01), (3, 7.0, 0b11)]
+    trades = [(1, 10.0, 0b11, True), (2, -5.0, 0b01, False),
+              (3, 7.0, 0b11, True)]
     sem, com = celula(trades, 0), celula(trades, 1)
     assert set(t[0] for t in com) <= set(t[0] for t in sem)
 
@@ -157,7 +159,7 @@ def test_celula_com_portao_e_subconjunto_da_sem_portao():
 
 def _por_sym(n_por_par: dict) -> dict:
     """{par: [(ts, ret, mask)]} para um simbolo so, com ts em datas reais."""
-    return {"AAA": {p: [(_ts("2024-07-01"), 10.0, 0b11)] * n
+    return {"AAA": {p: [(_ts("2024-07-01"), 10.0, 0b11, True)] * n
                     for p, n in n_por_par.items()}}
 
 
@@ -186,10 +188,12 @@ def test_simbolo_sem_trade_nao_divide_por_zero():
 
 def test_delta_e_a_distancia_ate_o_controle_do_PROPRIO_simbolo():
     ts1, ts2 = _ts("2024-07-01"), _ts("2025-10-01")     # 1a e 2a metades
-    por_sym = {"AAA": {p: [(ts1, 10.0, 0b11), (ts2, 20.0, 0b11)]
+    por_sym = {"AAA": {p: [(ts1, 10.0, 0b11, True), (ts2, 20.0, 0b11, True)]
                        for p in PARES},
-               "BBB": {p: [(ts1, 1.0, 0b11), (ts2, 2.0, 0b11)] for p in PARES}}
-    por_sym["AAA"][(34, 89)] = [(ts1, 30.0, 0b11), (ts2, 50.0, 0b11)]
+               "BBB": {p: [(ts1, 1.0, 0b11, True), (ts2, 2.0, 0b11, True)]
+                       for p in PARES}}
+    por_sym["AAA"][(34, 89)] = [(ts1, 30.0, 0b11, True),
+                                (ts2, 50.0, 0b11, True)]
     r = next(x for x in linhas(por_sym)
              if x["symbol"] == "AAA" and x["ema_fast"] == 34
              and x["portao"] == 0)
@@ -209,7 +213,7 @@ def test_controle_contra_si_mesmo_da_zero():
 
 def test_celula_com_mediana_por_token_abaixo_do_minimo_e_inconclusiva():
     from backtest.kis_horizonte import MIN_TRADES, inconclusivas
-    por_sym = {s: {p: [(_ts("2024-07-01"), 1.0, 0b11)] * n
+    por_sym = {s: {p: [(_ts("2024-07-01"), 1.0, 0b11, True)] * n
                    for p, n in {(8, 21): 40, (34, 89): 40, (55, 144): 40,
                                 (89, 233): 18}.items()}
                for s in ("AAA", "BBB", "CCC")}
@@ -222,8 +226,8 @@ def test_universo_nao_mascara_a_falta_de_amostra_por_token():
     """3 tokens de 18 trades somam 54 no UNIVERSO — acima do MIN_TRADES. Se a
     conta lesse a linha do UNIVERSO, a celula passaria batido."""
     from backtest.kis_horizonte import inconclusivas
-    por_sym = {s: {p: [(_ts("2024-07-01"), 1.0, 0b11)] * 18 for p in PARES}
-               for s in ("AAA", "BBB", "CCC")}
+    por_sym = {s: {p: [(_ts("2024-07-01"), 1.0, 0b11, True)] * 18
+                   for p in PARES} for s in ("AAA", "BBB", "CCC")}
     rows = linhas(por_sym)
     assert next(r for r in rows if r["symbol"] == "UNIVERSO"
                 and r["ema_fast"] == 89)["n_trades"] == 54
@@ -239,6 +243,116 @@ def test_amos_vence_ok_mesmo_com_a_celula_aprovada():
     assert _marca(row, {(89, 233, 1)}) == "amos"
 
 
+# --------------------------------------------------- quebra por direcao
+
+def _mix(ts1, ts2) -> dict:
+    """2 LONG e 1 SHORT por metade, com retornos distintos por lado."""
+    return {p: [(ts1, 10.0, 0b11, True), (ts1, 20.0, 0b11, True),
+                (ts1, -4.0, 0b11, False), (ts2, 100.0, 0b11, True),
+                (ts2, 200.0, 0b11, True), (ts2, -7.0, 0b11, False)]
+            for p in PARES}
+
+
+def test_quebra_por_direcao_soma_de_volta_no_total_da_metade():
+    ts1, ts2 = _ts("2024-07-01"), _ts("2025-10-01")
+    r = next(x for x in linhas({"AAA": _mix(ts1, ts2)})
+             if x["symbol"] == "AAA" and x["ema_fast"] == 8
+             and x["portao"] == 0)
+    assert r["n_long"] + r["n_short"] == r["n_trades"] == 6
+    assert (r["ret_1a_long_bps"] + r["ret_1a_short_bps"]
+            == pytest.approx(r["ret_1a_metade_bps"]))
+    assert (r["ret_2a_long_bps"] + r["ret_2a_short_bps"]
+            == pytest.approx(r["ret_2a_metade_bps"]))
+
+
+def test_quebra_por_direcao_separa_os_lados_corretamente():
+    ts1, ts2 = _ts("2024-07-01"), _ts("2025-10-01")
+    r = next(x for x in linhas({"AAA": _mix(ts1, ts2)})
+             if x["symbol"] == "AAA" and x["ema_fast"] == 8
+             and x["portao"] == 0)
+    assert (r["n_long"], r["n_short"]) == (4, 2)
+    assert r["ret_1a_long_bps"] == pytest.approx(30.0)     # 10 + 20
+    assert r["ret_1a_short_bps"] == pytest.approx(-4.0)
+    assert r["ret_2a_long_bps"] == pytest.approx(300.0)    # 100 + 200
+    assert r["ret_2a_short_bps"] == pytest.approx(-7.0)
+
+
+def test_quebra_respeita_o_portao_da_celula():
+    """O bit da celula filtra ANTES do lado — senao a celula com portao
+    reportaria a quebra da celula sem portao."""
+    ts1 = _ts("2024-07-01")
+    por_sym = {"AAA": {p: [(ts1, 10.0, 0b11, True), (ts1, 99.0, 0b01, True),
+                           (ts1, -4.0, 0b11, False)] for p in PARES}}
+    com = next(x for x in linhas(por_sym) if x["symbol"] == "AAA"
+               and x["ema_fast"] == 8 and x["portao"] == 1)
+    assert (com["n_long"], com["n_short"]) == (1, 1)
+    assert com["ret_1a_long_bps"] == pytest.approx(10.0)   # o 99.0 ficou fora
+
+
+def test_campos_do_csv_carregam_a_quebra_por_direcao():
+    for c in ("n_long", "n_short", "ret_1a_long_bps", "ret_1a_short_bps",
+              "ret_2a_long_bps", "ret_2a_short_bps"):
+        assert c in CAMPOS
+    for r in linhas(_por_sym({p: 2 for p in PARES})):
+        assert all(c in r for c in CAMPOS)
+
+
+# ----------------------------------------------- linha de base buy-and-hold
+
+def test_buyhold_e_o_primeiro_contra_o_ultimo_close_de_cada_metade(tmp_path):
+    _stub_pesados()
+    pytest.importorskip("backtest.excursion")
+    from backtest.candle_store import connect, upsert_candles
+    from backtest.kis_horizonte import buyhold
+
+    dia = 86_400_000
+    t0 = _ts("2024-05-22")
+    # 1a metade: 100 -> 110 (+1000 bps). 2a metade: 200 -> 190 (-500 bps).
+    velas = ([{"ts": t0 + i * dia, "open": 100.0, "high": 100.0, "low": 100.0,
+               "close": 100.0, "volume": 1.0} for i in range(5)]
+             + [{"ts": _ts("2025-06-06"), "open": 110.0, "high": 110.0,
+                 "low": 110.0, "close": 110.0, "volume": 1.0},
+                {"ts": _ts("2025-06-07"), "open": 200.0, "high": 200.0,
+                 "low": 200.0, "close": 200.0, "volume": 1.0},
+                {"ts": _ts("2025-10-01"), "open": 190.0, "high": 190.0,
+                 "low": 190.0, "close": 190.0, "volume": 1.0}])
+    db = tmp_path / "bh.db"
+    conn = connect(db)
+    upsert_candles(conn, "AAA", "4h", velas)
+    conn.close()
+
+    bh = buyhold(str(db), ["AAA"], "2024-05-22", "2026-06-21", "4h")
+    assert bh["AAA"]["1a"] == pytest.approx(1000.0)
+    assert bh["AAA"]["2a"] == pytest.approx(-500.0)
+    # 1 simbolo: a media simples do UNIVERSO e o proprio simbolo
+    assert bh["UNIVERSO"]["1a"] == pytest.approx(1000.0)
+    assert bh["UNIVERSO"]["2a"] == pytest.approx(-500.0)
+
+
+def test_buyhold_sem_candle_na_metade_devolve_None_e_fica_fora_da_media(tmp_path):
+    """Metade vazia entrando como zero diluiria a referencia — entao ela sai
+    da media em vez de virar 0.0."""
+    _stub_pesados()
+    pytest.importorskip("backtest.excursion")
+    from backtest.candle_store import connect, upsert_candles
+    from backtest.kis_horizonte import buyhold
+
+    db = tmp_path / "bh2.db"
+    conn = connect(db)
+    upsert_candles(conn, "AAA", "4h", [
+        {"ts": _ts("2025-06-07"), "open": 100.0, "high": 100.0, "low": 100.0,
+         "close": 100.0, "volume": 1.0},
+        {"ts": _ts("2025-10-01"), "open": 150.0, "high": 150.0, "low": 150.0,
+         "close": 150.0, "volume": 1.0}])
+    conn.close()
+
+    bh = buyhold(str(db), ["AAA"], "2024-05-22", "2026-06-21", "4h")
+    assert bh["AAA"]["1a"] is None                 # nenhum candle na 1a metade
+    assert bh["AAA"]["2a"] == pytest.approx(5000.0)
+    assert bh["UNIVERSO"]["1a"] is None            # media de lista vazia
+    assert bh["UNIVERSO"]["2a"] == pytest.approx(5000.0)
+
+
 # -------------------------------------------------------------------- CSV
 
 def test_campos_trocam_limiar_e_adx_min_pelo_par_e_pelo_portao():
@@ -246,8 +360,12 @@ def test_campos_trocam_limiar_e_adx_min_pelo_par_e_pelo_portao():
     assert "limiar" not in CAMPOS and "adx_min" not in CAMPOS
     assert CAMPOS[:4] == ["symbol", "ema_fast", "ema_slow", "portao"]
     assert "pct_sinais_mantidos" in CAMPOS
-    # o resto do CSV e o mesmo do sweep_regime, na mesma ordem
-    assert ([c for c in CAMPOS if c not in ("ema_fast", "ema_slow", "portao")]
+    # tirando o par, o portao e o bloco de direcao, o CSV e o mesmo do
+    # sweep_regime NA MESMA ORDEM — a quebra ACRESCENTA, nao reorganiza.
+    novas = {"ema_fast", "ema_slow", "portao", "n_long", "n_short",
+             "ret_1a_long_bps", "ret_1a_short_bps", "ret_2a_long_bps",
+             "ret_2a_short_bps"}
+    assert ([c for c in CAMPOS if c not in novas]
             == [c for c in CAMPOS_REGIME if c not in ("limiar", "adx_min")])
 
 
