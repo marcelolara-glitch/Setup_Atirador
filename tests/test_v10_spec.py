@@ -27,6 +27,7 @@ def _spec(**kw) -> SetupSpec:
                 cadencia_barras=1, symbols=["BTCUSDT", "ETHUSDT"],
                 warmup_barras=21, exit_model="reverse",
                 exit_params={"alvo": "extremos", "conf": 2},
+                detector_params={"limiar": 0.02, "adx_min": 11},
                 direcoes=("LONG", "SHORT"), custo_bps_por_perna=6.0,
                 mode="shadow", estado_ciclo="proposto", aviso="janela unica")
     base.update(kw)
@@ -72,6 +73,7 @@ _VARIACOES = {
     "setup_id": "outro", "detector": detector_b, "tf": "1H",
     "cadencia_barras": 2, "symbols": ["BTCUSDT"], "warmup_barras": 22,
     "exit_model": "bracket_multi", "exit_params": {"alvo": "extremos", "conf": 3},
+    "detector_params": {"limiar": 0.03, "adx_min": 11},
     "direcoes": ("LONG",), "custo_bps_por_perna": 12.0, "mode": "live",
     "estado_ciclo": "em_bancada", "aviso": "",
 }
@@ -95,6 +97,22 @@ def test_hashes_das_variacoes_sao_todos_distintos():
     # colidir entre si, senao o hash deixa de identificar a configuracao.
     hs = {replace(_spec(), **{c: v}).config_hash for c, v in _VARIACOES.items()}
     assert len(hs) == len(_VARIACOES)
+
+
+def test_parametro_do_detector_muda_o_hash():
+    # O motivo do campo existir. Antes do PR-E o limiar vivia DENTRO do
+    # detector: trocar 0.02 por 0.03 deixava o hash igual, e as duas
+    # configuracoes gravavam na mesma serie de `trades_v10`.
+    a = _spec(detector_params={"limiar": 0.02, "adx_min": 11})
+    b = _spec(detector_params={"limiar": 0.03, "adx_min": 11})
+    assert a.config_hash != b.config_hash
+
+
+def test_reordenar_detector_params_nao_muda_o_hash():
+    a = _spec(detector_params={"limiar": 0.02, "adx_min": 11})
+    b = _spec(detector_params={"adx_min": 11, "limiar": 0.02})
+    assert list(a.detector_params) != list(b.detector_params)
+    assert a.config_hash == b.config_hash
 
 
 def test_reload_do_detector_nao_muda_o_hash():

@@ -17,6 +17,15 @@ BRANCA de fontes: detector e portao de shadow/kis_regime.py so podem vir de
 parte reprova. O modulo novo de horizonte (EMA 13/34, 21/55, 34/89) NAO entra na
 lista — quando ele existir, quem o consumir e outro coletor, com trava propria.
 
+ADENDO 2 (23/08) — a MESMA checagem passa a valer para `v10/registro.py`. Com o
+cron do shadow desativado, quem carrega o detector em producao e o v10, e ele
+importa `_alvo_extremos`/`states` (via `backtest.kis_regime.alvos`) e `passa`
+das mesmas duas fontes. A lista branca agora tem DOIS consumidores, declarados
+em CONSUMIDORES: se o v10 comecar a puxar detector de um modulo novo, reprova
+aqui exatamente como o shadow reprovaria. O v10 tambem nao pode voltar a
+importar de `shadow.kis_regime` — o apendice aposentado — e isso tem teste
+proprio.
+
 A serie do golden nao e decorativa. As 78 primeiras barras sao aritmetica
 simples e cobrem os 5 estados; as 78 seguintes foram CONSTRUIDAS barra a barra
 para cair DENTRO das frestas entre as EMAs (close entre EMA8 e EMA9; EMA8 entre
@@ -42,6 +51,17 @@ CONGELADOS = ("WARMUP", "states", "_alvo_extremos", "_adx")
 FONTES_SINAL = {"backtest.keepitsimple", "backtest.kis_regime"}
 # Infra do proprio shadow (DB, fetch, formatadores do [VIGIA]) — nao e sinal.
 FONTES_INFRA = {"shadow.donchian_a", "shadow.vigia"}
+# Infra do v10: a ficha em si, e o modulo do DONCHIAN-A — que ali NAO e infra, e
+# a instancia em producao da janela pre-registrada, de onde a ficha copia canal,
+# ATR e parametros de saida. Sai desta lista no dia em que a janela fechar.
+FONTES_INFRA_V10 = {"v10.spec", "shadow.donchian_a"}
+# Os DOIS consumidores da lista branca (adendo 2), com a infra que cada um pode
+# alcancar alem das fontes de sinal. Consumidor novo entra aqui de proposito.
+CONSUMIDORES = {"shadow/kis_regime.py": FONTES_INFRA,
+                "v10/registro.py": FONTES_INFRA_V10}
+# `shadow/kis_regime.py` teve o cron desativado em 23/08. O v10 nao pode
+# depender do apendice aposentado — nem por constante, nem por funcao.
+APOSENTADO = "shadow.kis_regime"
 
 # Cauda construida (ver docstring): fresta entre EMA8/EMA9 e entre EMA21/EMA22.
 _CAUDA = [
@@ -263,6 +283,42 @@ def test_kis_regime_importa_de_backtest_so_a_lista_branca():
     de_backtest = {m for m in _origens_de("shadow/kis_regime.py")
                    if m.split(".")[0] == "backtest"}
     assert de_backtest == FONTES_SINAL
+
+
+# --- adendo 2: a mesma trava vale para o consumidor v10 ----------------------
+def test_os_consumidores_da_lista_branca_sao_estes_dois():
+    # Consumidor novo entra EDITANDO esta linha, nunca por import solto.
+    assert set(CONSUMIDORES) == {"shadow/kis_regime.py", "v10/registro.py"}
+    assert all((ROOT / rel).exists() for rel in CONSUMIDORES)
+
+
+def test_nenhum_consumidor_importa_fonte_fora_da_lista_branca():
+    for rel, infra in CONSUMIDORES.items():
+        fora = _origens_de(rel) - FONTES_SINAL - infra
+        assert not fora, f"{rel}: origem fora da lista branca: {sorted(fora)}"
+
+
+def test_nenhum_consumidor_importa_de_backtest_fora_da_lista_branca():
+    for rel in CONSUMIDORES:
+        de_backtest = {m for m in _origens_de(rel)
+                       if m.split(".")[0] == "backtest"}
+        assert de_backtest <= FONTES_SINAL, f"{rel}: {sorted(de_backtest)}"
+
+
+def test_v10_nao_depende_do_shadow_aposentado():
+    # O ponto do adendo 1: com o cron desligado, o v10 importar constante ou
+    # funcao daqui deixaria a maquina oficial pendurada num apendice morto.
+    assert APOSENTADO not in _origens_de("v10/registro.py")
+
+
+def test_v10_importa_de_keepitsimple_no_maximo_a_lista_congelada():
+    # Se o v10 passar a puxar um quinto nome do detector, ele entra na TRAVA de
+    # proposito — como ja acontece com o shadow —, nunca por acidente.
+    arv = ast.parse((ROOT / "v10" / "registro.py").read_text())
+    nomes = {a.name for no in ast.walk(arv)
+             if isinstance(no, ast.ImportFrom)
+             and no.module == "backtest.keepitsimple" for a in no.names}
+    assert nomes <= set(CONGELADOS), f"nome novo fora da trava: {sorted(nomes)}"
 
 
 def test_portao_vem_de_kis_regime_da_bancada():

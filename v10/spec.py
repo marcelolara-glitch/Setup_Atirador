@@ -15,6 +15,12 @@ TODOS os campos entram no hash, inclusive ``estado_ciclo`` e ``aviso``. É de
 propósito: um resultado gerado sob "proposto" não deve se confundir com o
 mesmo setup depois de promovido, mesmo que os números sejam idênticos.
 
+Isso vale, em particular, para ``detector_params``: o parâmetro do detector
+entra na ficha justamente para entrar no hash. Um detector que lesse limiar ou
+período de constante de módulo estaria fora da identidade da configuração —
+mudá-lo não mudaria o hash, e as linhas novas cairiam na MESMA série das
+antigas, medindo duas configurações como se fossem uma.
+
 UMA exceção, declarada em :data:`FORA_DO_HASH`: ``executar``. Ele não descreve
 COMO o setup mede — descreve se o orquestrador o chama nesta rodada. Um setup
 desligado não produz linha nenhuma; religá-lo tem de devolver as linhas novas à
@@ -51,6 +57,12 @@ class SetupSpec:
             (``"bracket_multi"`` | ``"reverse"`` | ``"bracket_simples"``).
         exit_params: parâmetros do adaptador de saída. Formato livre — é o
             adaptador que os interpreta, não o schema.
+        detector_params: parâmetros do DETECTOR — limiares, períodos, tudo o
+            que muda o que ele mede. O runner os entrega ao detector a cada
+            chamada; o detector NÃO os lê de constante de módulo. É a diferença
+            entre o parâmetro estar na ficha (e portanto no ``config_hash``) e
+            estar escondido dentro da função, onde mudá-lo NÃO mudaria o hash e
+            trades de configurações diferentes se misturariam na mesma série.
         direcoes: direções permitidas.
         custo_bps_por_perna: custo por perna em bps, para o pnl líquido.
         mode: ``"shadow"`` | ``"live"`` | ``"backtest"``. Não é rótulo: o
@@ -74,6 +86,7 @@ class SetupSpec:
     warmup_barras: int
     exit_model: str
     exit_params: dict = field(default_factory=dict)
+    detector_params: dict = field(default_factory=dict)
     direcoes: tuple = ("LONG", "SHORT")
     custo_bps_por_perna: float = 0.0
     mode: str = "shadow"
