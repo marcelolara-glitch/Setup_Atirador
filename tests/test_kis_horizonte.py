@@ -43,7 +43,7 @@ def _serie(n: int, bar_ms: int = 14_400_000) -> list:
 # ------------------------------------------------------------ grade fechada
 
 def test_grade_tem_8_celulas_e_e_a_do_briefing():
-    assert PARES == ((8, 21), (13, 34), (21, 55), (34, 89))
+    assert PARES == ((8, 21), (34, 89), (55, 144), (89, 233))
     assert PORTAO == (False, True)
     assert GRADE == [(p, g) for p in PARES for g in PORTAO]
     assert len(GRADE) == 8 and len(set(GRADE)) == 8
@@ -171,12 +171,12 @@ def test_linhas_cobre_cada_celula_de_cada_simbolo_mais_o_universo():
 
 
 def test_pct_sinais_mantidos_e_n_da_celula_sobre_n_do_controle():
-    por_sym = _por_sym({(8, 21): 10, (13, 34): 5, (21, 55): 2, (34, 89): 1})
+    por_sym = _por_sym({(8, 21): 10, (34, 89): 5, (55, 144): 2, (89, 233): 1})
     rows = {(r["ema_fast"], r["portao"]): r for r in linhas(por_sym)
             if r["symbol"] == "AAA"}
     assert rows[(8, 0)]["pct_sinais_mantidos"] == pytest.approx(100.0)
-    assert rows[(13, 0)]["pct_sinais_mantidos"] == pytest.approx(50.0)
-    assert rows[(34, 0)]["pct_sinais_mantidos"] == pytest.approx(10.0)
+    assert rows[(34, 0)]["pct_sinais_mantidos"] == pytest.approx(50.0)
+    assert rows[(89, 0)]["pct_sinais_mantidos"] == pytest.approx(10.0)
 
 
 def test_simbolo_sem_trade_nao_divide_por_zero():
@@ -189,9 +189,9 @@ def test_delta_e_a_distancia_ate_o_controle_do_PROPRIO_simbolo():
     por_sym = {"AAA": {p: [(ts1, 10.0, 0b11), (ts2, 20.0, 0b11)]
                        for p in PARES},
                "BBB": {p: [(ts1, 1.0, 0b11), (ts2, 2.0, 0b11)] for p in PARES}}
-    por_sym["AAA"][(13, 34)] = [(ts1, 30.0, 0b11), (ts2, 50.0, 0b11)]
+    por_sym["AAA"][(34, 89)] = [(ts1, 30.0, 0b11), (ts2, 50.0, 0b11)]
     r = next(x for x in linhas(por_sym)
-             if x["symbol"] == "AAA" and x["ema_fast"] == 13
+             if x["symbol"] == "AAA" and x["ema_fast"] == 34
              and x["portao"] == 0)
     assert r["delta_1a_vs_controle"] == pytest.approx(20.0)   # 30 - 10
     assert r["delta_2a_vs_controle"] == pytest.approx(30.0)   # 50 - 20
@@ -203,6 +203,40 @@ def test_controle_contra_si_mesmo_da_zero():
             assert r["delta_1a_vs_controle"] == 0.0
             assert r["delta_2a_vs_controle"] == 0.0
             assert r["pct_sinais_mantidos"] == pytest.approx(100.0)
+
+
+# ------------------------------------------ inconclusiva POR AMOSTRA
+
+def test_celula_com_mediana_por_token_abaixo_do_minimo_e_inconclusiva():
+    from backtest.kis_horizonte import MIN_TRADES, inconclusivas
+    por_sym = {s: {p: [(_ts("2024-07-01"), 1.0, 0b11)] * n
+                   for p, n in {(8, 21): 40, (34, 89): 40, (55, 144): 40,
+                                (89, 233): 18}.items()}
+               for s in ("AAA", "BBB", "CCC")}
+    inconc = inconclusivas(linhas(por_sym))
+    assert MIN_TRADES == 30
+    assert {c[:2] for c in inconc} == {(89, 233)}      # os dois portoes
+
+
+def test_universo_nao_mascara_a_falta_de_amostra_por_token():
+    """3 tokens de 18 trades somam 54 no UNIVERSO — acima do MIN_TRADES. Se a
+    conta lesse a linha do UNIVERSO, a celula passaria batido."""
+    from backtest.kis_horizonte import inconclusivas
+    por_sym = {s: {p: [(_ts("2024-07-01"), 1.0, 0b11)] * 18 for p in PARES}
+               for s in ("AAA", "BBB", "CCC")}
+    rows = linhas(por_sym)
+    assert next(r for r in rows if r["symbol"] == "UNIVERSO"
+                and r["ema_fast"] == 89)["n_trades"] == 54
+    assert {c[:2] for c in inconclusivas(rows)} == {p for p in PARES}
+
+
+def test_amos_vence_ok_mesmo_com_a_celula_aprovada():
+    from backtest.kis_horizonte import _marca
+    row = {"ema_fast": 89, "ema_slow": 233, "portao": 1, "n_trades": 999,
+           "ret_1a_metade_bps": 10.0, "ret_2a_metade_bps": 10.0,
+           "trimestres_pos": 4, "trimestres_total": 4}
+    assert _marca(row, set()) == "ok"
+    assert _marca(row, {(89, 233, 1)}) == "amos"
 
 
 # -------------------------------------------------------------------- CSV
