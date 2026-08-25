@@ -17,6 +17,14 @@ BRANCA de fontes: detector e portao de shadow/kis_regime.py so podem vir de
 parte reprova. O modulo novo de horizonte (EMA 13/34, 21/55, 34/89) NAO entra na
 lista — quando ele existir, quem o consumir e outro coletor, com trava propria.
 
+ADENDO 3 (25/08) — o modulo novo EXISTE: `backtest/kis_horizonte.py`, a varredura
+de horizonte do EIXO 1. Ele importa de `keepitsimple`/`kis_regime` (direcao
+permitida: bancada consumindo bancada) e NAO e importado por consumidor nenhum
+de producao. Isso ja cai da regra `de_backtest <= FONTES_SINAL`, mas fica com
+teste NOMEADO abaixo: o dia em que alguem apontar o shadow ou o v10 pra ele, a
+mensagem de falha diz exatamente qual modulo entrou onde nao devia, em vez de
+so listar um nome estranho.
+
 ADENDO 2 (23/08) — a MESMA checagem passa a valer para `v10/registro.py`. Com o
 cron do shadow desativado, quem carrega o detector em producao e o v10, e ele
 importa `_alvo_extremos`/`states` (via `backtest.kis_regime.alvos`) e `passa`
@@ -319,6 +327,34 @@ def test_v10_importa_de_keepitsimple_no_maximo_a_lista_congelada():
              if isinstance(no, ast.ImportFrom)
              and no.module == "backtest.keepitsimple" for a in no.names}
     assert nomes <= set(CONGELADOS), f"nome novo fora da trava: {sorted(nomes)}"
+
+
+# --- adendo 3: o modulo de horizonte fica FORA do caminho de producao -------
+HORIZONTE = "backtest.kis_horizonte"
+
+
+def test_modulo_de_horizonte_nao_entra_na_lista_branca():
+    # A grade de pares (13/34, 21/55, 34/89) e EXPLORATORIA. Promover qualquer
+    # celula dela e uma decisao do Marcelo com PR proprio, nunca um import.
+    assert HORIZONTE not in FONTES_SINAL
+    assert HORIZONTE not in FONTES_INFRA | FONTES_INFRA_V10
+
+
+def test_nenhum_consumidor_de_producao_importa_o_horizonte():
+    for rel in CONSUMIDORES:
+        assert HORIZONTE not in _origens_de(rel), (
+            f"{rel} importa {HORIZONTE}: a varredura de horizonte NAO e "
+            f"promovivel por import — ver adendo 3.")
+
+
+def test_horizonte_nao_reescreve_o_par_default_do_detector():
+    # O modulo novo existe justamente para o par ser variavel FORA daqui. Se
+    # ele estiver no repo, o default de `states` continua sendo (8, 21).
+    if not (ROOT / "backtest" / "kis_horizonte.py").exists():
+        return
+    ps = inspect.signature(k.states).parameters
+    assert (ps["ema_fast"].default, ps["ema_slow"].default) == (8, 21)
+    assert k.EMA_FAST == 8 and k.EMA_SLOW == 21 and k.WARMUP == 21
 
 
 def test_portao_vem_de_kis_regime_da_bancada():
