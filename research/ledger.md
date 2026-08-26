@@ -1210,6 +1210,39 @@ shadow/donchian_a.py. Hoje é legítimo — aquele shadow está VIVO e a ficha d
 v10 é espelho dele. Quando a janela do Estágio 2 fechar e o shadow for
 desativado, esse import vira a mesma dívida que o PR-E acabou de pagar.
 
+## 2026-08-26 — EIXO 1 (HORIZONTE): hipótese de escala de tempo CONFIRMADA
+
+Grade 8 células, pares (8,21) controle / (34,89) / (55,144) / (89,233) x portão.
+Normalizado por trade (única leitura válida entre pares com n diferente):
+  2a metade, bps/trade: 8/21 -12,5 | 34/89 +54,2 | 55/144 +92,7 | 89/233 +296,4
+  1a metade fica plana (~+33) até 55/144 e DESABA em 89/233 (+13,9).
+55/144 e 89/233 saíram INCONCLUSIVAS POR AMOSTRA (mediana de 27 e 14 trades por
+token). 34/89 é a última célula com amostra decente (42/token) e status ok.
+
+NÃO É BETA — a quebra por direção derruba a suspeita:
+  34/89 c/ portão, 2a metade: LONG -27.781 | SHORT +73.614
+  O ganho da 2a metade é 100% do lado SHORT; o long é NEGATIVO ali.
+  Padrão: 1a metade long ganha/short perde; 2a metade long perde/short ganha.
+  O par longo melhora OS DOIS lados na 2a: long de -71.864 para -27.781 e
+  short de +30.570 para +73.614. É seguidor de tendência acompanhando a
+  direção, não viés comprado. Oposto do DONCHIAN-A (short 1 vitória em 26).
+
+CONTRA COMPRAR E SEGURAR (média por símbolo, 19 tokens):
+                    1a metade   2a metade    total
+  comprar e segurar    +2.675      -4.993   -2.318
+  KIS 34/89 portão     +1.435      +2.300   +3.735
+  diferença            -1.240      +7.292   +6.052
+Bate o B&H em 14 de 19 tokens no período inteiro e 17 de 19 na 2a metade.
+
+RESSALVA QUE NÃO PODE SUMIR: vender-e-segurar na 2a metade renderia +4.993/
+símbolo; a estratégia rendeu +2.300. Ela NÃO vence a aposta direcional correta
+de nenhuma das duas metades — o que ela faz é ESCOLHER O LADO sem saber de
+antemão qual metade é de alta e qual é de queda. É acerto de direção em
+horizonte longo, não timing dentro da tendência.
+CUSTO: dd/trade 90,5 contra 35,6 do controle — 2,5x mais mergulho por trade.
+
+EXPLORATÓRIO: nada aqui promove nada. O passo seguinte é o hold-out.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
