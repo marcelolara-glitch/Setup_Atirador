@@ -247,7 +247,8 @@ def test_donchian_a_esta_desligado_no_registro():
     # documentacao, e o quadro diario a lista com o aviso dela.
     from v10.registro import ATIVOS, DONCHIAN_A_4H, KIS_REGIME_4H, REGISTRO
     assert DONCHIAN_A_4H.executar is False and KIS_REGIME_4H.executar is True
-    assert set(REGISTRO) == {"kis_regime_4h", "donchian_a_4h"}     # nao sumiu
+    assert set(REGISTRO) == {"kis_regime_4h", "kis_3489_60t_4h",
+                             "donchian_a_4h"}                   # nao sumiu
     assert ATIVOS == [KIS_REGIME_4H]
 
 
