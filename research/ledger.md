@@ -1243,6 +1243,33 @@ CUSTO: dd/trade 90,5 contra 35,6 do controle — 2,5x mais mergulho por trade.
 
 EXPLORATÓRIO: nada aqui promove nada. O passo seguinte é o hold-out.
 
+## 2026-08-26 — CONGELAMENTO: KIS 34/89 + portão, antes do hold-out
+
+CÉLULA: par EMA (34, 89), portão LIGADO — inclinação da EMA21 (5 barras, FIXA,
+não acompanha o par) >= 0.02 ATR/barra a favor E ADX(13) >= 11.
+Confirmação 2 barras, warmup 89, saída por inversão (sem stop/alvo/cap),
+LONG+SHORT, 6 bps por trade, tf 4h.
+UNIVERSO: os 20 da TIER1 (mesmo conjunto da varredura).
+
+PROCEDÊNCIA HONESTA: o par 34/89 foi escolhido OLHANDO as duas metades de
+2024-05-22 a 2026-06-21. Essa janela deixou de ser teste.
+
+HOLD-OUT: entradas de 2026-06-18 a 2026-08-22.
+RESSALVA DE PODER, registrada ANTES: a 34/89 gera ~42 trades por token em 2
+anos, ou seja ~1 a cada 17 dias, com hold de semanas. Em 65 dias esperam-se
+3 a 4 entradas por token, e as últimas não resolvem pela regra de borda.
+O hold-out serve para DETECTAR DESASTRE, não para confirmar. Amostra fina.
+
+CRITÉRIO DE LEITURA — TRAVADO ANTES DO NÚMERO:
+  (a) ret_total do universo POSITIVO  E
+  (b) bater comprar-e-segurar no mesmo período  E
+  (c) >= 12 dos 20 tokens positivos
+  => CANDIDATA A FORWARD (entra no v10 como setup novo, com setup_id próprio).
+  Falha em (a) => a frente 34/89 não avança nesta forma.
+  Falha só em (b) ou (c) com (a) positivo => INCONCLUSIVO POR AMOSTRA, e a
+  decisão passa a ser do Marcelo, não do número.
+NÃO se ajusta par nem universo depois de ver o hold-out.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
