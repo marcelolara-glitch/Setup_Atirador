@@ -155,7 +155,8 @@ def alvos(closes: list, ema_fast: int = EMA_FAST, ema_slow: int = EMA_SLOW,
 def avaliar(candles: list, ema_fast: int = EMA_FAST, ema_slow: int = EMA_SLOW,
             confirmacao: int = EXT_CONF, adx_len: int = ADX_LEN,
             atr_len: int = ATR_LEN,
-            incl_lookback: int = INCL_LOOKBACK) -> tuple:
+            incl_lookback: int = INCL_LOOKBACK,
+            incl_ema_slow: int = None) -> tuple:
     """ULTIMA barra fechada -> (alvo_vigente, direction, incl, adx). `alvo` sai
     de `alvos` (EMA 8/21, confirmacao >= 2 barras); `direction` so e nao-None
     quando o alvo MUDOU nesta barra — a inversao e a unica entrada do detector.
@@ -167,7 +168,16 @@ def avaliar(candles: list, ema_fast: int = EMA_FAST, ema_slow: int = EMA_SLOW,
     apendice aposentado. O shadow fica intocado com a copia dele; a igualdade
     das duas contas e travada por teste, nao por confianca. O warmup segue a
     EMA longa (`WARMUP == EMA_SLOW` no keepitsimple), entao acompanha o
-    parametro em vez de ficar preso em 21."""
+    parametro em vez de ficar preso em 21.
+
+    `incl_ema_slow` DESACOPLA a EMA da RAMPA da EMA lenta do PAR. None (default)
+    devolve o comportamento de hoje — rampa na propria `ema_slow` —, entao
+    nenhuma chamada existente muda de resultado. Quem passa explicito e uma
+    ficha de par longo: `backtest/kis_horizonte.py` chama `inclinacoes` com os
+    DEFAULTS em toda celula da grade, inclusive nas de 34/89, porque o portao
+    validado em dado virgem (limiar 0.02 / ADX 11) le a EMA21 SEMPRE. Ler a
+    rampa na EMA89 num setup 34/89 mediria um portao que nunca foi validado, e
+    o numero do eixo 1 deixaria de ser reproduzivel pela ficha."""
     closes = [c["close"] for c in candles]
     alvo = alvos(closes, ema_fast, ema_slow, confirmacao)
     i = len(closes) - 1
@@ -176,8 +186,9 @@ def avaliar(candles: list, ema_fast: int = EMA_FAST, ema_slow: int = EMA_SLOW,
     d = None
     if alvo[i] != alvo[i - 1] and alvo[i] != 0:
         d = "LONG" if alvo[i] > 0 else "SHORT"
+    rampa = ema_slow if incl_ema_slow is None else int(incl_ema_slow)
     return (alvo[i], d,
-            inclinacoes(candles, closes, atr_len, ema_slow, incl_lookback)[i],
+            inclinacoes(candles, closes, atr_len, rampa, incl_lookback)[i],
             _adx(candles, adx_len)[i])
 
 
