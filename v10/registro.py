@@ -217,12 +217,9 @@ KIS_3489_60T_4H = SetupSpec(
     detector_params=dict(PARAMS_KIS_3489),
     custo_bps_por_perna=TAKER_BPS,
     mode="shadow",
-    # NAO EXECUTA neste PR. A ficha entra primeiro, sozinha, para que o
-    # `config_hash` seja revisado ANTES de existir a primeira linha de trade
-    # sob ele — religar depois devolve as linhas novas a MESMA serie, porque
-    # `executar` esta em FORA_DO_HASH. Ligar e um PR proprio, com o cron e o
-    # custo de 65 simbolos por rodada medidos junto.
-    executar=False,
+    # LIGADA em 31/08. Carga medida antes: 65 símbolos em 21,0s, RSS de pico
+    # 92 MiB, venue_alt vazio. O cron não muda — ATIVOS é derivado de executar.
+    executar=True,
     estado_ciclo="proposto",
     aviso=("celula do EIXO 1 (varredura de horizonte), ainda NAO validada em "
            "hold-out proprio: o resultado que a motiva saiu da MESMA janela em "
