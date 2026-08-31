@@ -222,7 +222,7 @@ KIS_3489_60T_4H = SetupSpec(
     # sob ele — religar depois devolve as linhas novas a MESMA serie, porque
     # `executar` esta em FORA_DO_HASH. Ligar e um PR proprio, com o cron e o
     # custo de 65 simbolos por rodada medidos junto.
-    executar=False,
+    executar=True,
     estado_ciclo="proposto",
     aviso=("celula do EIXO 1 (varredura de horizonte), ainda NAO validada em "
            "hold-out proprio: o resultado que a motiva saiu da MESMA janela em "
