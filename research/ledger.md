@@ -1270,19 +1270,6 @@ CRITÉRIO DE LEITURA — TRAVADO ANTES DO NÚMERO:
   decisão passa a ser do Marcelo, não do número.
 NÃO se ajusta par nem universo depois de ver o hold-out.
 
-## 2026-08-29 — [DECISÃO] Avaliada skill externa "social-media-skills" 
-(github.com/charlie947, 17 skills de conteúdo social). Decisão: NÃO 
-instalar e NÃO copiar código. Motivos: (1) conflito de acionamento com 
-a voz-marcelo-lara v0.2 — gatilhos amplos pulariam gate de alvo/postura/
-lastro e o freio PUBLICAR; (2) anti-camuflagem — formatos de growth 
-(hooks clickbait, carrossel, quote-post) sinalizam construção de marca 
-pessoal; (3) redundância inferior a ativos já aprovados (voz v0.2, 
-11_PERFIL_DESTINO, Bloco R); (4) post-scorer usa Apify/scraping — 
-anomalia de acesso na conta. Aproveitamento: 2 conceitos anotados para 
-pós-Fase 2, sem instalação — matriz pilares×formatos para desdobrar o 
-pilar "capital parado" e leitura de analytics via export nativo do 
-LinkedIn. Avaliação nesta conversa (Claude.ai, frente de projeto).
-
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
