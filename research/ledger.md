@@ -1270,6 +1270,53 @@ CRITÉRIO DE LEITURA — TRAVADO ANTES DO NÚMERO:
   decisão passa a ser do Marcelo, não do número.
 NÃO se ajusta par nem universo depois de ver o hold-out.
 
+## FRENTE A — PRÉ-REGISTRO FECHADO (30/08/2026)
+
+setup_id      : kis_3489_60t_4h
+config_hash   : 82488baa3086
+detector      : EMA 34/89 · warmup 89 · ATR 14 · confirmação 2
+portão        : inclinação da EMA21 FIXA (incl_ema_slow=21, no hash),
+                5 barras, limiar 0.02 direcional · ADX(13) >= 11
+saída         : só por inversão — sem stop, sem alvo, sem cap
+universo      : 65 símbolos literais no SetupSpec. TONUSDT fora
+                (delistada da OKX 07/2026, último candle 05/06/2026)
+custo         : 5 bps por perna · 1.000 USDT fixos · 4h · shadow
+abertura      : <data em que executar=True>
+FECHAMENTO    : 30/11/2026
+leitura interm: 31/10/2026 — DESCRITIVA, sem poder de decisão
+
+CRITÉRIO DE LEITURA — travado antes do dado, substitui o de trimestres
+(inaplicável: a janela tem um trimestre só):
+  ret_total do universo, mais decomposição OBRIGATÓRIA por mês, por
+  direção (LONG e SHORT separados) e por símbolo com identificação do
+  maior contribuinte.
+  Pergunta explícita: o resultado sobrevive à remoção do melhor mês?
+  Se NÃO sobreviver => INCONCLUSIVO POR CONTAGEM DE EPISÓDIOS.
+  Não é reprovação, e não fecha a frente.
+  end da leitura = max(ts) do store na data da leitura. Regra, não escolha.
+  Marca `amos` DENTRO do critério, não fora dele.
+
+RESSALVA REGISTRADA ANTES DO DADO: triplicar tokens cura a marca `amos`
+(~350 trades esperados), NÃO cura contagem de episódios. 65 tokens de
+cripto num mesmo trimestre são altamente correlacionados e podem ser um
+episódio só — foi o que aconteceu com o DONCHIAN-A.
+
+RAMPA: sempre-no-mercado entra aos poucos. ~17 dias até a maioria dos 65
+estar posicionada. As primeiras 2,5 semanas são rampa, não regime.
+
+O delta de 4h e o quadro diário são OPERACIONAIS: detectam máquina parada,
+não avaliam a frente. O veredito de 30/11 sai de script sobre trades_v10
+com a régua acima, não da impressão acumulada da janela.
+
+DÍVIDAS NOMEADAS (não bloqueiam):
+- conftest.py instala stub de pandas_ta_classic incondicionalmente,
+  inclusive na VM: os 24 testes de indicators/regime/rev_exaust não
+  validam nada em lugar nenhum. Testes mortos, não baseline.
+- test_v10_espelho_donchian falha por DERIVA DE CALENDÁRIO (shadow vivo
+  contra store congelado), não por divergência de replay. Evapora quando
+  o shadow do DONCHIAN-A for desativado em out/2026.
+- v10/registro.py ainda importa de shadow/donchian_a.py.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
