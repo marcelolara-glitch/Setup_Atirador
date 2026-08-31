@@ -27,11 +27,14 @@ def test_assinatura_congelada():
 
 def test_a_porta_e_uma_so():
     # `FalhaDeColeta` entrou junto com o backoff: e o tipo que distingue "as
-    # corretoras cairam" de "nao ha vela", e por isso e publico. Continua UMA
-    # porta — a lista fechada esta aqui para que a segunda precise deste commit.
-    assert data.__all__ == ["FalhaDeColeta", "velas"]
+    # corretoras cairam" de "nao ha vela", e por isso e publico. `Velas` e o TIPO
+    # DE RETORNO da mesma porta (lista + `venue`) e `VENUE_PRIMARIA` e um nome
+    # para comparar — nenhum dos dois e uma segunda entrada. Continua UMA porta:
+    # a lista fechada esta aqui para que a segunda precise deste commit.
+    assert data.__all__ == ["FalhaDeColeta", "VENUE_PRIMARIA", "Velas", "velas"]
     publicas = [n for n in vars(data) if not n.startswith("_") and callable(vars(data)[n])]
-    assert publicas == ["FalhaDeColeta", "velas"]
+    assert publicas == ["Velas", "FalhaDeColeta", "velas"]
+    assert issubclass(data.Velas, list) and data.Velas().venue is None
 
 
 def test_import_de_rede_e_lazy():
