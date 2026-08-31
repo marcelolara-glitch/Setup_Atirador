@@ -57,9 +57,9 @@ from shadow.vigia import _utc_date_of_ms
 from v10.runner import _bar_ms
 from v10.schema import TABELA
 
-__all__ = ["JANELA_PADRAO_MS", "NOCIONAL_USDT", "RECENTES", "bloco",
-           "bloco_delta", "build_delta", "build_report", "ler_marca", "run",
-           "run_delta"]
+__all__ = ["JANELA_PADRAO_MS", "LIMITE_TELEGRAM", "NOCIONAL_USDT", "RECENTES",
+           "bloco", "bloco_delta", "build_delta", "build_report", "fatiar",
+           "ler_marca", "run", "run_delta"]
 
 # Nocional de referência por trade. Constante declarada, não parâmetro: o dia em
 # que dois setups forem lidos com nocionais diferentes, a comparação entre eles
@@ -77,6 +77,15 @@ MARCA_DELTA = "delta"
 # histórico inteiro de propósito — a primeira mensagem seria um despejo de tudo
 # o que já existe, e o delta nasceria ilegível.
 JANELA_PADRAO_MS = 14_400_000
+
+# Teto de `sendMessage` da Bot API. Mensagem maior volta HTTP 400 e SOME — e a
+# mensagem grande e justamente a que mais importa: barra com muitas inversoes e
+# barra de virada de mercado. Por isso :func:`fatiar`, e nao um `msg[:4096]`.
+LIMITE_TELEGRAM = 4096
+# Reserva para o cabecalho de parte (``"(12/34)\n"``). Fixa: o tamanho do
+# cabecalho depende do total de partes, que depende do corte — reservar o pior
+# caso resolve a circularidade sem um segundo passe.
+_RESERVA_CABECALHO = 12
 
 
 def _usdt(bps) -> float:
@@ -273,13 +282,39 @@ def _linha_saida(row, custo: float, barra_ms: int) -> str:
             f"{barras}b" + ("" if atraso is None else f" · atraso {atraso}b"))
 
 
-def bloco_delta(conn, spec, desde_ms, ate_ms) -> str:
+def _fmt_coleta(falhas) -> str:
+    """Trecho de rodapé com os símbolos que NÃO resolveram nesta run.
+
+    `falhas` é a lista de símbolos que o runner não conseguiu coletar (ou cujas
+    barras não bastaram). Vazia ou `None` -> string vazia: rodapé só cresce
+    quando há o que dizer.
+
+    A CONTAGEM é o que sai na mensagem, e os primeiros nomes vão junto só para
+    orientar — a lista inteira está no log, por símbolo. Sinal perdido não pode
+    chegar como sinal ausente: sem esta linha, um setup que perdeu 30 dos 65
+    símbolos manda o MESMO delta de um setup que avaliou os 65 e não viu nada.
+    """
+    nomes = [str(x) for x in (falhas or [])]
+    if not nomes:
+        return ""
+    amostra = ", ".join(nomes[:3])
+    resto = len(nomes) - 3
+    return (f" · ⚠️ coleta {len(nomes)} falhou ({amostra}"
+            + (f" +{resto}" if resto > 0 else "") + ")")
+
+
+def bloco_delta(conn, spec, desde_ms, ate_ms, falhas=None) -> str:
     """O que mudou em UM setup na janela `(desde_ms, ate_ms]`. Puro: só lê o DB.
 
     COM evento: uma linha por ABRIU e por FECHOU, e um rodapé com a posição
     corrente. SEM evento: UMA linha só — o heartbeat. As duas formas trazem
     abertas, em aberto e acumulado, para que a leitura do estado não dependa de
     ter havido movimento.
+
+    `falhas` são os símbolos que a coleta desta run não resolveu (o
+    `falha_symbols` de :func:`v10.runner.rodar`). Entram no rodapé como
+    contagem. `None` = sem informação de coleta (o delta rodou fora da run) e
+    NÃO é o mesmo que zero falhas — por isso a ausência não imprime nada.
     """
     cfg = spec.config_hash
     custo = float(getattr(spec, "custo_bps_por_perna", 0.0) or 0.0)
@@ -296,7 +331,7 @@ def bloco_delta(conn, spec, desde_ms, ate_ms) -> str:
     sem_marca = len(abertas) - len(marcadas)
     rodape = (f"abertas {len(abertas)} · em aberto {_fmt_bu(sum(marcadas))}"
               + (f" ({sem_marca} sem marcação)" if sem_marca else "")
-              + f" · acumulado {_fmt_bu(acum)}")
+              + f" · acumulado {_fmt_bu(acum)}" + _fmt_coleta(falhas))
 
     novas = sorted((r for r in rows if _na_janela(r["entry_ts"], desde_ms, ate_ms)),
                    key=lambda r: int(r["entry_ts"]))
@@ -315,12 +350,17 @@ def bloco_delta(conn, spec, desde_ms, ate_ms) -> str:
     return "\n".join(L)
 
 
-def build_delta(conn, specs, desde_ms, ate_ms) -> str:
+def build_delta(conn, specs, desde_ms, ate_ms, coleta=None) -> str:
     """Um `bloco_delta` por setup, com a janela no cabeçalho. NÃO levanta.
 
     `specs` default é :data:`v10.registro.ATIVOS`, não o REGISTRO inteiro: uma
     ficha desligada reportaria zeros a cada 4h e daria a impressão de estar
     sendo observada. Ela aparece no quadro diário, onde o aviso dela sai junto.
+
+    `coleta` é ``{setup_id: [símbolos que falharam]}``, montado por
+    :func:`v10.runner.main` a partir do que `rodar_todos` devolveu. `None`
+    (delta rodado sozinho) não imprime nada — ausência de informação não é
+    afirmação de que a coleta foi limpa.
     """
     if specs is None:
         from v10.registro import ATIVOS
@@ -332,7 +372,8 @@ def build_delta(conn, specs, desde_ms, ate_ms) -> str:
     for spec in specs:
         sid = getattr(spec, "setup_id", "?")
         try:
-            L.append(bloco_delta(conn, spec, desde_ms, ate_ms))
+            L.append(bloco_delta(conn, spec, desde_ms, ate_ms,
+                                 falhas=(coleta or {}).get(sid)))
         except Exception as e:                    # isolamento: erro visível
             L.append(f"  · <b>{sid}</b> — ⚠️ delta indisponível: "
                      f"{type(e).__name__}: {e}")
@@ -375,17 +416,71 @@ def _default_send(text: str) -> bool:
     return _tg_send(text)
 
 
+def fatiar(msg: str, limite: int = LIMITE_TELEGRAM) -> list[str]:
+    """Fatia `msg` em partes numeradas que cabem em `limite` caracteres.
+
+    Fatiar, NÃO truncar. Concatenar os corpos das partes (tudo depois do
+    cabeçalho ``(i/n)\\n``) reconstrói `msg` caractere por caractere — a
+    mensagem grande é justamente a que mais importa, e um `msg[:4096]` cortaria
+    exatamente a barra de virada de mercado.
+
+    O corte prefere fronteira de linha (uma linha do delta é uma unidade de
+    leitura, e o HTML das linhas fica fechado dentro delas). Linha maior que o
+    limite é cortada no meio — perder um `<b>` é melhor que perder a linha.
+
+    Mensagem que já cabe volta como lista de UM elemento, sem cabeçalho: o caso
+    normal continua chegando exatamente como antes deste PR.
+    """
+    if len(msg) <= limite:
+        return [msg]
+    util = max(int(limite) - _RESERVA_CABECALHO, 1)
+    # Mantém o "\n" colado na linha que o precede: a concatenação das partes
+    # tem de devolver a string original, e um separador descartado no split
+    # seria um caractere perdido.
+    linhas = msg.splitlines(keepends=True)
+    corpos, atual = [], ""
+    for linha in linhas:
+        while len(linha) > util:                  # linha sozinha maior que a parte
+            if atual:
+                corpos.append(atual)
+                atual = ""
+            corpos.append(linha[:util])
+            linha = linha[util:]
+        if len(atual) + len(linha) > util:
+            corpos.append(atual)
+            atual = ""
+        atual += linha
+    if atual:
+        corpos.append(atual)
+    total = len(corpos)
+    return [f"({i}/{total})\n{c}" for i, c in enumerate(corpos, 1)]
+
+
 def _enviar(msg: str, send_fn, log) -> bool:
     """Envia e devolve se foi. Falha é SILENCIOSA: warning e segue. O banco é a
-    fonte de verdade — mensagem é leitura dele, não o registro."""
-    try:
-        ok = bool((send_fn or _default_send)(msg))
-    except Exception as e:
-        log.warning(f"[v10] falha no envio: {type(e).__name__}: {e}")
-        return False
-    if not ok:
-        log.warning("[v10] envio retornou False — relatorio nao entregue")
-    return ok
+    fonte de verdade — mensagem é leitura dele, não o registro.
+
+    Mensagem acima de :data:`LIMITE_TELEGRAM` vai em partes numeradas. Só
+    devolve `True` se TODAS as partes forem entregues: uma parte perdida é um
+    delta incompleto, e a marca não pode avançar sobre ele.
+    """
+    envia = send_fn or _default_send
+    partes = fatiar(msg)
+    if len(partes) > 1:
+        log.info(f"[v10] mensagem de {len(msg)} chars enviada em "
+                 f"{len(partes)} partes (limite {LIMITE_TELEGRAM})")
+    tudo = True
+    for i, parte in enumerate(partes, 1):
+        try:
+            ok = bool(envia(parte))
+        except Exception as e:
+            log.warning(f"[v10] falha no envio da parte {i}/{len(partes)}: "
+                        f"{type(e).__name__}: {e}")
+            ok = False
+        if not ok:
+            log.warning(f"[v10] parte {i}/{len(partes)} nao entregue")
+        tudo = tudo and ok
+    return tudo
 
 
 def _abrir_conn(db_path):
@@ -409,11 +504,15 @@ def run(now: datetime | None = None, send_fn=None, specs=None, db_path=None,
 
 
 def run_delta(now: datetime | None = None, send_fn=None, specs=None,
-              db_path=None, log=None):
+              db_path=None, log=None, coleta=None):
     """Delta da janela e avanço da marca. -> `(mensagem, enviado)`.
 
     A marca só avança se o envio confirmar. Envio que falha NÃO perde evento: a
     janela seguinte começa onde esta começou e reporta os dois trechos juntos.
+
+    `coleta` (``{setup_id: [símbolos que falharam]}``) vem da MESMA invocação
+    que rodou os setups — é por isso que `main` chama as duas coisas juntas. Um
+    delta rodado sozinho passa `None` e não afirma nada sobre a coleta.
     """
     log = log or logging.getLogger("v10.relatorio")
     now = now or datetime.now(timezone.utc)
@@ -425,7 +524,7 @@ def run_delta(now: datetime | None = None, send_fn=None, specs=None,
             desde_ms = ate_ms - JANELA_PADRAO_MS
             log.info("[v10] sem marca anterior: janela inicial de "
                      f"{JANELA_PADRAO_MS // 60_000} min")
-        msg = build_delta(conn, specs, desde_ms, ate_ms)
+        msg = build_delta(conn, specs, desde_ms, ate_ms, coleta=coleta)
         ok = _enviar(msg, send_fn, log)
         if ok:
             gravar_marca(conn, ate_ms)

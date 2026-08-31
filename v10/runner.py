@@ -180,6 +180,12 @@ def rodar(spec, conn, agora_ms, velas_fn=None, log=None) -> dict:
     Retorno:
         ``{"setup_id", "config_hash", "ok", "falhas", "abertos", "fechados",
         "falha_symbols"}``. Nunca levanta por causa de um símbolo.
+
+    `falha_symbols` é o registro NOMEADO do que não resolveu — coleta que
+    esgotou as tentativas (:class:`v10.data.FalhaDeColeta`) ou barras de menos.
+    :func:`main` o leva ao rodapé do delta como contagem: com 65 símbolos em
+    série, quem cai são preferencialmente os do fim da lista, sempre os mesmos,
+    e sinal perdido chegaria como sinal ausente.
     """
     velas_fn = velas_fn or _velas_padrao
     log = log or logging.getLogger("v10.runner")
@@ -249,6 +255,12 @@ def main(argv=None) -> int:
 
     ``--sem-envio`` roda e não manda nada (útil para a primeira execução na VM,
     quando se quer ver o log antes de acordar o Telegram).
+
+    ``--setup <setup_id>`` roda UMA ficha do REGISTRO ignorando o `executar`
+    dela — é o teste de carga da coleta antes de ligar um setup de verdade.
+    Exige ``--sem-envio``: uma ficha desligada rodada à mão gravaria linha e
+    mandaria delta como se estivesse em produção, e o histórico dela passaria a
+    ter um trecho que nenhum cron produziu. Sem `--sem-envio`, recusa.
     """
     import argparse
     from datetime import datetime, timezone
@@ -258,6 +270,9 @@ def main(argv=None) -> int:
         description="Roda os setups ativos do registro v10 e envia o delta.")
     p.add_argument("--sem-envio", action="store_true",
                    help="roda e grava, mas NAO envia o delta ao Telegram")
+    p.add_argument("--setup", metavar="SETUP_ID", default=None,
+                   help="roda SO este setup_id, ignorando executar "
+                        "(teste de carga; exige --sem-envio)")
     args = p.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO,
@@ -267,20 +282,40 @@ def main(argv=None) -> int:
     from v10.registro import REGISTRO
     from v10.schema import connect
 
+    if args.setup and not args.sem_envio:
+        p.error("--setup exige --sem-envio: rodar uma ficha a mao e enviar o "
+                "delta misturaria um teste de carga com a serie de producao")
+    if args.setup and args.setup not in REGISTRO:
+        p.error(f"setup_id desconhecido: {args.setup!r} "
+                f"(no registro: {sorted(REGISTRO)})")
+
     # REGISTRO inteiro, não `ATIVOS`: quem decide o que roda é o campo
     # `executar`, e passar por `rodar_todos` faz o "PULADO" aparecer no log a
     # cada run. Filtrar antes esconderia a ficha desligada do próprio registro
     # de execução — "não rodou" tem de ser um fato escrito, não uma ausência.
     agora = datetime.now(timezone.utc)
+    agora_ms = int(agora.timestamp() * 1000)
     conn = connect()
     try:
-        rodar_todos(list(REGISTRO.values()), conn,
-                    int(agora.timestamp() * 1000), log=log)
+        if args.setup:
+            # `rodar` direto, não `rodar_todos`: é ele que respeita `executar`,
+            # e o ponto do --setup é justamente passar por cima disso UMA vez.
+            spec = REGISTRO[args.setup]
+            log.info(f"[v10] --setup {spec.setup_id}: rodando ignorando "
+                     f"executar={getattr(spec, 'executar', True)}")
+            resultados = [rodar(spec, conn, agora_ms, log=log)]
+        else:
+            resultados = rodar_todos(list(REGISTRO.values()), conn, agora_ms,
+                                     log=log)
     finally:
         conn.close()
     if not args.sem_envio:
         from v10.relatorio import run_delta
-        run_delta(now=agora, log=log)
+        # A coleta desta run vai junto: o delta é lido como "o que aconteceu",
+        # e um símbolo que não resolveu não pode passar por um que nada viu.
+        coleta = {r["setup_id"]: r["falha_symbols"] for r in resultados
+                  if r.get("falha_symbols")}
+        run_delta(now=agora, log=log, coleta=coleta)
     return 0
 
 
