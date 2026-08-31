@@ -17,13 +17,37 @@ texto; nunca devolve ``[]``. Devolver lista vazia faria o chamador ler
 "nenhum sinal" onde o certo é "não sei" — e com 65 símbolos em série quem cai
 são preferencialmente os do fim da lista, sempre os mesmos, o que enviesaria a
 série inteira em silêncio.
+
+VENUE SOBE JUNTO. Qual corretora serviu não é detalhe de transporte: liquidez,
+taxa e fecho de barra do fallback não são os da primária, e um símbolo servido
+por ela leu uma régua diferente do resto da série. Por isso :func:`velas`
+devolve :class:`Velas` — lista, com o `venue` pendurado — e o runner o carrega
+até o rodapé do delta.
 """
 
 from __future__ import annotations
 
 import time
 
-__all__ = ["FalhaDeColeta", "velas"]
+__all__ = ["FalhaDeColeta", "VENUE_PRIMARIA", "Velas", "velas"]
+
+# Nome da corretora primária de `exchanges.fetch_klines_async` (OKX -> Bitget).
+# É só um NOME para comparar: a ordem do fallback é de lá, não daqui.
+VENUE_PRIMARIA = "okx"
+
+
+class Velas(list):
+    """As velas MAIS a corretora que as serviu, em :attr:`venue`.
+
+    Subclasse de `list` de propósito: quem só quer as velas continua lendo uma
+    lista e nenhum chamador precisou mudar para o `venue` passar a existir.
+    Quem quer saber lê ``getattr(x, "venue", None)`` — fonte que devolva lista
+    crua (um `velas_fn` de teste, a versão de store) dá ``None``, que significa
+    SEM INFORMAÇÃO e nunca "veio da primária".
+    """
+
+    venue = None
+
 
 # Tentativas por símbolo e espera entre elas (dobra a cada rodada: 1s, 2s).
 # Constantes de módulo, não parâmetros: a assinatura de `velas` é o contrato que
@@ -67,8 +91,9 @@ def velas(symbol: str, tf: str, n: int, ate=None) -> list[dict]:
         ate: epoch-ms opcional; descarta velas com ``ts > ate``.
 
     Retorno:
-        ``[{"ts": int_ms, "open", "high", "low", "close", "volume"}, ...]``
-        em ordem crescente.
+        :class:`Velas` (uma `list`) de
+        ``{"ts": int_ms, "open", "high", "low", "close", "volume"}`` em ordem
+        crescente, com o `venue` que respondeu no atributo homônimo.
 
     Levanta:
         :class:`FalhaDeColeta` se as :data:`TENTATIVAS` se esgotarem sem
@@ -103,4 +128,6 @@ def velas(symbol: str, tf: str, n: int, ate=None) -> list[dict]:
     if ate is not None:
         candles = [c for c in candles if int(c["ts"]) <= int(ate)]
     candles.sort(key=lambda c: int(c["ts"]))
-    return candles[-int(n):] if n and len(candles) > int(n) else candles
+    saida = Velas(candles[-int(n):] if n and len(candles) > int(n) else candles)
+    saida.venue = venue
+    return saida

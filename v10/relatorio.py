@@ -303,7 +303,26 @@ def _fmt_coleta(falhas) -> str:
             + (f" +{resto}" if resto > 0 else "") + ")")
 
 
-def bloco_delta(conn, spec, desde_ms, ate_ms, falhas=None) -> str:
+def _fmt_venue(alt) -> str:
+    """Trecho de rodapé com os símbolos servidos por corretora NÃO primária.
+
+    `alt` são as entradas ``"SYMBOL@venue"`` do `venue_alt` de
+    :func:`v10.runner.rodar`. Vazia ou `None` -> string vazia, e é aí que está o
+    cuidado: silêncio aqui é AUSÊNCIA DE INFORMAÇÃO, nunca a afirmação de que
+    tudo veio da primária. Quem é servido pelo fallback leu régua diferente do
+    resto da série — outra liquidez, outra taxa, outro fecho de barra —, e sem
+    esta linha esse símbolo chega ao relatório como qualquer outro.
+    """
+    nomes = [str(x) for x in (alt or [])]
+    if not nomes:
+        return ""
+    amostra = ", ".join(nomes[:3])
+    resto = len(nomes) - 3
+    return (f" · 🔀 venue {len(nomes)} fora da primária ({amostra}"
+            + (f" +{resto}" if resto > 0 else "") + ")")
+
+
+def bloco_delta(conn, spec, desde_ms, ate_ms, falhas=None, venue_alt=None) -> str:
     """O que mudou em UM setup na janela `(desde_ms, ate_ms]`. Puro: só lê o DB.
 
     COM evento: uma linha por ABRIU e por FECHOU, e um rodapé com a posição
@@ -315,6 +334,9 @@ def bloco_delta(conn, spec, desde_ms, ate_ms, falhas=None) -> str:
     `falha_symbols` de :func:`v10.runner.rodar`). Entram no rodapé como
     contagem. `None` = sem informação de coleta (o delta rodou fora da run) e
     NÃO é o mesmo que zero falhas — por isso a ausência não imprime nada.
+
+    `venue_alt` (``["SYMBOL@venue", ...]``) é o mesmo contrato para os símbolos
+    servidos por corretora diferente da primária.
     """
     cfg = spec.config_hash
     custo = float(getattr(spec, "custo_bps_por_perna", 0.0) or 0.0)
@@ -331,7 +353,8 @@ def bloco_delta(conn, spec, desde_ms, ate_ms, falhas=None) -> str:
     sem_marca = len(abertas) - len(marcadas)
     rodape = (f"abertas {len(abertas)} · em aberto {_fmt_bu(sum(marcadas))}"
               + (f" ({sem_marca} sem marcação)" if sem_marca else "")
-              + f" · acumulado {_fmt_bu(acum)}" + _fmt_coleta(falhas))
+              + f" · acumulado {_fmt_bu(acum)}" + _fmt_coleta(falhas)
+              + _fmt_venue(venue_alt))
 
     novas = sorted((r for r in rows if _na_janela(r["entry_ts"], desde_ms, ate_ms)),
                    key=lambda r: int(r["entry_ts"]))
@@ -350,7 +373,7 @@ def bloco_delta(conn, spec, desde_ms, ate_ms, falhas=None) -> str:
     return "\n".join(L)
 
 
-def build_delta(conn, specs, desde_ms, ate_ms, coleta=None) -> str:
+def build_delta(conn, specs, desde_ms, ate_ms, coleta=None, venue=None) -> str:
     """Um `bloco_delta` por setup, com a janela no cabeçalho. NÃO levanta.
 
     `specs` default é :data:`v10.registro.ATIVOS`, não o REGISTRO inteiro: uma
@@ -360,7 +383,9 @@ def build_delta(conn, specs, desde_ms, ate_ms, coleta=None) -> str:
     `coleta` é ``{setup_id: [símbolos que falharam]}``, montado por
     :func:`v10.runner.main` a partir do que `rodar_todos` devolveu. `None`
     (delta rodado sozinho) não imprime nada — ausência de informação não é
-    afirmação de que a coleta foi limpa.
+    afirmação de que a coleta foi limpa. `venue` é o par disso para a corretora
+    que serviu (``{setup_id: ["SYMBOL@venue", ...]}``), com a mesma leitura da
+    ausência: nada impresso não quer dizer "tudo OKX".
     """
     if specs is None:
         from v10.registro import ATIVOS
@@ -373,7 +398,8 @@ def build_delta(conn, specs, desde_ms, ate_ms, coleta=None) -> str:
         sid = getattr(spec, "setup_id", "?")
         try:
             L.append(bloco_delta(conn, spec, desde_ms, ate_ms,
-                                 falhas=(coleta or {}).get(sid)))
+                                 falhas=(coleta or {}).get(sid),
+                                 venue_alt=(venue or {}).get(sid)))
         except Exception as e:                    # isolamento: erro visível
             L.append(f"  · <b>{sid}</b> — ⚠️ delta indisponível: "
                      f"{type(e).__name__}: {e}")
@@ -504,7 +530,7 @@ def run(now: datetime | None = None, send_fn=None, specs=None, db_path=None,
 
 
 def run_delta(now: datetime | None = None, send_fn=None, specs=None,
-              db_path=None, log=None, coleta=None):
+              db_path=None, log=None, coleta=None, venue=None):
     """Delta da janela e avanço da marca. -> `(mensagem, enviado)`.
 
     A marca só avança se o envio confirmar. Envio que falha NÃO perde evento: a
@@ -512,7 +538,8 @@ def run_delta(now: datetime | None = None, send_fn=None, specs=None,
 
     `coleta` (``{setup_id: [símbolos que falharam]}``) vem da MESMA invocação
     que rodou os setups — é por isso que `main` chama as duas coisas juntas. Um
-    delta rodado sozinho passa `None` e não afirma nada sobre a coleta.
+    delta rodado sozinho passa `None` e não afirma nada sobre a coleta. `venue`
+    (mesma forma) traz os símbolos servidos fora da corretora primária.
     """
     log = log or logging.getLogger("v10.relatorio")
     now = now or datetime.now(timezone.utc)
@@ -524,7 +551,8 @@ def run_delta(now: datetime | None = None, send_fn=None, specs=None,
             desde_ms = ate_ms - JANELA_PADRAO_MS
             log.info("[v10] sem marca anterior: janela inicial de "
                      f"{JANELA_PADRAO_MS // 60_000} min")
-        msg = build_delta(conn, specs, desde_ms, ate_ms, coleta=coleta)
+        msg = build_delta(conn, specs, desde_ms, ate_ms, coleta=coleta,
+                          venue=venue)
         ok = _enviar(msg, send_fn, log)
         if ok:
             gravar_marca(conn, ate_ms)

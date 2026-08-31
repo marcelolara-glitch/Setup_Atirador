@@ -39,6 +39,7 @@ import json
 import logging
 import sqlite3
 
+from v10.data import VENUE_PRIMARIA
 from v10.data import velas as _velas_padrao
 from v10.exits import adaptador
 from v10.schema import TABELA
@@ -179,13 +180,18 @@ def rodar(spec, conn, agora_ms, velas_fn=None, log=None) -> dict:
 
     Retorno:
         ``{"setup_id", "config_hash", "ok", "falhas", "abertos", "fechados",
-        "falha_symbols"}``. Nunca levanta por causa de um símbolo.
+        "falha_symbols", "venue_alt"}``. Nunca levanta por causa de um símbolo.
 
     `falha_symbols` é o registro NOMEADO do que não resolveu — coleta que
     esgotou as tentativas (:class:`v10.data.FalhaDeColeta`) ou barras de menos.
     :func:`main` o leva ao rodapé do delta como contagem: com 65 símbolos em
     série, quem cai são preferencialmente os do fim da lista, sempre os mesmos,
     e sinal perdido chegaria como sinal ausente.
+
+    `venue_alt` é o mesmo registro nomeado para o símbolo servido por corretora
+    DIFERENTE da primária (``"SYMBOL@venue"``), e vai pelo mesmo caminho até o
+    rodapé. Fonte que não informa `venue` não entra: ausência de informação não
+    é a afirmação de que tudo veio da primária.
     """
     velas_fn = velas_fn or _velas_padrao
     log = log or logging.getLogger("v10.runner")
@@ -196,11 +202,20 @@ def rodar(spec, conn, agora_ms, velas_fn=None, log=None) -> dict:
     anotar = getattr(spec.detector, "anotar", None)
     det_params = getattr(spec, "detector_params", None) or {}
     r = {"setup_id": spec.setup_id, "config_hash": spec.config_hash,
-         "ok": 0, "falhas": 0, "abertos": 0, "fechados": 0, "falha_symbols": []}
+         "ok": 0, "falhas": 0, "abertos": 0, "fechados": 0, "falha_symbols": [],
+         "venue_alt": []}
     for symbol in spec.symbols:
         try:
-            brutas = velas_fn(symbol, spec.tf, n) or []
-            velas = [v for v in brutas if int(v["ts"]) + bar_ms <= int(agora_ms)]
+            brutas = velas_fn(symbol, spec.tf, n)
+            # Antes de qualquer filtro: `or []` trocaria a Velas vazia por uma
+            # lista crua e o venue morreria aqui.
+            venue = getattr(brutas, "venue", None)
+            if venue is not None and venue != VENUE_PRIMARIA:
+                r["venue_alt"].append(f"{symbol}@{venue}")
+                log.warning(f"  [{spec.setup_id}/{symbol}] servido por {venue} "
+                            f"(primaria {VENUE_PRIMARIA})")
+            velas = [v for v in (brutas or [])
+                     if int(v["ts"]) + bar_ms <= int(agora_ms)]
             velas.sort(key=lambda v: int(v["ts"]))
             if len(velas) < warmup:
                 raise ValueError(f"barras insuficientes: {len(velas)} < {warmup}")
@@ -315,7 +330,11 @@ def main(argv=None) -> int:
         # e um símbolo que não resolveu não pode passar por um que nada viu.
         coleta = {r["setup_id"]: r["falha_symbols"] for r in resultados
                   if r.get("falha_symbols")}
-        run_delta(now=agora, log=log, coleta=coleta)
+        # Idem para a corretora: um símbolo servido pelo fallback nao pode
+        # passar por um símbolo servido pela primária.
+        venue = {r["setup_id"]: r["venue_alt"] for r in resultados
+                 if r.get("venue_alt")}
+        run_delta(now=agora, log=log, coleta=coleta, venue=venue)
     return 0
 
 
