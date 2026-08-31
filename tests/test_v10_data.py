@@ -26,9 +26,12 @@ def test_assinatura_congelada():
 
 
 def test_a_porta_e_uma_so():
-    assert data.__all__ == ["velas"]
+    # `FalhaDeColeta` entrou junto com o backoff: e o tipo que distingue "as
+    # corretoras cairam" de "nao ha vela", e por isso e publico. Continua UMA
+    # porta — a lista fechada esta aqui para que a segunda precise deste commit.
+    assert data.__all__ == ["FalhaDeColeta", "velas"]
     publicas = [n for n in vars(data) if not n.startswith("_") and callable(vars(data)[n])]
-    assert publicas == ["velas"]
+    assert publicas == ["FalhaDeColeta", "velas"]
 
 
 def test_import_de_rede_e_lazy():
