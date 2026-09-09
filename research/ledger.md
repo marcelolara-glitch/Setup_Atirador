@@ -1317,6 +1317,31 @@ DÍVIDAS NOMEADAS (não bloqueiam):
   o shadow do DONCHIAN-A for desativado em out/2026.
 - v10/registro.py ainda importa de shadow/donchian_a.py.
 
+## 2026-09-09 — checkpoint operacional janela kis_3489_60t_4h
+
+ABERTURA CONFIRMADA NO DADO: primeiro entry_ts = 1788192000000 = 2026-08-31 16:00 UTC,
+primeira barra apos merge 7996544. Nenhum trade anterior na tabela.
+Operacao 31/08→09/09 00:16 UTC: todas as rodadas 4h presentes, ok=65 falhas=0 em todas,
+0 erros em ~/cron-v10.log. 15 de 65 simbolos com trade (esperado para 34/89 + conf. 2b).
+
+CRITERIO DE DESLIGAMENTO ANTECIPADO (escrito 09/09; P&L do quadro diario JA VISTO em 08/09,
+portanto nenhum limiar de P&L e pre-registravel — criterio SOMENTE operacional):
+  - rodada 4h ausente em 2 barras consecutivas, ou
+  - falhas>0 em 3 rodadas consecutivas para o mesmo setup, ou
+  - simbolo ausente do universo escaneado sem registro de delistagem.
+Fora disso: nenhuma acao ate a leitura descritiva de 31/10.
+
+LEITURA DESCRITIVA 09/09 (sem poder decisorio): 3489 fechados 13 (1W/12L, 12 SHORT),
+abertas 13 (12 LONG). kis_regime_4h mesma forma (1W/12L, 5/6 abertas LONG).
+Interpretacao: UM episodio de alta ampla, unidirecional. Beta do episodio, nao leitura
+de setup. Contagem de episodios = 1. FARTCOIN revertido 3x em 4 dias: alerta TIER2/custo.
+
+kis_regime_4h PERMANECE executar=True como CELULA DE CONTROLE 8/21 no mesmo episodio.
+Sem leitura propria; aparece nas leituras de 31/10 e 30/11 apenas como comparador.
+
+PENDENTE tecnico (nao bloqueante): confirmar que runner nomeia o simbolo quando falhas>0
+(nunca disparou ate hoje). Ver v10/data.py:117 e v10/runner.py:227/254.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
