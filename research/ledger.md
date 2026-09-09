@@ -1342,6 +1342,13 @@ Sem leitura propria; aparece nas leituras de 31/10 e 30/11 apenas como comparado
 PENDENTE tecnico (nao bloqueante): confirmar que runner nomeia o simbolo quando falhas>0
 (nunca disparou ate hoje). Ver v10/data.py:117 e v10/runner.py:227/254.
 
+09/09 Bloco 2 (descritivo): 3489 -4790 bps (68% do total) em 03/09, 8 SHORT revertidos
+no mesmo dia; 8/21 mesmo dia -1354 (4 SHORT). Evento unico de mercado, nao 12 trades.
+Verificar entry_ts dos 8 shorts (entrada de boot?).
+VIGIA 08/09: dia 52/84, 70/80. ΣR +32.08 (era +36.08 em 22/08: -4R em 9 trades).
+Episodio unico 19-22/08 ainda carrega tudo. Fechamento estimado ~10/10.
+Veredito provavel: INCONCLUSIVO POR CONTAGEM DE EPISODIOS.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
