@@ -1349,6 +1349,11 @@ VIGIA 08/09: dia 52/84, 70/80. ΣR +32.08 (era +36.08 em 22/08: -4R em 9 trades)
 Episodio unico 19-22/08 ainda carrega tudo. Fechamento estimado ~10/10.
 Veredito provavel: INCONCLUSIVO POR CONTAGEM DE EPISODIOS.
 
+09/09: hipotese de entrada de boot FALSIFICADA (so ADA em 31/08 16:00). ANOMALIA:
+XLMUSDT 2 SHORT simultaneos no 3489 (02/09 12:00 e 16:00, saidas distintas).
+Suspeita de duplicacao no coletor, nao no detector. Em diagnostico; regra de
+deduplicacao para a leitura de 31/10 a definir apos confirmacao.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
