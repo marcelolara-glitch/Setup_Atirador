@@ -160,8 +160,9 @@ def test_build_delta_usa_os_ATIVOS_por_padrao(tmp_path):
     # cada 4h e pareceria estar sendo observada.
     from v10.registro import ATIVOS
     txt = relatorio.build_delta(_conn(tmp_path), None, T0, T0 + BAR_4H)
-    assert [s.setup_id for s in ATIVOS] == ["kis_regime_4h", "kis_3489_60t_4h"]
-    assert "kis_regime_4h" in txt and "kis_3489_60t_4h" in txt
+    assert [s.setup_id for s in ATIVOS] == ["kis_regime_4h",
+                                            "kis_3489_60t_4h_w420"]
+    assert "kis_regime_4h" in txt and "kis_3489_60t_4h_w420" in txt
     assert "donchian_a_4h" not in txt              # segue desligada, segue fora
 
 
@@ -247,12 +248,14 @@ def test_donchian_a_esta_desligado_no_registro():
     # o relogio de observacao do Estagio 2 nao pode reiniciar. A ficha fica —
     # documentacao, e o quadro diario a lista com o aviso dela.
     from v10.registro import (ATIVOS, DONCHIAN_A_4H, KIS_3489_60T_4H,
-                              KIS_REGIME_4H, REGISTRO)
+                              KIS_3489_60T_4H_W420, KIS_REGIME_4H, REGISTRO)
     assert DONCHIAN_A_4H.executar is False and KIS_REGIME_4H.executar is True
     assert set(REGISTRO) == {"kis_regime_4h", "kis_3489_60t_4h",
+                             "kis_3489_60t_4h_w420",
                              "donchian_a_4h"}                   # nao sumiu
     assert DONCHIAN_A_4H not in ATIVOS
-    assert ATIVOS == [KIS_REGIME_4H, KIS_3489_60T_4H]
+    assert KIS_3489_60T_4H not in ATIVOS      # invalidada em 10/09, ficha fica
+    assert ATIVOS == [KIS_REGIME_4H, KIS_3489_60T_4H_W420]
 
 
 # --- deploy -------------------------------------------------------------------

@@ -32,6 +32,14 @@ O que este arquivo NAO reprova continua reprovado: a ficha entra ligada com
 MESMA janela que a motiva, sem stop e sem cap de tempo. Ligar a coleta e ligar
 a MEDICAO, nao promover o desenho.
 
+ATUALIZADO EM 10/09. A `kis_3489_60t_4h` foi DESLIGADA de novo: o diag de janela
+mostrou que o warmup dela (89 + 80 de folga = 169 velas) nao converge a EMA89 e
+inverte o alvo em 1.3% das barras. O que este arquivo prova NAO muda de natureza
+— muda de sinal: a ficha saiu do ar e o hash `82488baa3086` continua exatamente
+onde estava, o que e a mesma prova de `FORA_DO_HASH`, agora no sentido inverso.
+A sucessora `kis_3489_60t_4h_w420` tem hash proprio e prova propria, em
+`tests/test_v10_warmup_420.py`.
+
 `pandas_ta` nao instala no sandbox (Python 3.11 x requisito >= 3.12), e nada
 deste arquivo o alcanca: `v10.spec` e `v10.registro` sao stdlib puro.
 """
@@ -42,7 +50,7 @@ from dataclasses import replace
 
 import v10.registro as reg
 from v10.registro import (ATIVOS, DONCHIAN_A_4H, KIS_3489_60T_4H,
-                          KIS_REGIME_4H, REGISTRO)
+                          KIS_3489_60T_4H_W420, KIS_REGIME_4H, REGISTRO)
 from v10.spec import FORA_DO_HASH, config_dict
 
 # Os hashes congelados, literais no arquivo de proposito: rebaselinar exige
@@ -51,6 +59,7 @@ from v10.spec import FORA_DO_HASH, config_dict
 # errada, nunca o hash.
 HASHES = {"kis_regime_4h": "e63ec120e131",
           "kis_3489_60t_4h": "82488baa3086",
+          "kis_3489_60t_4h_w420": "29752fcbad16",
           "donchian_a_4h": "250170cc8dc0"}
 
 
@@ -92,19 +101,21 @@ def test_a_serie_de_trades_da_ficha_nova_nao_se_parte():
     """O motivo de (1) importar: o hash sob o qual a ficha foi revisada
     DESLIGADA e o mesmo sob o qual ela grava LIGADA. As linhas novas caem na
     mesma serie de `trades_v10` — que e o ponto inteiro de `FORA_DO_HASH`."""
-    assert KIS_3489_60T_4H.executar is True
+    assert KIS_3489_60T_4H.executar is False        # desligada de novo em 10/09
     assert KIS_3489_60T_4H.config_hash == "82488baa3086"
-    assert replace(KIS_3489_60T_4H, executar=False).config_hash == "82488baa3086"
+    assert replace(KIS_3489_60T_4H, executar=True).config_hash == "82488baa3086"
 
 
 # --- 2. ATIVOS passa a ter dois setups ----------------------------------------
-def test_ativos_passa_a_ter_dois_setups(capsys):
+def test_ativos_seguem_dois_setups_com_a_sucessora_no_lugar(capsys):
+    """Dois setups, como no #166 — mas o segundo agora e a `_w420`. A troca e
+    UMA linha `executar` em cada ficha; `ATIVOS` e derivado, nunca escrito."""
     ids = [s.setup_id for s in ATIVOS]
     with capsys.disabled():
         print(f"\n  ATIVOS ({len(ids)}): {ids}")
     assert len(ATIVOS) == 2
-    assert ids == ["kis_regime_4h", "kis_3489_60t_4h"]
-    assert ATIVOS == [KIS_REGIME_4H, KIS_3489_60T_4H]
+    assert ids == ["kis_regime_4h", "kis_3489_60t_4h_w420"]
+    assert ATIVOS == [KIS_REGIME_4H, KIS_3489_60T_4H_W420]
 
 
 def test_ativos_e_derivado_do_registro_pelo_proprio_executar():
@@ -113,8 +124,11 @@ def test_ativos_e_derivado_do_registro_pelo_proprio_executar():
     assert reg.ATIVOS == [s for s in REGISTRO.values() if s.executar]
 
 
-def test_o_registro_segue_com_as_tres_fichas():
-    assert set(REGISTRO) == {"kis_regime_4h", "kis_3489_60t_4h", "donchian_a_4h"}
+def test_o_registro_segue_com_as_fichas_todas():
+    """A ficha invalidada NAO sai do registro: o relatorio a lista, e as linhas
+    que ela gravou continuam enderecaveis pelo hash dela."""
+    assert set(REGISTRO) == {"kis_regime_4h", "kis_3489_60t_4h",
+                             "kis_3489_60t_4h_w420", "donchian_a_4h"}
 
 
 def test_donchian_continua_desligado_e_kis_regime_intocada():

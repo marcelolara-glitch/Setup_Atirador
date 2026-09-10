@@ -47,6 +47,7 @@ def test_config_hash_dos_tres_setups_inalterados(capsys):
 
     esperado = {"kis_regime_4h": "e63ec120e131",
                 "kis_3489_60t_4h": "82488baa3086",
+                "kis_3489_60t_4h_w420": "29752fcbad16",
                 "donchian_a_4h": "250170cc8dc0"}
     obtido = {sid: s.config_hash for sid, s in REGISTRO.items()}
     with capsys.disabled():
@@ -77,7 +78,10 @@ def test_bitget_sai_nomeado_no_log_e_contado_no_rodape_okx_nao(conn, caplog):
     assert r["ok"] == 2 and r["falhas"] == 0       # os dois coletaram
     assert r["venue_alt"] == ["PENGUUSDT@bitget"]
     assert "PENGUUSDT" in caplog.text and "bitget" in caplog.text
-    assert "BTCUSDT" not in caplog.text            # servido pela primaria: calado
+    # Servido pela primaria: calado NA LINHA DE VENUE. (A linha de "coleta
+    # curta" e de outro assunto e sai para os dois: a fonte deste teste devolve
+    # 2 velas para um pedido de 82.)
+    assert "BTCUSDT] servido por" not in caplog.text
 
     linha = relatorio.bloco_delta(conn, _spec(), 0, 9 * BAR,
                                   venue_alt=r["venue_alt"])

@@ -39,10 +39,11 @@ from shadow.donchian_a import (ATR_PERIOD, BAR_MS, CTX_BARS, H_BARS, N, S_ATR,
 from shadow.donchian_a import SYMBOLS as SYMBOLS_DONCHIAN
 from v10.spec import SetupSpec
 
-__all__ = ["ATIVOS", "DONCHIAN_A_4H", "KIS_3489_60T_4H", "KIS_REGIME_4H",
-           "PARAMS_DONCHIAN_A", "PARAMS_KIS_3489", "PARAMS_KIS_REGIME",
-           "REGISTRO", "SYMBOLS_KIS", "SYMBOLS_KIS_3489",
-           "detector_donchian_a", "detector_kis_3489", "detector_kis_regime"]
+__all__ = ["ATIVOS", "DONCHIAN_A_4H", "KIS_3489_60T_4H",
+           "KIS_3489_60T_4H_W420", "KIS_REGIME_4H", "PARAMS_DONCHIAN_A",
+           "PARAMS_KIS_3489", "PARAMS_KIS_REGIME", "REGISTRO", "SYMBOLS_KIS",
+           "SYMBOLS_KIS_3489", "detector_donchian_a", "detector_kis_3489",
+           "detector_kis_regime"]
 
 TF = "4H"          # barra no formato da API; o `tf` do shadow ("4h") é rótulo
 TAKER_BPS = 5.0    # OKX perp taker não-VIP — mesmo valor de shadow/vigia.py:27
@@ -205,6 +206,27 @@ def detector_kis_3489(velas: list, params: dict):
 # chance de as duas divergirem.
 detector_kis_3489.anotar = _anotar_kis_regime
 
+# INVALIDADA EM 10/09 — a janela 31/08->10/09 desta ficha e teste do COLETOR,
+# nao resultado do desenho. O PR-diag mediu o alvo do par 34/89 com a janela que
+# esta ficha de fato entrega (warmup 89 + FOLGA_BARRAS 80 = 169 velas) contra a
+# mesma conta com 500 velas: 1.3% das barras saem com o alvo INVERTIDO. Um alvo
+# invertido e uma entrada no lado errado, entao a serie coletada aqui nao mede o
+# que a ficha diz medir. A sucessora e a `kis_3489_60t_4h_w420`, logo abaixo.
+#
+# SO O `executar` MUDOU. `estado_ciclo` e `aviso` ENTRAM no config_hash (ver
+# `v10/spec.py`: FORA_DO_HASH tem `executar` e mais nada), entao reescreve-los
+# aqui trocaria `82488baa3086` por outro numero e as ~10 dias de linhas ja
+# gravadas em `trades_v10` deixariam de ser enderecaveis por esta ficha — o
+# relatorio as veria como "linha(s) de outra configuracao fora desta conta". O
+# hash e o endereco da serie: retro-rotular uma serie fechada nao pode custar o
+# endereco dela. Por isso o registro da invalidacao mora AQUI, em comentario
+# (que nao e campo, e nao entra no hash), e a ficha sucessora repete a linha no
+# `aviso` dela, que e o que chega ao leitor do quadro diario.
+#
+# CONSEQUENCIA CONHECIDA: com `executar=False` o runner PULA a ficha, entao as
+# posicoes que ficaram OPEN nesta serie nunca serao resolvidas — elas seguem
+# abertas em `trades_v10` sob `82488baa3086`. Ficam assim de proposito: fecha-
+# las a mao inventaria um preco de saida que nenhuma barra produziu.
 KIS_3489_60T_4H = SetupSpec(
     setup_id="kis_3489_60t_4h",
     detector=detector_kis_3489,
@@ -217,9 +239,10 @@ KIS_3489_60T_4H = SetupSpec(
     detector_params=dict(PARAMS_KIS_3489),
     custo_bps_por_perna=TAKER_BPS,
     mode="shadow",
-    # LIGADA em 31/08. Carga medida antes: 65 símbolos em 21,0s, RSS de pico
-    # 92 MiB, venue_alt vazio. O cron não muda — ATIVOS é derivado de executar.
-    executar=True,
+    # DESLIGADA em 10/09 pelo diag de janela (ver bloco acima). Foi ligada em
+    # 31/08 com carga medida: 65 símbolos em 21,0s, RSS de pico 92 MiB,
+    # venue_alt vazio. O cron não muda — ATIVOS é derivado de executar.
+    executar=False,
     estado_ciclo="proposto",
     aviso=("celula do EIXO 1 (varredura de horizonte), ainda NAO validada em "
            "hold-out proprio: o resultado que a motiva saiu da MESMA janela em "
@@ -227,6 +250,50 @@ KIS_3489_60T_4H = SetupSpec(
            "integralmente a ressalva do `kis_regime_4h`: SEM stop e SEM cap de "
            "tempo, a cauda de perda de um trade e ILIMITADA. TONUSDT fora do "
            "universo por delistagem (07/2026), nao por resultado."),
+)
+
+
+# --- KIS 34/89 em 65 tokens, warmup 420 --------------------------------------
+# SUCESSORA da `kis_3489_60t_4h`. Um campo de diferenca: `warmup_barras` sai de
+# 89 para 420. Detector, portao, universo, custo, saida e detector_params sao os
+# MESMOS objetos da ficha anterior (importados, nao copiados) — um eixo por vez,
+# e o eixo aqui e a JANELA, nao o desenho.
+#
+# 420 SAIU DO DIAG DE 10/09, nao de regra de bolso: o alvo do par 34/89 medido
+# com 500 velas nao muda em nenhuma barra da amostra (0% de divergencia),
+# enquanto a janela antiga (169 velas) diverge em 1.3%. O runner pede
+# `warmup_barras + FOLGA_BARRAS` = 420 + 80 = 500 velas por simbolo, que e
+# exatamente a janela em que a EMA89 ja convergiu. `kis_regime_4h` (par 8/21,
+# janela 140) deu 0% no mesmo diag e por isso NAO foi tocada.
+#
+# O `config_hash` desta ficha e NOVO por construcao: warmup entra no hash, e e
+# assim que a serie do warmup 420 nao se mistura com a do warmup 89.
+MIN_BARS_KIS_3489_W420 = 420
+
+KIS_3489_60T_4H_W420 = SetupSpec(
+    setup_id="kis_3489_60t_4h_w420",
+    detector=detector_kis_3489,
+    tf=TF,
+    cadencia_barras=1,
+    symbols=list(SYMBOLS_KIS_3489),
+    warmup_barras=MIN_BARS_KIS_3489_W420,
+    exit_model="reverse",
+    exit_params={},
+    detector_params=dict(PARAMS_KIS_3489),
+    custo_bps_por_perna=TAKER_BPS,
+    mode="shadow",
+    executar=True,
+    estado_ciclo="proposto",
+    aviso=("celula do EIXO 1 (varredura de horizonte), ainda NAO validada em "
+           "hold-out proprio: o resultado que a motiva saiu da MESMA janela em "
+           "que a grade foi varrida, entao e hipotese, nao evidencia. Herda "
+           "integralmente a ressalva do `kis_regime_4h`: SEM stop e SEM cap de "
+           "tempo, a cauda de perda de um trade e ILIMITADA. TONUSDT fora do "
+           "universo por delistagem (07/2026), nao por resultado. warmup 420 "
+           "escolhido pelo diag de 10/09 (0% divergencia a 500 velas); a serie "
+           "da antecessora `kis_3489_60t_4h` (31/08->10/09, warmup 89) esta "
+           "INVALIDADA — 1.3% das barras com alvo invertido — e vale so como "
+           "teste do coletor."),
 )
 
 
@@ -299,7 +366,8 @@ DONCHIAN_A_4H = SetupSpec(
 )
 
 REGISTRO = {s.setup_id: s
-            for s in (KIS_REGIME_4H, KIS_3489_60T_4H, DONCHIAN_A_4H)}
+            for s in (KIS_REGIME_4H, KIS_3489_60T_4H, KIS_3489_60T_4H_W420,
+                      DONCHIAN_A_4H)}
 
 # O que o cron de fato roda. Derivado do REGISTRO, nunca uma segunda lista
 # escrita à mão: uma ficha nova entra aqui pelo próprio campo `executar`, e não

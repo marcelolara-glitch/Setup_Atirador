@@ -51,6 +51,7 @@ def test_config_hash_dos_tres_setups_inalterados(capsys):
 
     esperado = {"kis_regime_4h": "e63ec120e131",
                 "kis_3489_60t_4h": "82488baa3086",
+                "kis_3489_60t_4h_w420": "29752fcbad16",
                 "donchian_a_4h": "250170cc8dc0"}
     obtido = {sid: s.config_hash for sid, s in REGISTRO.items()}
     with capsys.disabled():

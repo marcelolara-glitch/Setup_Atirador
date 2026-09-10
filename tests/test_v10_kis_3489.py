@@ -100,15 +100,19 @@ def test_todos_os_hashes_do_registro_sao_distintos():
     assert len(set(hs.values())) == len(hs), f"hash repetido no registro: {hs}"
 
 
-def test_o_registro_tem_as_tres_fichas_e_a_nova_executa():
-    # A ficha entrou DESLIGADA no PR que a criou, para que o `config_hash` fosse
-    # revisado antes de existir a primeira linha de trade sob ele, e foi ligada
-    # num PR proprio de uma linha. O hash NAO se mexeu na virada — `executar`
-    # esta em `FORA_DO_HASH` —, entao a serie de `trades_v10` e a mesma; a prova
-    # esta em `tests/test_v10_liga_kis_3489.py`.
-    assert set(REGISTRO) == {"kis_regime_4h", "kis_3489_60t_4h", "donchian_a_4h"}
-    assert KIS_3489_60T_4H.executar is True
-    assert [s.setup_id for s in reg.ATIVOS] == ["kis_regime_4h", "kis_3489_60t_4h"]
+def test_o_registro_tem_a_ficha_e_ela_saiu_do_ar_sem_mover_o_hash():
+    # A ficha entrou DESLIGADA no PR que a criou, foi LIGADA num PR de uma linha
+    # e voltou a DESLIGAR em 10/09, quando o diag mostrou que a janela dela nao
+    # converge a EMA89. Nas tres viradas o hash ficou onde estava — `executar`
+    # esta em `FORA_DO_HASH` —, entao a serie de `trades_v10` e uma so; a prova
+    # esta em `tests/test_v10_liga_kis_3489.py` e em
+    # `tests/test_v10_warmup_420.py`. A sucessora e a `kis_3489_60t_4h_w420`.
+    assert set(REGISTRO) == {"kis_regime_4h", "kis_3489_60t_4h",
+                             "kis_3489_60t_4h_w420", "donchian_a_4h"}
+    assert KIS_3489_60T_4H.executar is False
+    assert KIS_3489_60T_4H.config_hash == "82488baa3086"
+    assert [s.setup_id for s in reg.ATIVOS] == ["kis_regime_4h",
+                                                "kis_3489_60t_4h_w420"]
 
 
 def test_a_ficha_nova_declara_o_que_o_briefing_pediu():

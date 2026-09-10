@@ -129,8 +129,9 @@ def _atualizar(spec, adap, conn, symbol, velas, agora_ms) -> int:
     return fechadas
 
 
-def _abrir(spec, adap, conn, symbol, velas, bar_ms) -> int:
+def _abrir(spec, adap, conn, symbol, velas, bar_ms, log=None) -> int:
     """Avalia o detector na última barra fechada e grava a entrada. -> 0 ou 1."""
+    log = log or logging.getLogger("v10.runner")
     bar = velas[-1]
     bar_ts = int(bar["ts"])
     cadencia = max(int(spec.cadencia_barras or 1), 1)
@@ -141,6 +142,27 @@ def _abrir(spec, adap, conn, symbol, velas, bar_ms) -> int:
         return 0
     direction = _campo(sinal, "direction")
     if direction not in tuple(spec.direcoes):
+        return 0
+    # UMA posição aberta por (setup, config, símbolo, DIREÇÃO). `_atualizar` já
+    # rodou, então o que continua OPEN aqui é posição que o modelo de saída NÃO
+    # fechou nesta barra — repetir o mesmo lado dobraria a exposição do mesmo
+    # desenho no mesmo símbolo e somaria dois pnl onde a série declara um.
+    #
+    # POR DIREÇÃO, não por símbolo: o DONCHIAN-A mantém LONG e SHORT abertos ao
+    # mesmo tempo no mesmo símbolo (é o que a instância legada faz, e o espelho
+    # existe para reproduzi-la barra a barra — `tests/test_v10_espelho_*`).
+    # Barrar por símbolo faria o espelho divergir do histórico que ele mede.
+    # Nas fichas de saída `reverse`, que são as que rodam, os dois lados nunca
+    # coexistem: quem inverte o alvo fecha a posição na MESMA passada.
+    #
+    # Não silencia: sai no log com a posição que barrou.
+    aberta = conn.execute(
+        f"SELECT id FROM {TABELA} WHERE setup_id=? AND config_hash=? AND "
+        "symbol=? AND direction=? AND status='OPEN' LIMIT 1",
+        (spec.setup_id, spec.config_hash, symbol, direction)).fetchone()
+    if aberta is not None:
+        log.warning(f"  [{spec.setup_id}/{symbol}] posicao duplicada evitada: "
+                    f"{direction}, {aberta['id']} segue OPEN")
         return 0
     esp = int((spec.exit_params or {}).get("espacamento_barras", 0))
     if esp:
@@ -214,15 +236,31 @@ def rodar(spec, conn, agora_ms, velas_fn=None, log=None) -> dict:
                 r["venue_alt"].append(f"{symbol}@{venue}")
                 log.warning(f"  [{spec.setup_id}/{symbol}] servido por {venue} "
                             f"(primaria {VENUE_PRIMARIA})")
+            # Recebido x PEDIDO, sempre conferido e sempre nomeado. Vir menos
+            # do que as `n` pedidas não é, por si, falha — replay e listagem
+            # nova têm menos história do que o pedido —, mas é o sintoma pelo
+            # qual um teto de limit da corretora aparece ANTES de cortar o
+            # warmup. Sem esta linha ele só apareceria como número diferente.
+            if len(brutas or []) < n:
+                log.warning(f"  [{spec.setup_id}/{symbol}] coleta curta: "
+                            f"n={len(brutas or [])}/{n} (pedido)")
             velas = [v for v in (brutas or [])
                      if int(v["ts"]) + bar_ms <= int(agora_ms)]
             velas.sort(key=lambda v: int(v["ts"]))
+            # A janela que a ficha DECLARA precisar. Abaixo dela o detector
+            # não é chamado: um alvo calculado com warmup curto sai INVERTIDO
+            # em parte das barras (diag de 10/09, que invalidou a janela da
+            # `kis_3489_60t_4h`), e sinal invertido é entrada no lado errado.
+            # Falha NOMEADA — entra em `falhas`/`falha_symbols` —, com o
+            # recebido/pedido junto para separar "corretora truncou" de "o
+            # símbolo não tem história".
             if len(velas) < warmup:
-                raise ValueError(f"barras insuficientes: {len(velas)} < {warmup}")
+                raise ValueError(f"barras insuficientes: {len(velas)} < {warmup} "
+                                 f"(coleta n={len(brutas or [])}/{n})")
             if anotar is not None:
                 velas = _chamar(anotar, velas, det_params)
             r["fechados"] += _atualizar(spec, adap, conn, symbol, velas, agora_ms)
-            r["abertos"] += _abrir(spec, adap, conn, symbol, velas, bar_ms)
+            r["abertos"] += _abrir(spec, adap, conn, symbol, velas, bar_ms, log)
             r["ok"] += 1
         except Exception as e:
             r["falhas"] += 1
