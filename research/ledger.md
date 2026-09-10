@@ -1354,6 +1354,27 @@ XLMUSDT 2 SHORT simultaneos no 3489 (02/09 12:00 e 16:00, saidas distintas).
 Suspeita de duplicacao no coletor, nao no detector. Em diagnostico; regra de
 deduplicacao para a leitura de 31/10 a definir apos confirmacao.
 
+## 2026-09-10 — CAUSA RAIZ: alvo KIS nao e invariante a janela no forward
+
+Evidencia (trades_v10 + runner + exits):
+- _anotar e detector usam a MESMA alvos() sobre as velas do runner (warmup 89 +
+  FOLGA 80 = 169 barras). Consistencia entre entrada e saida, NAO entre janelas.
+- Barra XLM 02/09 16:00: alvo=-1 na run 16:16 (entrada #2) e alvo=+1 na run
+  03/09 08:16 (saida ideal #1, atraso 4). Mesma funcao, mesma barra, sinal oposto.
+- Reverse documenta barras_atraso>0 como "run perdida pelo cron". Cron sem falha.
+  9 de 13 fechados do 3489 com atraso (8,9,12,13,17 barras). Serie de alvos
+  reescrita a cada deslizamento.
+- CONTROLE: kis_regime_4h (8/21), mesmo runner, 14/14 atraso 0. EMA21 converge
+  em 169 barras; EMA89 nao (residuo ~2%).
+Conclusao: o forward 34/89 nao reproduz a maquina do backtest (seed unico em
+05/2024, passada contigua). Trades da janela 31/08→ sao teste do coletor, nao
+evidencia do desenho. JANELA 3489 INVALIDADA desde o primeiro trade.
+Decisao: prova offline de invariancia (PR-diag) -> ficha nova com warmup que
+converge (novo config_hash) -> guarda de OPEN em _abrir com WARNING -> reabrir.
+kis_regime_4h permanece: teste com 169 barras e valido para 8/21; serviu de
+controle negativo. Benchmark passivo: estacionado ate a reabertura.
+Nao desqualifica o 34/89; desqualifica o coletor para pares longos.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
