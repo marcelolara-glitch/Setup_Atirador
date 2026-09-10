@@ -1375,6 +1375,21 @@ kis_regime_4h permanece: teste com 169 barras e valido para 8/21; serviu de
 controle negativo. Benchmark passivo: estacionado ate a reabertura.
 Nao desqualifica o 34/89; desqualifica o coletor para pares longos.
 
+## 2026-09-10 — PR-diag (backtest/diag_invariancia_alvo.py, log diag_inv_20260910_0131)
+
+Regra de leitura pre-registrada em 10/09 aplicada ao numero:
+- 3489, janela 169 (runner) vs TUDO: 49/3900 barras (1.3%) divergem; as 10 listadas
+  sao TODAS troca de lado (+1/-1), nenhum zero -> mecanismo = semente da EMA89,
+  nao carry. Concentradas nos cruzamentos = onde o reverse entra e sai.
+- 3489, janela 500 vs TUDO: 0/3900. -> warmup_barras = 420 (500 - FOLGA 80).
+- 8/21, janela 140 (runner) vs TUDO: 0/360. kis_regime_4h LIMPO; controle valido;
+  nao muda.
+Decisao: PR-fix = ficha nova kis_3489_60t_4h_w420 (mesmo detector, mesmos params,
+warmup 420; hash novo), ficha 82488baa3086 -> executar=False,
+estado_ciclo=invalidado_coletor. Guarda de OPEN em _abrir com WARNING.
+Janela nova abre na primeira barra apos o merge; entry_ts real vai ao ledger.
+Caveat do diag: 'TUDO' comeca em 05/2024 -> 1.3% e piso.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
