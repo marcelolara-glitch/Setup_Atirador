@@ -1390,6 +1390,12 @@ estado_ciclo=invalidado_coletor. Guarda de OPEN em _abrir com WARNING.
 Janela nova abre na primeira barra apos o merge; entry_ts real vai ao ledger.
 Caveat do diag: 'TUDO' comeca em 05/2024 -> 1.3% e piso.
 
+10/09: teto medido de velas() = 299 barras (pedido 300 -> 299; pedido 500 -> 299).
+w420 (warmup 420 + folga 80 = 500) INVIAVEL pela API atual. PR-fix merge com
+w420 executar=False. Janela 34/89 segue fechada. Proximo: decidir entre warmup
+vindo do store (candles_v9.db) ou paginador em exchanges.py — depende do estado
+do store. 299 vs 300: provavel descarte da barra corrente, nao verificado.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
