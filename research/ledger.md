@@ -1400,7 +1400,7 @@ do store. 299 vs 300: provavel descarte da barra corrente, nao verificado.
 
 (camadas 0–5; controle proporcional à camada; sandbox aberto). Regras anteriores
 neste ledger ficam como histórico. 
-Ref: commit <sha>.
+Ref: commit 4534a7b.
 
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
