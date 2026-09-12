@@ -1396,6 +1396,12 @@ w420 executar=False. Janela 34/89 segue fechada. Proximo: decidir entre warmup
 vindo do store (candles_v9.db) ou paginador em exchanges.py — depende do estado
 do store. 299 vs 300: provavel descarte da barra corrente, nao verificado.
 
+## 2026-09-12 — Regime passa a viver em research/REGIME.md 
+
+(camadas 0–5; controle proporcional à camada; sandbox aberto). Regras anteriores
+neste ledger ficam como histórico. 
+Ref: commit <sha>.
+
 ## PENDENTES (pré-registrados)
 - Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
 - H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
