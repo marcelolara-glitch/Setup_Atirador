@@ -1402,10 +1402,56 @@ do store. 299 vs 300: provavel descarte da barra corrente, nao verificado.
 neste ledger ficam como histórico. 
 Ref: commit 4534a7b.
 
-## PENDENTES (pré-registrados)
-- Estágio 2 em curso: [VIGIA] diário; veredito só ao fim da janela.
-- H-42 (TSMOM L=42 alts): elegível a shadow próprio após 4 semanas de
-  DONCHIAN-A estável (a partir de ~17/08); N=240 depois, nunca antes.
-- Auditoria de indexação posicional (replay/sweep/null_model).
-- Hardening do juice (contiguidade por timestamp).
-- Higiene de logs v8.
+2026-11-14 — CHECKPOINT FORWARD (atrasado) + DESLIGAMENTO DOS CRONS
+
+Fonte: export da VM ckpt_20261114_1246 (bancos, cron, logs). Leitura de 31/10 não aconteceu; nada foi mergeado em main entre 12/09 e 14/11 (último commit em produção 3c2ecf9). LOCALIZAÇÃO CORRIGIDA: trades_v10 vive em journal/atirador_journal_v9.db (não existe atirador_journal_v10.db).
+
+OPERAÇÃO — a máquina nunca parou: shadow DONCHIAN-A: 709 rodadas de 19/07 a 14/11, nenhum buraco > 4h. cron-v10.log: 0 erros. TONUSDT falhou em 699/709 rodadas (delistada, seguia na lista do shadow). VM em 14/11: swap 841/1023 MB, 127 MB livres — memória sob pressão.
+
+kis_3489_60t_4h (82488baa3086) — COLETA SEGUIU COM COLETOR INVALIDADO: O registro de 10/09 mandou executar=False e estado_ciclo=invalidado_coletor. O PR-fix nunca entrou; a ficha coletou de 31/08 a 14/11. O defeito persiste no dado: 107/201 fechados com barras_atraso>0 (controle 8/21: 0/92). 4 entradas sobrepostas no mesmo símbolo (guarda de _abrir ausente). Realizado -8.061 bps; sem o melhor mês -20.594. O "+740%" do quadro diário era o livro aberto (34 SHORT abertos entre 07/10 e 13/11) sobre nocional de UM trade. NÃO É EVIDÊNCIA.
+
+kis_regime_4h (e63ec120e131, controle 8/21, coletor limpo): Realizado -2.616 bps em 92 trades; sem o melhor mês -13.482. Coerente com o hold-out reprovado em 21/08. Encerrado como controle.
+
+EXPOSIÇÃO NO DIA: 50 posições SHORT abertas somando os três livros, 0 LONG. Os três setups eram uma aposta só.
+
+DESLIGADOS em 14/11 (convenção do ponto no nome, /etc/cron.d): cron-atirador-v10 -> .DESATIVADO (kis_regime, kis_3489, espelho) cron-atirador-shadow-donchian -> .DESATIVADO (shadow + [VIGIA]) Bancos preservados, intocados. Nenhum cron do Atirador ativo.
+
+2026-11-14 — DONCHIAN-A: VEREDITO DO ESTÁGIO 2 (protocolo de 18–19/07, régua de 22/08)
+
+Fonte: journal/shadow_donchian_a.db (shadow_trades, 182 linhas). Régua de 22/08: "INCONCLUSIVO POR CONTAGEM DE EPISÓDIOS, salvo aparecer uma queda forte que teste o lado short". A queda veio (out–nov/2026).
+
+CORTES PRÉ-REGISTRADOS: 80º fechado (17/09): ΣR +27,1 dia 84 (11/10): ΣR +34,8 em 116 fechados total em 14/11: ΣR +22,4 em 172 fechados; sem ago/2026: -25,6R
+
+PÓS-REGISTRO (23/08 a 14/11) — dado posterior à hipótese de 22/08: SHORT 68 fechados, 5 W, ΣR -24,3 LONG 43 fechados, 10 W, ΣR +10,7 LONG sem a semana 21–27/09: 33 fechados, ΣR -4,3 Só em outubro, com mercado em queda: SHORT 34 fechados, ΣR -16,4.
+
+VEREDITO: LADO SHORT: REPROVADO. A queda que a régua pedia aconteceu e o short perdeu. LADO LONG: dois episódios de ganho (19–22/08 e 21–27/09), perde no resto. Contagem de episódios insuficiente — não promove, não reprova. Shadow encerrado em 14/11 por decisão do Marcelo.
+
+NOTA DE LEITURA: Δpesq -49 bps no [VIGIA] = líq@EXECUTÁVEL − 88,6@6bps (caveat de 19/07). Não é derrapagem de execução: spread medido ~1,2 bps.
+
+2026-11-14 — TRAVA: hold-out do KIS 34/89 (antes de qualquer replay)
+
+PERÍODO TRANCADO: 2026-08-31 16:00 a 2026-11-14 12:00 UTC. O defeito de 10/09 era do coletor (semente da EMA89), não do sinal. Um replay contínuo sobre esse trecho reproduz o que um forward correto teria coletado. O trecho NÃO foi usado em nenhum ajuste e passa a ser o hold-out do 34/89. GASTA-SE UMA VEZ SÓ.
+
+ORDEM OBRIGATÓRIA:
+
+Sandbox (camada 2, REGIME.md) estuda saída e filtro kNN só em 2024-06-17 a 2026-08-26.
+Marcelo fecha a lista de finalistas.
+Rodada única no trecho trancado: original corrigido + finalistas, lado a lado, com decomposição por mês, direção e símbolo.
+
+RESSALVA REGISTRADA ANTES DO DADO: O trecho não é virgem no sentido estrito — o caminho do mercado e o P&L do coletor defeituoso já foram vistos. É virgem para AJUSTE, que é o que protege contra sobreajuste. Para o 8/21 o trecho NÃO está trancado (forward limpo já lido em 14/11): no 8/21 ele vale só como descritivo. Um trimestre, uma alta e uma queda: resultado provável INCONCLUSIVO POR CONTAGEM DE EPISÓDIOS. Não é reprovação e não fecha a frente.
+
+2026-11-14 — CORREÇÃO DE PROCESSO (erro do Claude)
+
+O primeiro briefing do sandbox de 14/11 aplicou controles da camada 3 (regressão byte-idêntica, grade fechada como barreira) a uma rodada de camada 2, e mandou aplicar um filtro kNN que nunca foi codificado nem especificado no repo (o dossiê de 31/10 ficou no chat; scratch.md da branch sandbox está vazio desde a abertura). Causa: o REGIME.md e o ledger inteiro não foram lidos antes de escrever. A regra estava registrada (REGIME.md, commit 4534a7b; entrada de 12/09 acima). Briefing substituído pelo v3. Contribui: as instruções do Projeto no claude.ai ainda carregam o briefing de 19/07 com as regras anteriores a 12/09 (pré-registro antes do dado, regressão byte-idêntica), em contradição com o REGIME.md.
+
+PENDENTES (pré-registrados)
+Sandbox "KIS: saída + filtro kNN" (briefing v3, 14/11): etapa 1 saída sobre código existente; etapa 2 detector kNN novo. Só dados até 2026-08-26.
+Hold-out do 34/89 (trava de 14/11): rodar uma vez, depois da lista de finalistas fechada. Antes, completar velas 4h dos 65 tokens até 14/11 (backfill_okx).
+Camada 0, pré-requisito de qualquer promoção ao v10: guarda de OPEN em _abrir; warmup que converge para EMA89 (store ou paginador; velas() tem teto de 299 barras).
+v10/registro.py: gravar na ficha 82488baa3086 executar=False e estado_ciclo=invalidado_coletor (decidido em 10/09, nunca aplicado). Hoje só o cron desligado impede a coleta.
+Instruções do Projeto no claude.ai: trocar o briefing de 19/07 por um apontador para research/REGIME.md (só o Marcelo edita).
+H-42 e N=240: fila ancorada no DONCHIAN-A, encerrado em 14/11. Decisão do Marcelo se seguem, em que ordem.
+VM: investigar consumo de memória (swap 841/1023 MB em 14/11).
+Auditoria de indexação posicional (replay/sweep/null_model).
+Hardening do juice (contiguidade por timestamp).
+Higiene de logs v8.
