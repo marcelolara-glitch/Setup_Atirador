@@ -1402,7 +1402,7 @@ do store. 299 vs 300: provavel descarte da barra corrente, nao verificado.
 neste ledger ficam como histórico. 
 Ref: commit 4534a7b.
 
-2026-11-14 — CHECKPOINT FORWARD (atrasado) + DESLIGAMENTO DOS CRONS
+## 2026-11-14 — CHECKPOINT FORWARD (atrasado) + DESLIGAMENTO DOS CRONS
 
 Fonte: export da VM ckpt_20261114_1246 (bancos, cron, logs). Leitura de 31/10 não aconteceu; nada foi mergeado em main entre 12/09 e 14/11 (último commit em produção 3c2ecf9). LOCALIZAÇÃO CORRIGIDA: trades_v10 vive em journal/atirador_journal_v9.db (não existe atirador_journal_v10.db).
 
@@ -1416,7 +1416,7 @@ EXPOSIÇÃO NO DIA: 50 posições SHORT abertas somando os três livros, 0 LONG.
 
 DESLIGADOS em 14/11 (convenção do ponto no nome, /etc/cron.d): cron-atirador-v10 -> .DESATIVADO (kis_regime, kis_3489, espelho) cron-atirador-shadow-donchian -> .DESATIVADO (shadow + [VIGIA]) Bancos preservados, intocados. Nenhum cron do Atirador ativo.
 
-2026-11-14 — DONCHIAN-A: VEREDITO DO ESTÁGIO 2 (protocolo de 18–19/07, régua de 22/08)
+## 2026-11-14 — DONCHIAN-A: VEREDITO DO ESTÁGIO 2 (protocolo de 18–19/07, régua de 22/08)
 
 Fonte: journal/shadow_donchian_a.db (shadow_trades, 182 linhas). Régua de 22/08: "INCONCLUSIVO POR CONTAGEM DE EPISÓDIOS, salvo aparecer uma queda forte que teste o lado short". A queda veio (out–nov/2026).
 
@@ -1428,30 +1428,29 @@ VEREDITO: LADO SHORT: REPROVADO. A queda que a régua pedia aconteceu e o short 
 
 NOTA DE LEITURA: Δpesq -49 bps no [VIGIA] = líq@EXECUTÁVEL − 88,6@6bps (caveat de 19/07). Não é derrapagem de execução: spread medido ~1,2 bps.
 
-2026-11-14 — TRAVA: hold-out do KIS 34/89 (antes de qualquer replay)
+## 2026-11-14 — TRAVA: hold-out do KIS 34/89 (antes de qualquer replay)
 
 PERÍODO TRANCADO: 2026-08-31 16:00 a 2026-11-14 12:00 UTC. O defeito de 10/09 era do coletor (semente da EMA89), não do sinal. Um replay contínuo sobre esse trecho reproduz o que um forward correto teria coletado. O trecho NÃO foi usado em nenhum ajuste e passa a ser o hold-out do 34/89. GASTA-SE UMA VEZ SÓ.
 
 ORDEM OBRIGATÓRIA:
-
 Sandbox (camada 2, REGIME.md) estuda saída e filtro kNN só em 2024-06-17 a 2026-08-26.
 Marcelo fecha a lista de finalistas.
 Rodada única no trecho trancado: original corrigido + finalistas, lado a lado, com decomposição por mês, direção e símbolo.
 
 RESSALVA REGISTRADA ANTES DO DADO: O trecho não é virgem no sentido estrito — o caminho do mercado e o P&L do coletor defeituoso já foram vistos. É virgem para AJUSTE, que é o que protege contra sobreajuste. Para o 8/21 o trecho NÃO está trancado (forward limpo já lido em 14/11): no 8/21 ele vale só como descritivo. Um trimestre, uma alta e uma queda: resultado provável INCONCLUSIVO POR CONTAGEM DE EPISÓDIOS. Não é reprovação e não fecha a frente.
 
-2026-11-14 — CORREÇÃO DE PROCESSO (erro do Claude)
+## 2026-11-14 — CORREÇÃO DE PROCESSO (erro do Claude)
 
 O primeiro briefing do sandbox de 14/11 aplicou controles da camada 3 (regressão byte-idêntica, grade fechada como barreira) a uma rodada de camada 2, e mandou aplicar um filtro kNN que nunca foi codificado nem especificado no repo (o dossiê de 31/10 ficou no chat; scratch.md da branch sandbox está vazio desde a abertura). Causa: o REGIME.md e o ledger inteiro não foram lidos antes de escrever. A regra estava registrada (REGIME.md, commit 4534a7b; entrada de 12/09 acima). Briefing substituído pelo v3. Contribui: as instruções do Projeto no claude.ai ainda carregam o briefing de 19/07 com as regras anteriores a 12/09 (pré-registro antes do dado, regressão byte-idêntica), em contradição com o REGIME.md.
 
-PENDENTES (pré-registrados)
-Sandbox "KIS: saída + filtro kNN" (briefing v3, 14/11): etapa 1 saída sobre código existente; etapa 2 detector kNN novo. Só dados até 2026-08-26.
-Hold-out do 34/89 (trava de 14/11): rodar uma vez, depois da lista de finalistas fechada. Antes, completar velas 4h dos 65 tokens até 14/11 (backfill_okx).
-Camada 0, pré-requisito de qualquer promoção ao v10: guarda de OPEN em _abrir; warmup que converge para EMA89 (store ou paginador; velas() tem teto de 299 barras).
-v10/registro.py: gravar na ficha 82488baa3086 executar=False e estado_ciclo=invalidado_coletor (decidido em 10/09, nunca aplicado). Hoje só o cron desligado impede a coleta.
-Instruções do Projeto no claude.ai: trocar o briefing de 19/07 por um apontador para research/REGIME.md (só o Marcelo edita).
-H-42 e N=240: fila ancorada no DONCHIAN-A, encerrado em 14/11. Decisão do Marcelo se seguem, em que ordem.
-VM: investigar consumo de memória (swap 841/1023 MB em 14/11).
-Auditoria de indexação posicional (replay/sweep/null_model).
-Hardening do juice (contiguidade por timestamp).
-Higiene de logs v8.
+## PENDENTES (pré-registrados)
+- Sandbox "KIS: saída + filtro kNN" (briefing v3, 14/11): etapa 1 saída sobre código existente; etapa 2 detector kNN novo. Só dados até 2026-08-26.
+- Hold-out do 34/89 (trava de 14/11): rodar uma vez, depois da lista de finalistas fechada. Antes, completar velas 4h dos 65 tokens até 14/11 (backfill_okx).
+- Camada 0, pré-requisito de qualquer promoção ao v10: guarda de OPEN em _abrir; warmup que converge para EMA89 (store ou paginador; velas() tem teto de 299 barras).
+- v10/registro.py: gravar na ficha 82488baa3086 executar=False e estado_ciclo=invalidado_coletor (decidido em 10/09, nunca aplicado). Hoje só o cron desligado impede a coleta.
+- Instruções do Projeto no claude.ai: trocar o briefing de 19/07 por um apontador para research/REGIME.md (só o Marcelo edita).
+- H-42 e N=240: fila ancorada no DONCHIAN-A, encerrado em 14/11. Decisão do Marcelo se seguem, em que ordem.
+- VM: investigar consumo de memória (swap 841/1023 MB em 14/11).
+- Auditoria de indexação posicional (replay/sweep/null_model).
+- Hardening do juice (contiguidade por timestamp).
+- Higiene de logs v8.
