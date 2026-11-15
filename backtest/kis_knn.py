@@ -124,12 +124,16 @@ def mfi_knn(candles: list, n_len: int = MFI_LEN) -> list:
 
 
 # ------------------------------------------------------------------ motor ---
-def decidir(gatilhos: list, k: int = K_VIZ, chave_memoria: str = "resolucao"):
+def decidir(gatilhos: list, k: int = K_VIZ, chave_memoria: str = "resolucao",
+            campo_rotulo: str = "close"):
     """`gatilhos` = [{ts, sym, long, adx, mfi, close}]. Devolve lista paralela
     de estados: 'libera' | 'veta' | 'sem_feature' | 'vazia' e, para os
     filtraveis, se a memoria tinha < k pontos (frio). PURA (sem I/O).
     `chave_memoria` = 'gatilho' existe SO para o teste de mutacao 3.6: insere o
-    ponto pelo timestamp do gatilho (vazando o rotulo do futuro)."""
+    ponto pelo timestamp do gatilho (vazando o rotulo do futuro).
+    `campo_rotulo` = preco que rotula: +1 se campo(proximo) >= campo(este).
+    Default 'close' (etapa 2, inalterado); a etapa 5 (vwma_knn) usa 'open',
+    como o script original."""
     import numpy as np
     ordem = sorted(range(len(gatilhos)),
                    key=lambda i: (gatilhos[i]["ts"], gatilhos[i]["sym"]))
@@ -145,7 +149,7 @@ def decidir(gatilhos: list, k: int = K_VIZ, chave_memoria: str = "resolucao"):
         g, h = gatilhos[i], gatilhos[j]
         if g["adx"] is None or g["mfi"] is None:
             continue
-        rot = 1 if h["close"] >= g["close"] else -1
+        rot = 1 if h[campo_rotulo] >= g[campo_rotulo] else -1
         chave = h["ts"] if chave_memoria == "resolucao" else g["ts"]
         pend.append((chave, i, g["adx"], g["mfi"], rot))
     heapq.heapify(pend)
