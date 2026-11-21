@@ -51,6 +51,24 @@
 # MEDICAO: em memoria, `kis_tf.medir` (= measure_event: entry close, ATR14 de
 #   Wilder em 30 velas, borda de 48 barras, caminho ate 256); retorno = saida em
 #   ATR x atr/entry x 1e4 - COST_BPS (6). 10 bps = 6 - 4n. Metades por ENTRADA.
+# ENTRADA TARDIA (v2, briefing de 21/11/2026) — celulas G1T_vol, G1T_sem,
+#   G2T_vol, G2T_sem. Movimento = da virada k (direcao d) ate a proxima virada
+#   contraria bruta j. Se a virada passa na celula base (G1 ou G2), a entrada E
+#   a da base. Senao, entra na 1a barra t (i_k < t < j) em que vale, NA BARRA t:
+#   rib[t] == d (+ htf[t] == d nas G2T; + vol_rel[t] >= 1,2 nas _vol). None =
+#   nao passa na barra. Uma entrada por movimento (sem reentrada depois do
+#   stop); sem barra valida, sem trade. Saida igual: close de j (hold = j - e)
+#   ou stop 2 x ATR14 DA BARRA e. Medicao: `medir(cndl, e, ...)`.
+#   DESVIO DECLARADO: a busca para na proxima virada de QUALQUER direcao, nao so
+#   em j. So difere do briefing se houver duas viradas seguidas na mesma direcao
+#   (ai a 2a abre a propria busca; sem isso, duas entradas na mesma barra). O
+#   log conta esses casos (esperado: 0 ou perto).
+#   Trade tardio: t[0] = ts da barra de ENTRADA (metade por entrada); o extra
+#   leva `e` e `atraso` = e - i_k. No CSV, vol_rel/rib_dir/htf_dir/grau sao os
+#   DA VIRADA em todas as linhas.
+#   Placebo das tardias: o mesmo, retirada de trades do R0 com a contagem por
+#   lado dos movimentos SEM entrada. Compara com "entrar na virada", nao com
+#   "entrar tarde ao acaso".
 # VM 956 MiB: velas de UM simbolo por vez; teto de RSS do kis_trail checado a
 #   cada simbolo. T1: --end <= 2026-08-26 e TEMP VIEW (`conecta_com_teto`).
 # Uso (VM): python -m backtest.aio_graduado --store <candles_v9.db>
@@ -70,9 +88,9 @@ from backtest.keepitsimple import EXT_CAP, _ema                    # noqa: E402
 from backtest.kis_knn import SEMENTES, _pct, placebo               # noqa: E402
 from backtest.kis_meta import vol_rel                              # noqa: E402
 from backtest.kis_regime import _atr_series                        # noqa: E402
-from backtest.kis_saida import (H1, H2, TETO_ISO, _guarda_relogio,  # noqa: E402
-                                _iso, _ms, conecta_com_teto, resumo,
-                                stop_exit)
+from backtest.kis_saida import (COST_FWD_BPS, H1, H2, TETO_ISO,   # noqa: E402
+                                _guarda_relogio, _iso, _ms,
+                                conecta_com_teto, resumo, stop_exit)
 from backtest.kis_tf import agregar, medir                         # noqa: E402
 from backtest.kis_trail import (COST_BPS, RSS_CEILING_MIB, _dentro,  # noqa: E402
                                 _rss_mib, trail_exit)
@@ -88,6 +106,9 @@ DIA_MS = 86_400_000
 DIA_LIDO = 1                 # a barra do dia D le o dia D - DIA_LIDO (mutacao: 0)
 CELULAS = ("R0", "V", "F", "G1", "G2")
 FILTRADAS = CELULAS[1:]
+TARDIAS = ("G1T_vol", "G1T_sem", "G2T_vol", "G2T_sem")
+BASE = {"G1T_vol": "G1", "G1T_sem": "G1", "G2T_vol": "G2", "G2T_sem": "G2"}
+RIB_LIDO = 0                 # a condicao tardia le rib[t + RIB_LIDO] (mutacao: 1)
 STOPS = (("S0", 0), ("S2", 1))
 METADES = (("H1", H1), ("H2", H2))
 VIDEO = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
@@ -159,21 +180,69 @@ def serie_sinal(cndl: list, sens: float = SENS) -> dict:
     lin = linha_trailing(closes, [None if a is None else sens * a
                                   for a in atr10])
     vr = vol_rel([c["volume"] for c in cndl], VOL_JAN)
-    rib, htf = ribbon(closes), htf_dirs(cndl)
+    return monta_sinal(cndl, viradas(closes, lin), vr, ribbon(closes),
+                       htf_dirs(cndl), lin, atr10)
+
+
+def monta_sinal(cndl: list, vir: list, vr: list, rib: list, htf: list,
+                lin: list = None, atr10: list = None) -> dict:
+    """Junta as series por barra e as viradas `vir` = [(t, is_long)] com as
+    features da barra da virada e a barra de entrada de cada celula tardia
+    (`ent`: {celula: e | None})."""
     vs = []
-    for t, lg in viradas(closes, lin):
+    for t, lg in vir:
         d = 1 if lg else -1
         vo = vr[t] is not None and vr[t] >= VOL_MIN
         ro = rib[t] == d
         ho = htf[t] == d
         vs.append({"i": t, "ts": cndl[t]["ts"], "long": lg, "vol_rel": vr[t],
                    "rib": rib[t], "htf": htf[t], "vol_ok": vo, "rib_ok": ro,
-                   "htf_ok": ho, "grau": grau(vo, ro, ho)})
-    return {"linha": lin, "atr10": atr10, "vol_rel": vr, "rib": rib,
-            "htf": htf, "viradas": vs}
+                   "htf_ok": ho, "grau": grau(vo, ro, ho), "ent": {}})
+    sg = {"linha": lin, "atr10": atr10 or [None] * len(cndl), "vol_rel": vr,
+          "rib": rib, "htf": htf, "viradas": vs}
+    for cel in TARDIAS:
+        for v, e in zip(vs, entradas_tardias(sg, cel)):
+            v["ent"][cel] = e
+    return sg
+
+
+def cond_tardia(cel: str, sg: dict, t: int, d: int) -> bool:
+    """Condicao da entrada tardia NA BARRA t (None em qualquer serie = nao)."""
+    r = t + RIB_LIDO
+    if r >= len(sg["rib"]) or sg["rib"][r] != d:
+        return False
+    if BASE[cel] == "G2" and sg["htf"][t] != d:
+        return False
+    if cel.endswith("_vol"):
+        x = sg["vol_rel"][t]
+        return x is not None and x >= VOL_MIN
+    return True
+
+
+def entradas_tardias(sg: dict, cel: str) -> list:
+    """[e | None] paralelo a sg["viradas"]: a barra da virada se ela passa na
+    celula base; senao a 1a barra depois dela, antes da PROXIMA VIRADA (de
+    qualquer direcao; ver DESVIO no cabecalho), em que `cond_tardia` vale."""
+    vs, n, out = sg["viradas"], len(sg["rib"]), []
+    for k, v in enumerate(vs):
+        if passa(BASE[cel], v):
+            out.append(v["i"])
+            continue
+        fim = vs[k + 1]["i"] if k + 1 < len(vs) else n
+        d = 1 if v["long"] else -1
+        out.append(next((t for t in range(v["i"] + 1, fim)
+                         if cond_tardia(cel, sg, t, d)), None))
+    return out
+
+
+def seguidas_mesma_direcao(vs: list) -> int:
+    """Viradas cuja virada seguinte tem a MESMA direcao (busca encurtada)."""
+    return sum(1 for a, b in zip(vs, vs[1:]) if a["long"] is b["long"])
 
 
 def passa(cel: str, v: dict) -> bool:
+    if cel in BASE:                       # tardia: o movimento tem entrada
+        return v["ent"][cel] is not None
     return {"R0": True, "V": v["vol_ok"], "F": v["rib_ok"],
             "G1": v["grau"] >= 1, "G2": v["grau"] == 2}[cel]
 
@@ -190,37 +259,56 @@ def holds(vs: list, ult: int) -> list:
     return out
 
 
+def _trade(cndl: list, sym: str, sg: dict, v: dict, e: int, hb: int,
+           fim: bool) -> tuple:
+    """(trade | None, motivo da exclusao). `e` = barra de entrada; `hb` = hold
+    bruto contado a partir de `e`."""
+    m = medir(cndl, e, "LONG" if v["long"] else "SHORT", BAR_4H_MS)
+    if m is None:
+        return None, "excl_borda"
+    hold, tr = min(max(hb, 1), EXT_CAP), hb > EXT_CAP
+    if hold > len(m["fwd_bar"]):
+        return None, "excl_hold"
+    ap = m["atr"] / m["entry"]
+    s0 = trail_exit(None, None, None, m["fwd_bar"], hold, 0, 0)
+    s2, parou = stop_exit(m["fav_bar"], m["adv_bar"], m["open_bar"],
+                          m["fwd_bar"], hold, STOP_K, False)
+    sai = cndl[e + hold]
+    return (cndl[e]["ts"], sym, v["long"],
+            [s0 * ap * 1e4 - COST_BPS, s2 * ap * 1e4 - COST_BPS],
+            2 if parou else 0, tr, fim,
+            {"hold": hold, "hold_bruto": hb, "virada": v,
+             "entry": m["entry"], "atr14": m["atr"],
+             "atr10": sg["atr10"][e], "saida_ts": sai["ts"],
+             "saida_px": sai["close"], "e": e, "atraso": e - v["i"]}), None
+
+
 def trades_simbolo(cndl: list, sym: str, cont: dict, celula: str = "R0",
-                   sinal: dict = None) -> list:
+                   sinal: dict = None, cache: dict = None) -> list:
     """Trades da `celula` num simbolo. Tupla no formato do kis_saida.resumo:
-    (ts, sym, is_long, [ret_s0, ret_s2], bits, truncado, marcado_fim, extra).
-    O hold NAO depende da celula (saida na virada contraria bruta)."""
+    (ts da ENTRADA, sym, is_long, [ret_s0, ret_s2], bits, truncado,
+    marcado_fim, extra). Nas celulas base a entrada e a virada e o hold NAO
+    depende da celula (saida na virada contraria bruta). Nas tardias a entrada
+    e `v["ent"][celula]` e o hold encolhe do atraso. `cache` ({(i_k, e):
+    resultado}) so serve para dividir a mesma tupla entre as celulas tardias."""
     sg = sinal or serie_sinal(cndl)
     vs = sg["viradas"]
     out = []
     for v, (hb, fim) in zip(vs, holds(vs, len(cndl) - 1)):
         if not passa(celula, v):
             continue
-        m = medir(cndl, v["i"], "LONG" if v["long"] else "SHORT", BAR_4H_MS)
-        if m is None:
-            cont["excl_borda"] += 1
+        e = v["ent"][celula] if celula in BASE else v["i"]
+        ch = (v["i"], e)
+        if cache is not None and ch in cache:
+            t, motivo = cache[ch]
+        else:
+            t, motivo = _trade(cndl, sym, sg, v, e, hb - (e - v["i"]), fim)
+            if cache is not None:
+                cache[ch] = (t, motivo)
+        if t is None:
+            cont[motivo] += 1
             continue
-        hold, tr = min(max(hb, 1), EXT_CAP), hb > EXT_CAP
-        if hold > len(m["fwd_bar"]):
-            cont["excl_hold"] += 1
-            continue
-        ap = m["atr"] / m["entry"]
-        s0 = trail_exit(None, None, None, m["fwd_bar"], hold, 0, 0)
-        s2, parou = stop_exit(m["fav_bar"], m["adv_bar"], m["open_bar"],
-                              m["fwd_bar"], hold, STOP_K, False)
-        sai = cndl[v["i"] + hold]
-        out.append((v["ts"], sym, v["long"],
-                    [s0 * ap * 1e4 - COST_BPS, s2 * ap * 1e4 - COST_BPS],
-                    2 if parou else 0, tr, fim,
-                    {"hold": hold, "hold_bruto": hb, "virada": v,
-                     "entry": m["entry"], "atr14": m["atr"],
-                     "atr10": sg["atr10"][v["i"]], "saida_ts": sai["ts"],
-                     "saida_px": sai["close"]}))
+        out.append(t)
     return out
 
 
@@ -272,6 +360,9 @@ def coleta(conn, symbols: list, tf: str, end_ms: int, esp: dict) -> dict:
     from backtest.candle_store import read_candles
     G, trades, meta, sem = [], [], {}, []
     cont = {"excl_borda": 0, "excl_hold": 0}
+    tard = {c: [] for c in TARDIAS}
+    cont_t = {c: {"excl_borda": 0, "excl_hold": 0} for c in TARDIAS}
+    seguidas = 0
     conf = {"htf_div": {}, "vol_div": {}, "vol_none": {}, "htf_none": {},
             "rib_none": {}}
     rss = _rss_mib()
@@ -299,6 +390,10 @@ def coleta(conn, symbols: list, tf: str, end_ms: int, esp: dict) -> dict:
                     (v["vol_rel"] is None) != (v["i"] < VOL_JAN):
                 conf["vol_div"][sym] = conf["vol_div"].get(sym, 0) + 1
         trades.extend(trades_simbolo(cndl, sym, cont, "R0", sg))
+        cache = {}                  # so entre as tardias; o R0 fica independente
+        for c in TARDIAS:
+            tard[c].extend(trades_simbolo(cndl, sym, cont_t[c], c, sg, cache))
+        seguidas += seguidas_mesma_direcao(sg["viradas"])
         anos = {}
         for v in sg["viradas"]:
             y = _iso(v["ts"])[:4]
@@ -315,8 +410,11 @@ def coleta(conn, symbols: list, tf: str, end_ms: int, esp: dict) -> dict:
             raise MemoryError(f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} "
                               f"apos {sym}; PARANDO.")
     trades.sort(key=lambda t: (t[0], t[1]))
+    for c in TARDIAS:
+        tard[c].sort(key=lambda t: (t[0], t[1]))
     return {"G": G, "trades": trades, "meta": meta, "sem_candles": sem,
-            "cont": cont, "conf": conf, "rss": rss}
+            "cont": cont, "conf": conf, "rss": rss, "tard": tard,
+            "cont_t": cont_t, "seguidas": seguidas}
 
 
 def agrega_placebo(trades: list, vet: set) -> dict:
@@ -347,9 +445,9 @@ class _Log:
         self.fh.flush()
 
 
-CAMPOS = ["bar_ts_iso", "mes", "metade", "sym", "direcao", "hold", "truncado",
-          "marcado_fim", "ret_s0", "ret_s2", "parou_s2", "vol_rel", "rib_dir",
-          "htf_dir", "grau"]
+CAMPOS = ["celula", "bar_ts_iso", "mes", "metade", "sym", "direcao", "atraso",
+          "virada_ts_iso", "hold", "truncado", "marcado_fim", "ret_s0",
+          "ret_s2", "parou_s2", "vol_rel", "rib_dir", "htf_dir", "grau"]
 CAMPOS_PLACEBO = ["celula", "semente", "stop", "metade", "n", "ret6"]
 
 
@@ -357,15 +455,26 @@ def _f(x, fmt="+.1f"):
     return "NA" if x is None else format(x, fmt)
 
 
-def _tabela(log, trades: list, titulo: str) -> dict:
+def _pico(tc: list, k: int, faixa: tuple) -> float:
+    """Pico da MESMA curva acumulada do `dd` do kis_saida.resumo."""
+    cum = pico = 0.0
+    for t in tc:
+        if _dentro(t[0], faixa):
+            cum += t[3][k]
+            pico = max(pico, cum)
+    return pico
+
+
+def _tabela(log, trades: list, titulo: str, tard: dict = None) -> dict:
     log(f"\n===== {titulo} — H1 {H1[0]}..{H1[1]} | H2 {H2[0]}..{H2[1]} | "
         f"custo 6 bps (10 = 6 - 4n) =====")
-    log(f"{'cel':>3} {'st':>2} H  | {'n':>5} | {'ret@6':>8} | {'bpt@6':>7} | "
+    log(f"{'cel':>7} {'st':>2} H  | {'n':>5} | {'ret@6':>8} | {'bpt@6':>7} | "
         f"{'bpt@10':>7} | {'venc':>5} | {'nL':>4} {'retL':>8} | {'nS':>4} "
-        f"{'retS':>8} | {'sem melhor mes':>22} | {'dd':>7} | {'stop':>4} | top3")
+        f"{'retS':>8} | {'sem melhor mes':>22} | {'dd':>7} | {'pico':>7} | "
+        f"{'stop':>4} | top3")
     res = {}
-    for c in CELULAS:
-        tc = filtra(trades, c)
+    for c in CELULAS + (TARDIAS if tard else ()):
+        tc = tard[c] if c in BASE else filtra(trades, c)
         for s, k in STOPS:
             for h, f in METADES:
                 x = resumo(tc, k, f)
@@ -373,15 +482,103 @@ def _tabela(log, trades: list, titulo: str) -> dict:
                 x["venc"] = 100.0 * sum(1 for r in sel if r > 0) / len(sel) \
                     if sel else 0.0
                 x["conc"] = concentracao(sel)
+                x["pico"] = _pico(tc, k, f)
                 res[(c, s, h)] = x
-                log(f"{c:>3} {s} {h} | {x['n']:>5} | {x['ret6']:>+8.0f} | "
+                log(f"{c:>7} {s} {h} | {x['n']:>5} | {x['ret6']:>+8.0f} | "
                     f"{x['bpt6']:>+7.1f} | {x['bpt10']:>+7.1f} | "
                     f"{x['venc']:>4.1f}% | {x['n_long']:>4} "
                     f"{x['ret_long']:>+8.0f} | {x['n_short']:>4} "
                     f"{x['ret_short']:>+8.0f} | {x['ret_sem_melhor_mes']:>+8.0f}"
-                    f" ({x['melhor_mes']:>7}) | {x['dd']:>7.0f} | "
+                    f" ({x['melhor_mes']:>7}) | {x['dd']:>7.0f} | {x['pico']:>7.0f} | "
                     f"{x['n_stop'] if k else '-':>4} | {x['top3']}")
     return res
+
+
+def _st(ts: list) -> str:
+    """n | bps/trade S2 a 6 e a 10 | % vencedores e % stop (S2) | S0 a 6."""
+    n = len(ts)
+    if not n:
+        return f"n {0:>5}"
+    b2, b0 = sum(t[3][1] for t in ts) / n, sum(t[3][0] for t in ts) / n
+    return (f"n {n:>5} | S2 bpt@6 {b2:>+7.1f} @10 "
+            f"{b2 - (COST_FWD_BPS - COST_BPS):>+7.1f} | venc "
+            f"{100 * sum(1 for t in ts if t[3][1] > 0) / n:>4.1f}% | stop "
+            f"{100 * sum(1 for t in ts if t[4]) / n:>4.1f}% | S0 bpt@6 "
+            f"{b0:>+7.1f}")
+
+
+def _chave(t: tuple) -> tuple:
+    return (t[0], t[1], t[2], t[7]["hold"], t[3], t[4])
+
+
+def _secao_tardia(log, G: list, R0: list, tard: dict) -> list:
+    """Secao ENTRADA TARDIA. Devolve a lista de alertas (vazia = tudo bate)."""
+    lados = ((True, "LONG"), (False, "SHORT"))
+    alertas = []
+    log("\n===== 8. ENTRADA TARDIA — por celula, metade e lado =====")
+    log("  movimentos e '% operados' contam pela metade da VIRADA; recuperados "
+        "e iguais, pela metade da ENTRADA (como a tabela 3). 'com entrada' "
+        "inclui as que a borda excluiu depois. recuperado = a base nao entrou "
+        "e a tardia entrou (atraso > 0); igual = entrada na virada (atraso 0). "
+        "Atraso so dos recuperados, em barras de 4h.")
+    for c in TARDIAS:
+        base = filtra(R0, BASE[c])
+        for h, f in METADES:
+            for lg, nome in lados:
+                mov = [v for v in G if v["long"] is lg and _dentro(v["ts"], f)]
+                ent = [v for v in mov if v["ent"][c] is not None]
+                tl = [t for t in tard[c] if t[2] is lg and _dentro(t[0], f)]
+                rec = [t for t in tl if t[7]["atraso"] > 0]
+                ig = [t for t in tl if t[7]["atraso"] == 0]
+                bs = [t for t in base if t[2] is lg and _dentro(t[0], f)]
+                at = [t[7]["atraso"] for t in rec]
+                bate = [_chave(t) for t in ig] == [_chave(t) for t in bs]
+                if not bate:
+                    alertas.append(f"iguais {c} {h} {nome} != {BASE[c]}")
+                log(f"  {c:>7} {h} {nome:>5}: movimentos {len(mov):>5} | com "
+                    f"entrada {len(ent):>5} ("
+                    f"{100 * len(ent) / len(mov) if mov else 0:>4.1f}%), tardias "
+                    f"{sum(1 for v in ent if v['ent'][c] > v['i']):>5} | atraso "
+                    + (f"med {median(at):.0f} p90 {_pct(at, .9)} max {max(at)}"
+                       if at else "-"))
+                log(f"  {'':>7}    recuperados: {_st(rec)}")
+                log(f"  {'':>7}    iguais:      {_st(ig)} | base {BASE[c]} n "
+                    f"{len(bs)} -> " + ("bate" if bate else
+                                        "ALERTA: NAO BATE — e BUG"))
+    for b in ("G1", "G2"):
+        cv, cs = b + "T_vol", b + "T_sem"
+        if [_chave(t) for t in tard[cv] if t[7]["atraso"] == 0] != \
+                [_chave(t) for t in tard[cs] if t[7]["atraso"] == 0]:
+            alertas.append(f"iguais {cv} != {cs}")
+        fora = sum(1 for v in G if v["ent"][cv] is not None and
+                   (v["ent"][cs] is None or v["ent"][cs] > v["ent"][cv]))
+        if fora:
+            alertas.append(f"{fora} entradas de {cv} sem entrada anterior ou "
+                           f"igual em {cs}")
+        log(f"\n  --- efeito do volume na entrada tardia, base {b} "
+            f"(recuperados; todo movimento de {cv} tem que estar em {cs}, na "
+            f"mesma barra ou antes: {'bate' if not fora else 'ALERTA'}) ---")
+        log("  LEITURA: 'so em _sem' e escolhido pelo FIM do movimento (o "
+            "volume nunca passou antes da virada contraria) = movimentos "
+            "curtos, que perdem por construcao, ate em passeio aleatorio. O "
+            "efeito do volume e a linha _vol contra a linha _sem, inteiras.")
+        for h, f in METADES:
+            for lg, nome in lados:
+                rv = [t for t in tard[cv] if t[2] is lg and _dentro(t[0], f)
+                      and t[7]["atraso"] > 0]
+                rs = [t for t in tard[cs] if t[2] is lg and _dentro(t[0], f)
+                      and t[7]["atraso"] > 0]
+                so = [t for t in rs if t[7]["virada"]["ent"][cv] is None]
+                mesma = sum(1 for t in rs
+                            if t[7]["virada"]["ent"][cv] == t[7]["e"])
+                log(f"  {b} {h} {nome:>5} | _vol:      {_st(rv)}")
+                log(f"  {'':>11} | _sem:      {_st(rs)} | mesma barra do _vol "
+                    f"{mesma}")
+                log(f"  {'':>11} | so em _sem: {_st(so)}")
+    log("  conferencia da secao: " + (
+        f"ALERTA — {alertas}: e BUG, nao resultado" if alertas else
+        "bate (iguais = celula base; iguais _vol = _sem; _vol contido em _sem)"))
+    return alertas
 
 
 def main(argv=None) -> int:
@@ -439,10 +636,11 @@ def main(argv=None) -> int:
         conn.close()
     t_a = time.monotonic() - t0
     G, R0, meta, conf = A["G"], A["trades"], A["meta"], A["conf"]
+    tard = A["tard"]
 
     # ---- placebos ------------------------------------------------------
     plac = {}
-    for c in FILTRADAS:
+    for c in FILTRADAS + TARDIAS:
         for s in SEMENTES:
             plac[(c, s)] = agrega_placebo(R0, vetos_placebo(G, c, s))
     t_b = time.monotonic() - t0 - t_a
@@ -467,14 +665,15 @@ def main(argv=None) -> int:
     nl = sum(1 for v in G if v["long"])
     log(f"  viradas no store inteiro: {len(G)} (compra {nl}, venda "
         f"{len(G) - nl})")
-    log(f"  {'cel':>3} | {'L tot':>6} {'S tot':>6} | {'L H1':>5} {'S H1':>5} | "
-        f"{'L H2':>5} {'S H2':>5} | vetadas L/S")
-    for c in CELULAS:
+    log(f"  {'cel':>7} | {'L tot':>6} {'S tot':>6} | {'L H1':>5} {'S H1':>5} | "
+        f"{'L H2':>5} {'S H2':>5} | vetadas L/S (tardias: movimentos com "
+        f"entrada, pela data da VIRADA)")
+    for c in CELULAS + TARDIAS:
         sel = [v for v in G if passa(c, v)]
         cnt = lambda lg, f=None: sum(  # noqa: E731
             1 for v in sel if v["long"] is lg and (f is None or
                                                    _dentro(v["ts"], f)))
-        log(f"  {c:>3} | {cnt(True):>6} {cnt(False):>6} | {cnt(True, H1):>5} "
+        log(f"  {c:>7} | {cnt(True):>6} {cnt(False):>6} | {cnt(True, H1):>5} "
             f"{cnt(False, H1):>5} | {cnt(True, H2):>5} {cnt(False, H2):>5} | "
             f"{nl - cnt(True)}/{len(G) - nl - cnt(False)}")
     gr = {g: sum(1 for v in G if v["grau"] == g) for g in (0, 1, 2)}
@@ -486,6 +685,16 @@ def main(argv=None) -> int:
         f"{ct['excl_hold']} | truncados {EXT_CAP} {sum(1 for t in R0 if t[5])}"
         f" | marcados no fim {sum(1 for t in R0 if t[6])} | fora das metades "
         f"{sum(1 for t in R0 if _metade(t[0]) == 'fora')}")
+    for c in TARDIAS:
+        tc, cc = tard[c], A["cont_t"][c]
+        log(f"  trades {c}: {len(tc)} (tardios "
+            f"{sum(1 for t in tc if t[7]['atraso'] > 0)}) | excl_borda "
+            f"{cc['excl_borda']} | excl_hold {cc['excl_hold']} | truncados "
+            f"{sum(1 for t in tc if t[5])} | marcados no fim "
+            f"{sum(1 for t in tc if t[6])} | fora das metades "
+            f"{sum(1 for t in tc if _metade(t[0]) == 'fora')}")
+    log(f"  viradas seguidas na mesma direcao (busca tardia encurtada, DESVIO "
+        f"do cabecalho; esperado 0 ou perto): {A['seguidas']} de {len(G)}")
     log("  viradas por token por ano (R0) — o video fala em ~50:")
     for s in VIDEO:
         m = meta.get(s)
@@ -520,11 +729,14 @@ def main(argv=None) -> int:
     with out.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=CAMPOS)
         w.writeheader()
-        for t in R0:
+        for cel, t in [("R0", t) for t in R0] + \
+                [(c, t) for c in TARDIAS for t in tard[c]]:
             x, v = t[7], t[7]["virada"]
-            w.writerow({"bar_ts_iso": _iso(t[0]), "mes": _iso(t[0])[:7],
+            w.writerow({"celula": cel, "bar_ts_iso": _iso(t[0]),
+                        "mes": _iso(t[0])[:7],
                         "metade": _metade(t[0]), "sym": t[1],
                         "direcao": "LONG" if t[2] else "SHORT",
+                        "atraso": x["atraso"], "virada_ts_iso": _iso(v["ts"]),
                         "hold": x["hold"], "truncado": int(t[5]),
                         "marcado_fim": int(t[6]), "ret_s0": f"{t[3][0]:.2f}",
                         "ret_s2": f"{t[3][1]:.2f}", "parou_s2": int(bool(t[4])),
@@ -541,33 +753,35 @@ def main(argv=None) -> int:
                             "metade": h, "n": n, "ret6": f"{r:.2f}"})
 
     # ---- 3/4. RESULTADO --------------------------------------------------
-    res = _tabela(log, R0, f"3. RESULTADO — UNIVERSO ({len(meta)} tokens)")
+    res = _tabela(log, R0, f"3. RESULTADO — UNIVERSO ({len(meta)} tokens)",
+                  tard)
     _tabela(log, [t for t in R0 if t[1] in VIDEO],
-            "4. RECORTE BTC/ETH/SOL (tokens do video)")
+            "4. RECORTE BTC/ETH/SOL (tokens do video)",
+            {c: [t for t in tard[c] if t[1] in VIDEO] for c in TARDIAS})
 
     # ---- 5. CONCENTRACAO -------------------------------------------------
     log("\n===== 5. CONCENTRACAO — 2% melhores trades (UNIVERSO) =====")
-    for c in CELULAS:
+    for c in CELULAS + TARDIAS:
         for s, _k in STOPS:
             for h, _f2 in METADES:
                 x = res[(c, s, h)]
                 nt, fat, sem_top = x["conc"]
-                log(f"  {c:>3} {s} {h}: n {x['n']:>5} | top {nt:>3} | fatia "
+                log(f"  {c:>7} {s} {h}: n {x['n']:>5} | top {nt:>3} | fatia "
                     f"{_f(fat, '.0f') + '%' if fat is not None else 'NA (total <= 0)'}"
                     f" | sem eles {sem_top:>+8.0f} "
                     f"({sem_top / max(1, x['n'] - nt):>+.1f} bps/trade)")
 
     # ---- 6. PLACEBO --------------------------------------------------------
     log("\n===== 6. FILTRO CONTRA O PLACEBO (ret@6, 20 sementes, retirada de "
-        "trades do R0) =====")
-    for c in FILTRADAS:
+        "trades do R0; nas tardias compara com ENTRAR NA VIRADA) =====")
+    for c in FILTRADAS + TARDIAS:
         for s, _k in STOPS:
             for h, _f2 in METADES:
                 v = [plac[(c, sd)][(s, h)][1] for sd in SEMENTES]
                 nn = [plac[(c, sd)][(s, h)][0] for sd in SEMENTES]
                 cel = res[(c, s, h)]
                 ab = sum(1 for y in v if y < cel["ret6"])
-                log(f"  {c:>3} {s} {h}: celula {cel['ret6']:>+8.0f} (n "
+                log(f"  {c:>7} {s} {h}: celula {cel['ret6']:>+8.0f} (n "
                     f"{cel['n']}) | placebo n med {median(nn):.0f} | P10 "
                     f"{_pct(v, .1):>+8.0f} | med {median(v):>+8.0f} | P90 "
                     f"{_pct(v, .9):>+8.0f} | acima de {ab}/20 (percentil "
@@ -581,6 +795,9 @@ def main(argv=None) -> int:
         log(f"  {h}: media {sum(vs) / len(vs) if vs else 0:>+8.0f} bps por "
             f"token | tokens com dado {len(vs)}/{len(meta)}")
 
+    # ---- 8. ENTRADA TARDIA ------------------------------------------------
+    _secao_tardia(log, G, R0, tard)
+
     log(f"\n  CSV: {out} | placebos: {out_p}")
     log("caveat: EXPLORATORIO (camada 2), nada promove; defaults do autor "
         f"intactos. Teto T1 {TETO_ISO}. Entrada no close da virada (autor: "
@@ -591,7 +808,14 @@ def main(argv=None) -> int:
         "sobre a curva de trades por entrada (nao marca a mercado nem "
         "considera simultaneos). Hold > 256 truncado; ultimo trade de cada "
         "token marcado no ultimo close antes do teto; ultimas viradas a < 48 "
-        "barras do teto excluidas (borda). Controle passivo sem custo.")
+        "barras do teto excluidas (borda). Controle passivo sem custo. "
+        "TARDIAS: placebo por retirada de trades do R0 = compara com ENTRAR NA "
+        "VIRADA, nao com entrar tarde ao acaso; a busca para na proxima virada "
+        "de qualquer direcao; stop = 2 x ATR14 da barra de ENTRADA; os filtros "
+        "no CSV sao os da virada; movimentos pela metade da virada, trades "
+        "pela da entrada; 'so em _sem' e recorte escolhido pelo fim do "
+        "movimento (negativo por construcao), nao mede o filtro de volume; "
+        "nenhuma celula foi escolhida como vencedora.")
     return 0
 
 

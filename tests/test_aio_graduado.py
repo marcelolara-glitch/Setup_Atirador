@@ -161,3 +161,159 @@ def test_placebo_retira_mesma_quantidade_por_lado():
             n_cel = sum(1 for v in G if v["long"] is lado
                         and not ag.passa(cel, v))
             assert sum(1 for g in vet if G[g]["long"] is lado) == n_cel
+
+
+# ---- 5. entrada tardia (v2, 21/11/2026) -------------------------------------
+N = 200
+IK, J = 60, 90                       # virada de compra em 60, contraria em 90
+
+
+def _planas(n=N, queda_em=None):
+    """Velas com amplitude fixa; `queda_em` derruba o preco 20% dali em diante."""
+    out = []
+    for k in range(n):
+        px = 100.0 if queda_em is None or k < queda_em else 80.0
+        out.append({"ts": T0 + k * H4, "open": px, "close": px,
+                    "high": px + 1.0, "low": px - 1.0, "volume": 100.0})
+    return out
+
+
+def _sinal(c, rib_de=None, vol_em=(), htf=1, vol_virada=True, rib_virada=1):
+    """Sinal montado a mao: compra em IK, venda em J. `rib_de` = barra a partir
+    da qual o ribbon fica a favor (None = nunca, fora a barra da virada)."""
+    n = len(c)
+    vr = [1.0] * n
+    rib = [-1] * n
+    rib[IK] = rib_virada
+    if rib_de is not None:
+        for t in range(rib_de, n):
+            rib[t] = 1
+    for t in vol_em:
+        vr[t] = 1.5
+    if vol_virada:
+        vr[IK] = 1.5
+    return ag.monta_sinal(c, [(IK, True), (J, False)], vr, rib, [htf] * n)
+
+
+def _tr(c, sg, cel):
+    return ag.trades_simbolo(c, "X", _cont(), cel, sg)
+
+
+def test_tardia_igual_a_base_quando_passa_na_virada():
+    c = _planas()
+    sg = _sinal(c)                                   # volume e ribbon na virada
+    g1 = [t for t in _tr(c, sg, "G1") if t[2]]
+    assert len(g1) == 1 and g1[0][7]["hold"] == J - IK
+    for cel in ag.TARDIAS:
+        t = [x for x in _tr(c, sg, cel) if x[2]]
+        assert len(t) == 1 and t[0][7]["atraso"] == 0
+        assert (t[0][0], t[0][7]["hold"], t[0][3]) == \
+            (g1[0][0], g1[0][7]["hold"], g1[0][3])
+
+
+def test_tardia_entra_quando_o_ribbon_vira_e_hold_encolhe():
+    c = _planas()
+    sg = _sinal(c, rib_de=IK + 3, rib_virada=-1)     # volume ok, ribbon contra
+    assert not [t for t in _tr(c, sg, "G1") if t[2]]
+    (t,) = [x for x in _tr(c, sg, "G1T_sem") if x[2]]
+    assert t[0] == c[IK + 3]["ts"] and t[7]["e"] == IK + 3
+    assert t[7]["atraso"] == 3 and t[7]["hold"] == J - (IK + 3)
+
+
+def test_tardia_volume_atrasa_a_entrada():
+    c = _planas()
+    sg = _sinal(c, rib_de=IK + 3, vol_em=(IK + 5,), rib_virada=-1)
+    v = sg["viradas"][0]
+    assert v["ent"]["G1T_sem"] == IK + 3 and v["ent"]["G1T_vol"] == IK + 5
+    (ts,) = [x for x in _tr(c, sg, "G1T_sem") if x[2]]
+    (tv,) = [x for x in _tr(c, sg, "G1T_vol") if x[2]]
+    assert ts[7]["hold"] == J - IK - 3 and tv[7]["hold"] == J - IK - 5
+
+
+def test_tardia_g2_exige_diario_na_barra():
+    c = _planas()
+    sg = _sinal(c, rib_de=IK + 3, htf=-1, rib_virada=-1)
+    v = sg["viradas"][0]
+    assert v["ent"]["G1T_sem"] == IK + 3 and v["ent"]["G2T_sem"] is None
+    sg["htf"][IK + 7] = 1
+    assert ag.entradas_tardias(sg, "G2T_sem")[0] == IK + 7
+    sg["htf"][IK + 7] = None                         # None = nao passa na barra
+    assert ag.entradas_tardias(sg, "G2T_sem")[0] is None
+
+
+def test_tardia_uma_entrada_por_movimento_mesmo_com_stop():
+    c = _planas(queda_em=IK + 6)                     # desaba 3 barras apos entrar
+    sg = _sinal(c, rib_de=IK + 3, rib_virada=-1)     # condicao segue verdadeira
+    assert all(ag.cond_tardia("G1T_sem", sg, t, 1) for t in range(IK + 3, J))
+    longs = [x for x in _tr(c, sg, "G1T_sem") if x[2]]
+    assert len(longs) == 1 and longs[0][4] == 2      # um trade so, parou no S2
+    assert longs[0][3][1] < 0 and longs[0][7]["e"] == IK + 3
+
+
+def test_tardia_sem_barra_valida_nao_ha_trade():
+    c = _planas()
+    sg = _sinal(c, rib_virada=-1)                    # ribbon nunca a favor
+    assert all(e is None for e in sg["viradas"][0]["ent"].values())
+    for cel in ag.TARDIAS:
+        assert not [x for x in _tr(c, sg, cel) if x[2]]
+
+
+def test_tardia_condicao_so_na_barra_da_virada_contraria():
+    c = _planas()
+    sg = _sinal(c, rib_virada=-1)
+    sg["rib"][J] = 1                                 # so passa em j
+    assert ag.entradas_tardias(sg, "G1T_sem")[0] is None
+    sg["rib"][J - 1] = 1                             # controle: j - 1 entra
+    assert ag.entradas_tardias(sg, "G1T_sem")[0] == J - 1
+
+
+def test_tardia_busca_para_na_virada_seguinte_de_mesma_direcao():
+    c = _planas()
+    vr, rib = [1.5] * N, [-1] * N
+    for t in range(75, N):
+        rib[t] = 1
+    sg = ag.monta_sinal(c, [(IK, True), (70, True), (J, False)], vr, rib,
+                        [1] * N)
+    e = ag.entradas_tardias(sg, "G1T_sem")
+    assert e[0] is None and e[1] == 75               # nao duplica a barra 75
+    assert ag.seguidas_mesma_direcao(sg["viradas"]) == 1
+
+
+def _entradas(sg, n):
+    return [(v["i"], cel, e) for v in sg["viradas"]
+            for cel, e in sorted(v["ent"].items()) if e is not None and e <= n]
+
+
+def _prefixo_tardio_ok(c):
+    full = ag.serie_sinal(c)
+    tardias = sorted({e for v in full["viradas"] for e in v["ent"].values()
+                      if e is not None and e > v["i"]})
+    assert len(tardias) > 20                         # ha entradas tardias
+    return all(_entradas(full, n) == _entradas(ag.serie_sinal(c[:n + 1]), n)
+               for n in tardias + list(CORTES))
+
+
+def test_tardia_invariancia_a_prefixo():
+    assert _prefixo_tardio_ok(_velas(1500, seed=11))
+
+
+def test_mutacao_tardia_le_ribbon_da_barra_seguinte_reprova(monkeypatch):
+    monkeypatch.setattr(ag, "RIB_LIDO", 1)
+    assert not _prefixo_tardio_ok(_velas(1500, seed=11))
+
+
+@pytest.mark.parametrize("cel", ag.TARDIAS)
+def test_tardia_contem_a_base_na_serie_aleatoria(cel):
+    c = _velas(1500, seed=11)
+    sg = ag.serie_sinal(c)
+    base = ag.trades_simbolo(c, "X", _cont(), ag.BASE[cel], sg)
+    tard = ag.trades_simbolo(c, "X", _cont(), cel, sg)
+    iguais = [t for t in tard if t[7]["atraso"] == 0]
+    assert [ag._chave(t) for t in iguais] == [ag._chave(t) for t in base]
+    assert len(tard) > len(base)                     # ha recuperados
+    assert [t[0] for t in tard] == sorted(t[0] for t in tard)
+    for t in tard:                                   # hold fecha na mesma barra
+        v = t[7]["virada"]
+        assert t[7]["e"] + t[7]["hold_bruto"] == v["i"] + \
+            dict(zip([x["i"] for x in sg["viradas"]],
+                     [h for h, _ in ag.holds(sg["viradas"], len(c) - 1)]))[v["i"]]
