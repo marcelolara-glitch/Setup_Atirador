@@ -69,6 +69,19 @@
 #   Placebo das tardias: o mesmo, retirada de trades do R0 com a contagem por
 #   lado dos movimentos SEM entrada. Compara com "entrar na virada", nao com
 #   "entrar tarde ao acaso".
+# PORTAO DE REGIME (v3, briefing de 21/11/2026) — celulas R0P (= R0 + portao) e
+#   G1P (= G1 + portao). O portao e o do KIS, REUSADO de `kis_regime` (nada
+#   reimplementado): incl[i] = (EMA21[i] - EMA21[i-5]) / 5 / ATR14[i]
+#   (`inclinacoes`), ADX(13) de Wilder (`keepitsimple._adx`) e a regra
+#   `kis_regime.passa` com a celula validada, FIXA: limiar 0,02, adx_min 11.
+#   LONG so se incl >= +0,02 e adx >= 11; SHORT so se incl <= -0,02 e adx >= 11.
+#   Lido NA BARRA DA VIRADA (causal). Virada vetada nao abre trade; a saida nao
+#   muda (virada contraria BRUTA ou stop S2): o portao nao fecha posicao e o
+#   veto nao muda o hold de ninguem -> R0P e subconjunto do R0, G1P do G1.
+#   None em incl ou adx = nao passa, contado (esperado: so viradas com i < 25).
+#   Placebos: R0P contra retirada ao acaso de trades do R0; G1P contra retirada
+#   ao acaso de trades do G1 (mesma contagem por lado que o portao tirou DO G1)
+#   — este e o que mede se o portao acrescenta algo ao G1.
 # VM 956 MiB: velas de UM simbolo por vez; teto de RSS do kis_trail checado a
 #   cada simbolo. T1: --end <= 2026-08-26 e TEMP VIEW (`conecta_com_teto`).
 # Uso (VM): python -m backtest.aio_graduado --store <candles_v9.db>
@@ -84,16 +97,19 @@ from statistics import median
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from backtest.keepitsimple import EXT_CAP, _ema                    # noqa: E402
+from backtest.keepitsimple import (ADX_LEN, EMA_SLOW, EXT_CAP,    # noqa: E402
+                                   _adx, _ema)
 from backtest.kis_knn import SEMENTES, _pct, placebo               # noqa: E402
 from backtest.kis_meta import vol_rel                              # noqa: E402
-from backtest.kis_regime import _atr_series                        # noqa: E402
+from backtest.kis_regime import (ATR_LEN, INCL_LOOKBACK,          # noqa: E402
+                                 _atr_series, inclinacoes)
+from backtest.kis_regime import passa as passa_regime              # noqa: E402
 from backtest.kis_saida import (COST_FWD_BPS, H1, H2, TETO_ISO,   # noqa: E402
                                 _guarda_relogio, _iso, _ms,
                                 conecta_com_teto, resumo, stop_exit)
 from backtest.kis_tf import agregar, medir                         # noqa: E402
 from backtest.kis_trail import (COST_BPS, RSS_CEILING_MIB, _dentro,  # noqa: E402
-                                _rss_mib, trail_exit)
+                                _quarter, _rss_mib, trail_exit)
 from backtest.vwma_knn import concentracao                         # noqa: E402
 
 SENS, ATR_N = 3.0, 10
@@ -104,7 +120,12 @@ STOP_K = 2.0
 BAR_4H_MS = 14_400_000
 DIA_MS = 86_400_000
 DIA_LIDO = 1                 # a barra do dia D le o dia D - DIA_LIDO (mutacao: 0)
-CELULAS = ("R0", "V", "F", "G1", "G2")
+PORTAO_LIMIAR, PORTAO_ADX_MIN = 0.02, 11   # celula validada do KIS; SEM varredura
+PORTAO_LIDO = 0              # o portao le incl/adx[t + PORTAO_LIDO] (mutacao: 1)
+PORTAO_MIN_I = max(EMA_SLOW - 1 + INCL_LOOKBACK, ATR_LEN, 2 * ADX_LEN - 1)
+BASE_PORTAO = {"R0P": "R0", "G1P": "G1"}   # celula com portao -> celula sem
+COM_PORTAO = tuple(BASE_PORTAO)
+CELULAS = ("R0", "V", "F", "G1", "G2") + COM_PORTAO
 FILTRADAS = CELULAS[1:]
 TARDIAS = ("G1T_vol", "G1T_sem", "G2T_vol", "G2T_sem")
 BASE = {"G1T_vol": "G1", "G1T_sem": "G1", "G2T_vol": "G2", "G2T_sem": "G2"}
@@ -172,34 +193,47 @@ def grau(vol_ok: bool, rib_ok: bool, htf_ok: bool) -> int:
     return 2 if htf_ok else 1
 
 
+def portao(is_long: bool, incl, adx) -> bool:
+    """Portao de regime do KIS na celula validada (`kis_regime.passa`)."""
+    return passa_regime("LONG" if is_long else "SHORT", incl, adx,
+                        PORTAO_LIMIAR, PORTAO_ADX_MIN)
+
+
 def serie_sinal(cndl: list, sens: float = SENS) -> dict:
     """Tudo POR BARRA (causal) e as viradas com features. Cada virada:
-    {i, ts, long, vol_rel, rib, htf, vol_ok, rib_ok, htf_ok, grau}."""
+    {i, ts, long, vol_rel, rib, htf, vol_ok, rib_ok, htf_ok, grau, incl, adx,
+    portao}."""
     closes = [c["close"] for c in cndl]
     atr10 = _atr_series(cndl, ATR_N)
     lin = linha_trailing(closes, [None if a is None else sens * a
                                   for a in atr10])
     vr = vol_rel([c["volume"] for c in cndl], VOL_JAN)
     return monta_sinal(cndl, viradas(closes, lin), vr, ribbon(closes),
-                       htf_dirs(cndl), lin, atr10)
+                       htf_dirs(cndl), lin, atr10,
+                       inclinacoes(cndl, closes), _adx(cndl))
 
 
 def monta_sinal(cndl: list, vir: list, vr: list, rib: list, htf: list,
-                lin: list = None, atr10: list = None) -> dict:
+                lin: list = None, atr10: list = None, incl: list = None,
+                adx: list = None) -> dict:
     """Junta as series por barra e as viradas `vir` = [(t, is_long)] com as
     features da barra da virada e a barra de entrada de cada celula tardia
-    (`ent`: {celula: e | None})."""
-    vs = []
+    (`ent`: {celula: e | None}). Sem `incl`/`adx` o portao veta tudo."""
+    vs, n = [], len(cndl)
+    incl, adx = incl or [None] * n, adx or [None] * n
     for t, lg in vir:
         d = 1 if lg else -1
+        p = t + PORTAO_LIDO
+        ic, ax = (incl[p], adx[p]) if p < n else (None, None)
         vo = vr[t] is not None and vr[t] >= VOL_MIN
         ro = rib[t] == d
         ho = htf[t] == d
         vs.append({"i": t, "ts": cndl[t]["ts"], "long": lg, "vol_rel": vr[t],
                    "rib": rib[t], "htf": htf[t], "vol_ok": vo, "rib_ok": ro,
-                   "htf_ok": ho, "grau": grau(vo, ro, ho), "ent": {}})
-    sg = {"linha": lin, "atr10": atr10 or [None] * len(cndl), "vol_rel": vr,
-          "rib": rib, "htf": htf, "viradas": vs}
+                   "htf_ok": ho, "grau": grau(vo, ro, ho), "ent": {},
+                   "incl": ic, "adx": ax, "portao": portao(lg, ic, ax)})
+    sg = {"linha": lin, "atr10": atr10 or [None] * n, "vol_rel": vr,
+          "rib": rib, "htf": htf, "incl": incl, "adx": adx, "viradas": vs}
     for cel in TARDIAS:
         for v, e in zip(vs, entradas_tardias(sg, cel)):
             v["ent"][cel] = e
@@ -243,8 +277,22 @@ def seguidas_mesma_direcao(vs: list) -> int:
 def passa(cel: str, v: dict) -> bool:
     if cel in BASE:                       # tardia: o movimento tem entrada
         return v["ent"][cel] is not None
+    if cel in BASE_PORTAO:                # base + portao na barra da virada
+        return v["portao"] and passa(BASE_PORTAO[cel], v)
     return {"R0": True, "V": v["vol_ok"], "F": v["rib_ok"],
             "G1": v["grau"] >= 1, "G2": v["grau"] == 2}[cel]
+
+
+def motivo_portao(v: dict) -> str:
+    """Por que o portao vetou a virada: none | incl | adx | ambos | '' (passa).
+    `incl` = EMA21 plana ou contra o lado; `adx` = ADX abaixo do piso."""
+    if v["portao"]:
+        return ""
+    if v["incl"] is None or v["adx"] is None:
+        return "none"
+    i_ok = portao(v["long"], v["incl"], PORTAO_ADX_MIN)
+    a_ok = v["adx"] >= PORTAO_ADX_MIN
+    return "adx" if i_ok else ("incl" if a_ok else "ambos")
 
 
 def holds(vs: list, ult: int) -> list:
@@ -317,9 +365,18 @@ def filtra(trades: list, celula: str) -> list:
 
 
 def vetos_placebo(G: list, celula: str, semente: int) -> set:
-    """Indices globais de virada retirados pelo placebo da celula."""
-    est = [("libera",) if passa(celula, v) else ("veta",) for v in G]
+    """Indices globais de virada retirados pelo placebo da celula. Nas celulas
+    com portao o sorteio e SO entre as viradas da celula base (R0P: todas; G1P:
+    as do G1) e tira, por lado, quantas o portao tirou DA BASE; o agregado
+    correspondente e `agrega_placebo(filtra(R0, base_placebo(celula)), vet)`."""
+    b = base_placebo(celula)
+    est = [("fora",) if not passa(b, v) else
+           ("libera",) if passa(celula, v) else ("veta",) for v in G]
     return placebo(G, est, semente)
+
+
+def base_placebo(celula: str) -> str:
+    return BASE_PORTAO.get(celula, "R0")
 
 
 def _metade(ts: int) -> str:
@@ -364,7 +421,7 @@ def coleta(conn, symbols: list, tf: str, end_ms: int, esp: dict) -> dict:
     cont_t = {c: {"excl_borda": 0, "excl_hold": 0} for c in TARDIAS}
     seguidas = 0
     conf = {"htf_div": {}, "vol_div": {}, "vol_none": {}, "htf_none": {},
-            "rib_none": {}}
+            "rib_none": {}, "incl_none": {}, "adx_none": {}, "portao_div": {}}
     rss = _rss_mib()
     for sym in symbols:
         cndl = read_candles(conn, sym, tf, start_ms=None, end_ms=end_ms)
@@ -383,6 +440,12 @@ def coleta(conn, symbols: list, tf: str, end_ms: int, esp: dict) -> dict:
                 conf["htf_none"][sym] = conf["htf_none"].get(sym, 0) + 1
             if v["rib"] is None:
                 conf["rib_none"][sym] = conf["rib_none"].get(sym, 0) + 1
+            for ch in ("incl", "adx"):
+                if v[ch] is None:
+                    conf[ch + "_none"][sym] = conf[ch + "_none"].get(sym, 0) + 1
+                if (v[ch] is None) != (v["i"] < PORTAO_MIN_I):
+                    conf["portao_div"][sym] = \
+                        conf["portao_div"].get(sym, 0) + 1
             # esperado x observado, virada a virada
             if (v["htf"] is None) != (dia not in esp[sym]["dias_ok"]):
                 conf["htf_div"][sym] = conf["htf_div"].get(sym, 0) + 1
@@ -447,7 +510,8 @@ class _Log:
 
 CAMPOS = ["celula", "bar_ts_iso", "mes", "metade", "sym", "direcao", "atraso",
           "virada_ts_iso", "hold", "truncado", "marcado_fim", "ret_s0",
-          "ret_s2", "parou_s2", "vol_rel", "rib_dir", "htf_dir", "grau"]
+          "ret_s2", "parou_s2", "vol_rel", "rib_dir", "htf_dir", "grau",
+          "incl", "adx", "portao"]
 CAMPOS_PLACEBO = ["celula", "semente", "stop", "metade", "n", "ret6"]
 
 
@@ -581,6 +645,61 @@ def _secao_tardia(log, G: list, R0: list, tard: dict) -> list:
     return alertas
 
 
+def _secao_portao(log, R0: list, res: dict) -> list:
+    """Secao PORTAO: o que o portao joga fora (vetados) contra o que mantem."""
+    alertas = []
+    log("\n===== 9. PORTAO — por celula, metade e lado: trades da base, "
+        "vetados pelo portao e mantidos =====")
+    log("  LEITURA: os vetados sao o que o portao joga fora; se forem melhores "
+        "que os mantidos, o portao atrapalha. Trades medidos, pela metade da "
+        "entrada (= virada).")
+    for c in COM_PORTAO:
+        base = filtra(R0, BASE_PORTAO[c])
+        for h, f in METADES:
+            nm = 0
+            for lg, nome in ((True, "LONG"), (False, "SHORT")):
+                bs = [t for t in base if t[2] is lg and _dentro(t[0], f)]
+                mt = [t for t in bs if t[7]["virada"]["portao"]]
+                vt = [t for t in bs if not t[7]["virada"]["portao"]]
+                nm += len(mt)
+                log(f"  {c:>3} {h} {nome:>5} | base {BASE_PORTAO[c]}: {_st(bs)}")
+                log(f"  {'':>12} | vetados: {_st(vt)}")
+                log(f"  {'':>12} | mantidos: {_st(mt)}")
+            if nm != res[(c, "S2", h)]["n"]:
+                alertas.append(f"mantidos {c} {h} {nm} != tabela 3 "
+                               f"{res[(c, 'S2', h)]['n']}")
+    log("  conferencia da secao: " + (
+        f"ALERTA — {alertas}: e BUG, nao resultado" if alertas else
+        "bate (mantidos = n da celula na tabela 3)"))
+    return alertas
+
+
+def trimestres(tc: list, k: int = 1) -> dict:
+    """{(ano, tri): [n, ret a 10 bps]} dos trades com entrada em H1 ou H2."""
+    out = {}
+    for t in tc:
+        if _metade(t[0]) == "fora":
+            continue
+        x = out.setdefault(_quarter(t[0]), [0, 0.0])
+        x[0] += 1
+        x[1] += t[3][k] - (COST_FWD_BPS - COST_BPS)
+    return out
+
+
+def _secao_trimestres(log, por_cel: dict) -> None:
+    log("\n===== 10. TRIMESTRES — S2, 10 bps, ret total do trimestre (n), por "
+        "data de entrada; 'pos' = trimestres > 0 sobre os que tem trade =====")
+    tri = {c: trimestres(tc) for c, tc in por_cel.items()}
+    qs = sorted({q for d in tri.values() for q in d})
+    log(f"  {'cel':>7} | {'pos':>5} | " + " | ".join(
+        f"{f'{a}Q{q}':>14}" for a, q in qs))
+    for c, d in tri.items():
+        pos = sum(1 for _n, r in d.values() if r > 0)
+        log(f"  {c:>7} | {f'{pos}/{len(d)}':>5} | " + " | ".join(
+            f"{f'{d[q][1]:+.0f} ({d[q][0]})' if q in d else '-':>14}"
+            for q in qs))
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="AIO graduado (sandbox)")
     ap.add_argument("--tf", default="4h")
@@ -615,7 +734,9 @@ def main(argv=None) -> int:
             f"{_iso(mx) if mx else '-'} | tf {args.tf} | simbolos "
             f"{len(symbols)} | linha {SENS}xATR{ATR_N} | vol {VOL_MIN}x/"
             f"{VOL_JAN} | ribbon EMA{RIB_RAP}/{RIB_LEN} | diario EMA{HTF_EMA} "
-            f"(D-{DIA_LIDO}) | stop S2 {STOP_K}xATR14")
+            f"(D-{DIA_LIDO}) | stop S2 {STOP_K}xATR14 | portao (R0P, G1P) incl "
+            f"EMA{EMA_SLOW}/{INCL_LOOKBACK}b/ATR{ATR_LEN} >= {PORTAO_LIMIAR} a "
+            f"favor e ADX{ADX_LEN} >= {PORTAO_ADX_MIN}, fixo")
         # ---- faltas ESPERADAS, declaradas ANTES de contar (fonte: SQL) -----
         esp = faltas_esperadas(conn, symbols, args.tf)
         log("\n===== FALTAS ESPERADAS (declaradas antes da contagem) =====")
@@ -631,6 +752,10 @@ def main(argv=None) -> int:
             f"{di or ''}")
         log(f"  ribbon: None so em viradas com i < {RIB_LEN - 1} (EMA34 sem "
             f"semente); 1a linha possivel em i = {ATR_N}")
+        log(f"  portao: inclinacao None e ADX None so em viradas com i < "
+            f"{PORTAO_MIN_I} (EMA{EMA_SLOW} + {INCL_LOOKBACK} barras; ADX"
+            f"{ADX_LEN} sem semente). ATR{ATR_LEN} <= 0 tambem daria "
+            f"inclinacao None: esperado 0, apareceria como divergencia")
         A = coleta(conn, symbols, args.tf, teto_ms - 1, esp)
     finally:
         conn.close()
@@ -642,7 +767,8 @@ def main(argv=None) -> int:
     plac = {}
     for c in FILTRADAS + TARDIAS:
         for s in SEMENTES:
-            plac[(c, s)] = agrega_placebo(R0, vetos_placebo(G, c, s))
+            plac[(c, s)] = agrega_placebo(filtra(R0, base_placebo(c)),
+                                          vetos_placebo(G, c, s))
     t_b = time.monotonic() - t0 - t_a
 
     # ---- 1. CONTAGENS ----------------------------------------------------
@@ -651,17 +777,19 @@ def main(argv=None) -> int:
         + (f"min {_iso(min(m['first'] for m in meta.values()))} | max "
            f"{_iso(max(m['first'] for m in meta.values()))}" if meta else "-"))
     for nome, ch in (("volume", "vol_none"), ("diario", "htf_none"),
-                     ("ribbon", "rib_none")):
+                     ("ribbon", "rib_none"), ("inclinacao", "incl_none"),
+                     ("ADX", "adx_none")):
         d = conf[ch]
         log(f"  faltas {nome} observadas (viradas): {sum(d.values())} "
             f"{dict(sorted(d.items())) or ''}")
     alerta = {"diario": conf["htf_div"], "volume": conf["vol_div"],
               "ribbon": sum(1 for v in G
-                            if (v["rib"] is None) != (v["i"] < RIB_LEN - 1))}
+                            if (v["rib"] is None) != (v["i"] < RIB_LEN - 1)),
+              "portao": conf["portao_div"]}
     alerta = {k: d for k, d in alerta.items() if d}
     log("  conferencia esperado x observado (virada a virada): " + (
         f"ALERTA — divergencia {alerta}: e BUG, nao resultado"
-        if alerta else "bate (diario, volume, ribbon)"))
+        if alerta else "bate (diario, volume, ribbon, portao)"))
     nl = sum(1 for v in G if v["long"])
     log(f"  viradas no store inteiro: {len(G)} (compra {nl}, venda "
         f"{len(G) - nl})")
@@ -685,6 +813,21 @@ def main(argv=None) -> int:
         f"{ct['excl_hold']} | truncados {EXT_CAP} {sum(1 for t in R0 if t[5])}"
         f" | marcados no fim {sum(1 for t in R0 if t[6])} | fora das metades "
         f"{sum(1 for t in R0 if _metade(t[0]) == 'fora')}")
+    log("  viradas vetadas pelo PORTAO, sobre as viradas da celula base, pela "
+        "data da VIRADA (incl = EMA21 plana ou contra; adx = ADX baixo; none = "
+        "sem inclinacao ou sem ADX):")
+    for c in COM_PORTAO:
+        for h, f in METADES:
+            for lg, nome in ((True, "LONG"), (False, "SHORT")):
+                bs = [v for v in G if v["long"] is lg and _dentro(v["ts"], f)
+                      and passa(BASE_PORTAO[c], v)]
+                mv = [motivo_portao(v) for v in bs]
+                log(f"    {c:>3} {h} {nome:>5}: base {BASE_PORTAO[c]} "
+                    f"{len(bs):>5} | passam {mv.count(''):>5} | vetadas "
+                    f"{len(bs) - mv.count(''):>5} ("
+                    f"{100 * (len(bs) - mv.count('')) / len(bs) if bs else 0:.1f}"
+                    f"%): so incl {mv.count('incl')}, so adx {mv.count('adx')},"
+                    f" ambos {mv.count('ambos')}, none {mv.count('none')}")
     for c in TARDIAS:
         tc, cc = tard[c], A["cont_t"][c]
         log(f"  trades {c}: {len(tc)} (tardios "
@@ -742,7 +885,10 @@ def main(argv=None) -> int:
                         "ret_s2": f"{t[3][1]:.2f}", "parou_s2": int(bool(t[4])),
                         "vol_rel": _f(v["vol_rel"], ".4f"),
                         "rib_dir": _f(v["rib"], "d"),
-                        "htf_dir": _f(v["htf"], "d"), "grau": v["grau"]})
+                        "htf_dir": _f(v["htf"], "d"), "grau": v["grau"],
+                        "incl": _f(v["incl"], ".5f"),
+                        "adx": _f(v["adx"], ".2f"),
+                        "portao": int(v["portao"])})
     out_p = out.with_name(out.stem + "_placebo.csv")
     with out_p.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=CAMPOS_PLACEBO)
@@ -773,7 +919,8 @@ def main(argv=None) -> int:
 
     # ---- 6. PLACEBO --------------------------------------------------------
     log("\n===== 6. FILTRO CONTRA O PLACEBO (ret@6, 20 sementes, retirada de "
-        "trades do R0; nas tardias compara com ENTRAR NA VIRADA) =====")
+        "trades do R0 — G1P: retirada de trades do G1; nas tardias compara com "
+        "ENTRAR NA VIRADA) =====")
     for c in FILTRADAS + TARDIAS:
         for s, _k in STOPS:
             for h, _f2 in METADES:
@@ -782,7 +929,7 @@ def main(argv=None) -> int:
                 cel = res[(c, s, h)]
                 ab = sum(1 for y in v if y < cel["ret6"])
                 log(f"  {c:>7} {s} {h}: celula {cel['ret6']:>+8.0f} (n "
-                    f"{cel['n']}) | placebo n med {median(nn):.0f} | P10 "
+                    f"{cel['n']}) | placebo sobre {base_placebo(c)} n med {median(nn):.0f} | P10 "
                     f"{_pct(v, .1):>+8.0f} | med {median(v):>+8.0f} | P90 "
                     f"{_pct(v, .9):>+8.0f} | acima de {ab}/20 (percentil "
                     f"~{100 * ab / 20:.0f})")
@@ -797,6 +944,10 @@ def main(argv=None) -> int:
 
     # ---- 8. ENTRADA TARDIA ------------------------------------------------
     _secao_tardia(log, G, R0, tard)
+
+    # ---- 9/10. PORTAO e TRIMESTRES ----------------------------------------
+    _secao_portao(log, R0, res)
+    _secao_trimestres(log, {**{c: filtra(R0, c) for c in CELULAS}, **tard})
 
     log(f"\n  CSV: {out} | placebos: {out_p}")
     log("caveat: EXPLORATORIO (camada 2), nada promove; defaults do autor "
@@ -815,7 +966,13 @@ def main(argv=None) -> int:
         "no CSV sao os da virada; movimentos pela metade da virada, trades "
         "pela da entrada; 'so em _sem' e recorte escolhido pelo fim do "
         "movimento (negativo por construcao), nao mede o filtro de volume; "
-        "nenhuma celula foi escolhida como vencedora.")
+        "PORTAO: celula do KIS fixa (0,02 / ADX 11), sem varredura; validado "
+        "no KIS 34/89, NAO no AIO — aqui e exploratorio; lido na barra da "
+        "virada; R0P e G1P sao subconjuntos (o veto abre buraco de exposicao, "
+        "nao muda hold); o placebo do G1P sorteia so entre trades do G1; "
+        "vetados x mantidos e por trade medido (bordas fora); trimestres a 10 "
+        "bps por data de entrada, 2024Q3 e 2026Q3 parciais. "
+        "Nenhuma celula foi escolhida como vencedora.")
     return 0
 
 

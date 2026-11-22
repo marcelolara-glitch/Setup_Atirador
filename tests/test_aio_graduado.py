@@ -317,3 +317,140 @@ def test_tardia_contem_a_base_na_serie_aleatoria(cel):
         assert t[7]["e"] + t[7]["hold_bruto"] == v["i"] + \
             dict(zip([x["i"] for x in sg["viradas"]],
                      [h for h, _ in ag.holds(sg["viradas"], len(c) - 1)]))[v["i"]]
+
+
+# ---- 6. portao de regime do KIS (v3, 21/11/2026) ----------------------------
+from backtest import kis_regime as kr                         # noqa: E402
+from backtest.keepitsimple import _adx                        # noqa: E402
+
+
+def test_portao_parametros_fixos_da_celula_validada():
+    assert (ag.PORTAO_LIMIAR, ag.PORTAO_ADX_MIN, ag.PORTAO_LIDO) == (0.02, 11, 0)
+    assert (kr.EMA_SLOW, kr.INCL_LOOKBACK, kr.ATR_LEN, kr.ADX_LEN) == \
+        (21, 5, 14, 13)
+
+
+def test_portao_reusa_kis_regime_na_serie_sintetica():
+    c = _velas(1500, seed=11)
+    incl = kr.inclinacoes(c, [x["close"] for x in c])
+    adx = _adx(c)
+    vs = ag.serie_sinal(c)["viradas"]
+    for v in vs:
+        i = v["i"]
+        assert (v["incl"], v["adx"]) == (incl[i], adx[i])
+        assert v["portao"] is kr.passa("LONG" if v["long"] else "SHORT",
+                                       incl[i], adx[i], 0.02, 11)
+    ps = [v["portao"] for v in vs]
+    assert any(ps) and not all(ps)                # o teste ve os dois casos
+
+
+def test_portao_lado_e_piso_de_adx():
+    assert ag.portao(True, 0.03, 15) and not ag.portao(False, 0.03, 15)
+    assert ag.portao(False, -0.03, 15) and not ag.portao(True, -0.03, 15)
+    assert not ag.portao(True, 0.01, 15) and not ag.portao(False, 0.01, 15)
+    assert not ag.portao(True, 0.03, 10) and not ag.portao(False, -0.03, 10)
+    assert ag.portao(True, 0.02, 11) and ag.portao(False, -0.02, 11)  # bordas
+    for incl, adx in ((None, 15), (0.03, None), (None, None)):
+        assert not ag.portao(True, incl, adx)     # None = nao passa
+        assert not ag.portao(False, incl, adx)
+
+
+@pytest.mark.parametrize("cel", ag.COM_PORTAO)
+def test_celula_com_portao_e_subconjunto_da_base(cel):
+    c = _velas(1500, seed=11)
+    sg = ag.serie_sinal(c)
+    base = ag.trades_simbolo(c, "X", _cont(), ag.BASE_PORTAO[cel], sg)
+    sub = ag.trades_simbolo(c, "X", _cont(), cel, sg)
+    assert sub and len(sub) < len(base)
+    chave = lambda t: (t[0], t[2], t[7]["hold"], t[3], t[4], t[5], t[6])  # noqa
+    assert [chave(t) for t in sub] == \
+        [chave(t) for t in base if t[7]["virada"]["portao"]]
+    assert [chave(t) for t in sub] == [chave(t) for t in ag.filtra(base, cel)]
+    assert all(t[7]["atraso"] == 0 for t in sub)  # entra so na barra da virada
+
+
+def test_portao_nao_muda_as_celulas_antigas():
+    c = _velas(1500, seed=11)
+    sg = ag.serie_sinal(c)
+    sem = ag.monta_sinal(c, [(v["i"], v["long"]) for v in sg["viradas"]],
+                         sg["vol_rel"], sg["rib"], sg["htf"])   # sem incl/adx
+    assert not any(v["portao"] for v in sem["viradas"])
+    for cel in ("R0", "V", "F", "G1", "G2") + ag.TARDIAS:
+        a = ag.trades_simbolo(c, "X", _cont(), cel, sg)
+        b = ag.trades_simbolo(c, "X", _cont(), cel, sem)
+        assert [ag._chave(t) for t in a] == [ag._chave(t) for t in b]
+
+
+def _portao_causal_ok(c):
+    """O veto na barra i nao muda quando a serie e cortada em i."""
+    full = ag.serie_sinal(c)["viradas"]
+    assert any(v["portao"] for v in full)
+    for v in full:
+        u = ag.serie_sinal(c[:v["i"] + 1])["viradas"][-1]
+        if (u["i"], u["incl"], u["adx"], u["portao"]) != \
+                (v["i"], v["incl"], v["adx"], v["portao"]):
+            return False
+    return True
+
+
+def test_portao_causal_no_corte_da_barra():
+    assert _portao_causal_ok(_velas(1500, seed=11))
+
+
+def test_mutacao_portao_le_barra_seguinte_reprova(monkeypatch):
+    monkeypatch.setattr(ag, "PORTAO_LIDO", 1)
+    assert not _portao_causal_ok(_velas(1500, seed=11))
+
+
+def test_motivo_portao():
+    v = lambda lg, i, a: {"long": lg, "incl": i, "adx": a,   # noqa: E731
+                          "portao": ag.portao(lg, i, a)}
+    assert ag.motivo_portao(v(True, 0.03, 15)) == ""
+    assert ag.motivo_portao(v(True, 0.01, 15)) == "incl"
+    assert ag.motivo_portao(v(True, -0.03, 15)) == "incl"
+    assert ag.motivo_portao(v(False, -0.03, 10)) == "adx"
+    assert ag.motivo_portao(v(False, 0.0, 10)) == "ambos"
+    assert ag.motivo_portao(v(True, None, 15)) == "none"
+
+
+def test_placebo_g1p_sorteia_so_no_g1_mesma_quantidade_por_lado():
+    c = _velas(1500, seed=11)
+    G = ag.serie_sinal(c)["viradas"]
+    for k, v in enumerate(G):
+        v["g"] = k
+    assert ag.base_placebo("G1P") == "G1" and ag.base_placebo("R0P") == "R0"
+    assert ag.base_placebo("G1") == "R0"
+    tirou = 0
+    for sem in (1, 2, 3):
+        vet = ag.vetos_placebo(G, "G1P", sem)
+        assert all(ag.passa("G1", G[g]) for g in vet)        # so trades do G1
+        for lado in (True, False):
+            n_p = sum(1 for v in G if v["long"] is lado and ag.passa("G1", v)
+                      and not v["portao"])
+            assert sum(1 for g in vet if G[g]["long"] is lado) == n_p
+            tirou += n_p
+    assert tirou > 0
+    vet = ag.vetos_placebo(G, "R0P", 3)                       # R0P: sobre o R0
+    for lado in (True, False):
+        assert sum(1 for g in vet if G[g]["long"] is lado) == \
+            sum(1 for v in G if v["long"] is lado and not v["portao"])
+    # o agregado do G1P soma so trades do G1 que o placebo deixou
+    r0 = ag.trades_simbolo(c, "X", _cont(), "R0")
+    for t in r0:                       # r0 vem de outro serie_sinal: mesmo g
+        t[7]["virada"]["g"] = next(v["g"] for v in G
+                                   if v["i"] == t[7]["virada"]["i"])
+    vet = ag.vetos_placebo(G, "G1P", 3)
+    g1 = ag.filtra(r0, "G1")
+    agg = ag.agrega_placebo(g1, vet)
+    dentro = [t for t in g1 if ag._metade(t[0]) != "fora"]
+    assert sum(x[0] for (s, _h), x in agg.items() if s == "S2") == \
+        sum(1 for t in dentro if t[7]["virada"]["g"] not in vet)
+
+
+def test_trimestres_a_10_bps():
+    ts = lambda iso: ag._ms(iso)                              # noqa: E731
+    tc = [(ts("2024-09-10"), "X", True, [0.0, 14.0], 0, False, False, {}),
+          (ts("2024-09-20"), "X", True, [0.0, -5.0], 0, False, False, {}),
+          (ts("2025-01-05"), "X", False, [0.0, 3.0], 0, False, False, {}),
+          (ts("2024-01-05"), "X", False, [0.0, 99.0], 0, False, False, {})]
+    assert ag.trimestres(tc) == {(2024, 3): [2, 1.0], (2025, 1): [1, -1.0]}
