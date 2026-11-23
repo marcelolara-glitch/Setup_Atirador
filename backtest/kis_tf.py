@@ -25,7 +25,8 @@
 # grafico (limiar calibrado no 4h; nao recalibrado — dai a celula desligada).
 # Warmup = 89 barras do tempo grafico; hold teto 256 barras do tempo grafico.
 #
-# T1: mesma trava do kis_saida (`--end` <= 2026-08-26, TEMP VIEW na conexao).
+# Teto de leitura: TEMP VIEW no `--end` (`kis_saida.conecta_com_teto`);
+# qualquer `--end` e aceito desde 23/11/2026, vazamento ABORTA.
 # Uso (VM): python -m backtest.kis_tf --store <candles_v9.db>
 from __future__ import annotations
 import argparse
@@ -44,8 +45,9 @@ from backtest.kis_regime import inclinacoes, passa                # noqa: E402
 from backtest.kis_saida import (H1, H2, TETO_ISO, _guarda_relogio,  # noqa: E402
                                 _iso, _ms, conecta_com_teto, resumo,
                                 stop_exit)
-from backtest.kis_trail import (COST_BPS, RSS_CEILING_MIB, _dentro,  # noqa: E402
-                                _rss_mib, trail_exit)
+from backtest.kis_trail import (COST_BPS, _dentro, _rss_mib,      # noqa: E402
+                                add_teto_rss, define_teto_rss, teto_rss,
+                                trail_exit)
 
 PAR = (34, 89)
 H_MS = 3_600_000
@@ -56,7 +58,7 @@ CELULAS = ("E0", "E1-3")
 BORDA = 48                         # barras forward minimas (regra do excursion)
 CTX = 30                           # velas de contexto p/ entry/ATR (idem)
 TRANCADO = ("2026-08-31", "2026-11-14")   # SO a duracao e usada (projecao)
-COBERTURA_MIN = 0.9                # 1h roda se >= 90% do universo cobre H1+H2
+COBERTURA_MIN = 0.9                # abaixo disso: AVISO (era recusa ate 23/11)
 
 
 def agregar(c4h: list, n: int) -> list:
@@ -150,7 +152,9 @@ def trades_simbolo(cndl: list, sym: str, bar_ms: int, cont: dict) -> list:
 
 def cobertura_1h(conn, symbols: list) -> tuple:
     """(cobre?, linhas). Cobre H1+H2 = primeiro candle 1h ate H1 - 89 barras e
-    ultimo >= H2 fim 00:00. Roda se >= COBERTURA_MIN do universo cobrir."""
+    ultimo >= H2 fim 00:00. `cobre?` = >= COBERTURA_MIN do universo cobre; so
+    informa (aviso no log): desde 23/11/2026 o 1h roda sempre, com os
+    simbolos que cobrem."""
     ini_max = _ms(H1[0]) - 89 * H_MS
     fim_min = _ms(H2[1])
     linhas, ok = [], 0
@@ -206,10 +210,9 @@ def main(argv=None) -> int:
     ap.add_argument("--symbols", nargs="+", default=None)
     ap.add_argument("--out", default=None)
     ap.add_argument("--sem-guarda-relogio", action="store_true")
+    add_teto_rss(ap)
     args = ap.parse_args(argv)
-    if args.end > TETO_ISO:
-        raise SystemExit(f"[kis_tf] T1: --end {args.end} passa do teto "
-                         f"{TETO_ISO}. Hold-out trancado. ABORTADO.")
+    define_teto_rss(args.teto_rss)
     if not args.sem_guarda_relogio:
         _guarda_relogio()
     from backtest.candle_store import read_candles
@@ -225,21 +228,22 @@ def main(argv=None) -> int:
     try:
         mx = conn.execute("SELECT MAX(ts) FROM candles").fetchone()[0]
         if mx is not None and mx >= teto_ms:
-            raise SystemExit("[kis_tf] T1 VIOLADO. ABORTADO.")
+            raise SystemExit("[kis_tf] VAZAMENTO: view deixou passar "
+                             "candle >= --end. ABORTADO.")
         print(f"[kis_tf] teto {args.end} (exclusivo) | maior ts visivel "
               f"{_iso(mx) if mx else '-'} | simbolos {len(symbols)} | par "
               f"{PAR[0]}/{PAR[1]}")
 
-        roda_1h, cob = cobertura_1h(conn, symbols)
+        cobre_min, cob = cobertura_1h(conn, symbols)
         print(f"\n===== COBERTURA 1h (precisa: 1o candle <= "
               f"{_iso(_ms(H1[0]) - 89 * H_MS)} e ultimo >= {H2[1]} 00:00) =====")
         for s, a, b, n, ok in cob:
             print(f"  {s:>14}: " + (f"{_iso(a)} -> {_iso(b)} n={n}" if a
                                     else "SEM 1h") + ("  cobre" if ok else ""))
         n_ok = sum(1 for x in cob if x[4])
-        print(f"  cobrem: {n_ok}/{len(symbols)} -> 1h "
-              + ("RODA (so os que cobrem)" if roda_1h else
-                 f"NAO RODA (precisa >= {COBERTURA_MIN:.0%})"))
+        print(f"  cobrem: {n_ok}/{len(symbols)} -> 1h RODA (so os que cobrem)"
+              + ("" if cobre_min else
+                 f" | AVISO: abaixo de {COBERTURA_MIN:.0%} do universo"))
         cobre_1h = {x[0] for x in cob if x[4]}
 
         desalinh = 0
@@ -249,7 +253,7 @@ def main(argv=None) -> int:
             series = {"4h": c4}
             for tf, n in AGREGA.items():
                 series[tf] = agregar(c4, n)
-            if roda_1h and sym in cobre_1h:
+            if sym in cobre_1h:
                 series["1h"] = read_candles(conn, sym, "1h", end_ms=teto_ms - 1)
             for tf, cs in series.items():
                 if cs:
@@ -258,12 +262,12 @@ def main(argv=None) -> int:
                                                      cont[tf]))
                 series[tf] = None
             rss = _rss_mib()
-            if rss > RSS_CEILING_MIB:
+            if rss > teto_rss():
                 raise MemoryError(f"RSS {rss:.0f} MiB > teto apos {sym}.")
         print(f"  velas 4h fora do alinhamento de 4h UTC: {desalinh}")
     finally:
         conn.close()
-    if not roda_1h:
+    if not tokens_tf["1h"]:                # sem vela 1h: nada a mostrar
         del por_tf["1h"]
     for tf in por_tf:
         por_tf[tf].sort(key=lambda t: t[0])
@@ -346,8 +350,8 @@ def main(argv=None) -> int:
               f" | s/ portao {n0['n'] * mes:>6.1f}/mes -> "
               f"~{n0['n'] * dias_tr / dias_h2:>5.0f} "
               f"({n0['n'] * dias_tr / dias_h2 / max(n0['tokens'], 1):.2f}/token)")
-    print("\ncaveat: EXPLORATORIO (camada 2), nada promove. Teto T1 "
-          f"{TETO_ISO}. 8h/12h/1D agregados em memoria dos 4h (blocos 00:00 "
+    print("\ncaveat: EXPLORATORIO (camada 2), nada promove. Teto de leitura "
+          f"{args.end}. 8h/12h/1D agregados em memoria dos 4h (blocos 00:00 "
           "UTC, incompletos fora). Portao 0.02/11 calibrado no 4h, aplicado sem "
           "recalibrar (celula pt=0 = desligado). Borda de 48 barras do tf corta "
           "o fim de H2 (1D: ~48 dias). Warmup de 89 barras do tf come o inicio "

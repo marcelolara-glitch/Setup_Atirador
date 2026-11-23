@@ -70,8 +70,9 @@ from backtest.keepitsimple import (ADX_LEN, EMA_FAST, EMA_SLOW,  # noqa: E402
                                    EXT_CAP, EXT_CONF, _adx, _alvo_extremos,
                                    _ema, extremos_entries, states)
 from backtest.kis_trail import (COST_BPS, MIN_TRADES,            # noqa: E402
-                                RSS_CEILING_MIB, _rss_mib, aprovada,
-                                metricas, trail_exit)
+                                RSS_CEILING_MIB, _rss_mib, add_teto_rss,
+                                aprovada, define_teto_rss, metricas,
+                                teto_rss, trail_exit)
 
 ATR_LEN = 14                    # ATR de Wilder por barra, denominador da rampa
 INCL_LOOKBACK = 5               # barras entre as duas leituras da EMA21
@@ -239,10 +240,10 @@ def run(store: str, symbols: list, start_iso: str, end_iso: str, tf: str) -> dic
                            mascara(ev["direction"], incl[i], adx[i])))
         por_sym[sym] = trades
         rss = _rss_mib()
-        if rss > RSS_CEILING_MIB:
+        if rss > teto_rss():
             conn.close()
             raise MemoryError(
-                f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} MiB apos "
+                f"RSS {rss:.0f} MiB > teto {teto_rss():.0f} MiB apos "
                 f"{sym}; PARANDO antes de estourar a VM.")
     conn.close()
     return {"por_sym": por_sym, "excl_borda": excl_borda,
@@ -315,7 +316,9 @@ def main() -> int:
                     help="default: logs/sweep_regime_<data>.csv")
     ap.add_argument("--valida-controle", action="store_true",
                     help="roda tambem o kis_trail e prova max|dif| = 0")
+    add_teto_rss(ap)
     args = ap.parse_args()
+    define_teto_rss(args.teto_rss)
     from backtest.sweep import TIER1                                 # noqa: E402
     symbols = args.symbols if args.symbols else TIER1
     print(f"[kis_regime] tf={args.tf} janela {args.start}->{args.end} "
@@ -352,7 +355,7 @@ def main() -> int:
           f"excluidas_hold: {r['excl_hold']}")
     print(f"grade: limiar {list(LIMIARES)} x adx_min {list(ADX_MINS)} + controle "
           f"(sem filtro) = {len(GRADE)} celulas | custo {COST_BPS:.0f} bps")
-    print(f"RSS de pico: {r['rss_mib']:.0f} MiB (teto {RSS_CEILING_MIB:.0f})")
+    print(f"RSS de pico: {r['rss_mib']:.0f} MiB (teto {teto_rss():.0f})")
     print(f"CSV: {out}")
 
     print("\n===== RESUMO — celulas que passam no criterio de 20/08 =====")

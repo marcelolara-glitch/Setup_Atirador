@@ -53,7 +53,13 @@
 # perna de saida = 10; idem 6). T2: amplitude NA veta (contado).
 #
 # VM 956 MiB: velas de um simbolo por vez; carteira com arrays ts/high/low/
-# close por simbolo; teto de RSS do kis_trail; guarda de horario do kis_saida.
+# close por simbolo; teto de RSS do kis_trail (`--teto-rss`); guarda de
+# horario do kis_saida (aviso).
+#
+# TEMPO GRAFICO (23/11/2026): `--tf` 15m/1h/4h. Duracoes definidas em barras de
+# 4h (borda 48, teto 256, T1 6/12/24) viram a mesma duracao em barras do tf
+# (`escala`); os nomes das celulas levam o numero em barras do tf (em 1h:
+# BASE_1024, T1_24/48/96). Conferencias contra kis_saida/holdout_2026 so em 4h.
 #
 # Uso (VM): python -m backtest.kis_refino --store <candles_v9.db>
 from __future__ import annotations
@@ -82,12 +88,13 @@ from backtest.kis_knn import SEMENTES                                # noqa: E40
 from backtest.kis_meta import junta, series_barra                    # noqa: E402
 from backtest.kis_regime import (INCL_LOOKBACK, _atr_series,         # noqa: E402
                                  inclinacoes, passa)
-from backtest.kis_saida import (COST_FWD_BPS, H1, H2, TETO_ISO,      # noqa: E402
-                                _guarda_relogio, _iso, _ms,
+from backtest.kis_saida import (BAR_4H_MS, COST_FWD_BPS, H1, H2,   # noqa: E402
+                                TETO_ISO, _guarda_relogio, _iso, _ms,
                                 conecta_com_teto)
 from backtest.kis_tf import CTX                                      # noqa: E402
-from backtest.kis_trail import (COST_BPS, RSS_CEILING_MIB, _dentro,  # noqa: E402
-                                _quarter, _rss_mib)
+from backtest.kis_trail import (COST_BPS, _dentro, _quarter,      # noqa: E402
+                                _rss_mib, add_teto_rss, define_teto_rss,
+                                teto_rss)
 from backtest.vwma_knn import TOP_FRAC, concentracao                 # noqa: E402
 
 # ----------------------------------------------------------- parametros -----
@@ -107,6 +114,41 @@ CELULAS = (("BASE_256", "BASE") + tuple(f"T1_{n}" for n in T1_NS) +
 PERIODOS = ("H1", "H2", "NOVO")
 DELTA_10 = COST_FWD_BPS - COST_BPS
 TIPOS = ("stop", "inversao", "tempo", "parcial1", "parcial2", "teto", "fim")
+
+
+# ------------------------------------------------- escala do tempo grafico --
+def escala(tf: str) -> dict:
+    """Duracoes definidas em barras de 4h convertidas para o tf, MESMA
+    duracao no tempo (decisao do Marcelo, 23/11/2026). Indicadores, portao,
+    confirmacao e ATR seguem em BARRAS do tf (KIS em 1h = o mesmo setup em
+    barras de 1h); stop e parciais sao multiplos de ATR (ja relativos ao tf).
+    So muda o que e DURACAO: borda de exclusao do sandbox (BORDA = 48 barras
+    de 4h = 8 dias), teto do caminho e do hold (EXT_CAP = 256 de 4h = 42,7
+    dias; BASE_<cap>) e as saidas por tempo do T1 (6/12/24 de 4h = 24/48/96
+    h). Em 4h, fator 1: tudo identico ao de antes. tf sem duracao conhecida
+    (fora de excursion._BAR_MS) ou que nao divide 4h -> ValueError."""
+    from backtest.excursion import _BAR_MS            # tardio, como no kis_tf
+    bar = _BAR_MS.get(tf)
+    if bar is None or BAR_4H_MS % bar:
+        raise ValueError(f"tf '{tf}': use um de {sorted(_BAR_MS)}")
+    f = BAR_4H_MS // bar
+    return {"tf": tf, "bar_ms": bar, "fator": f, "borda": BORDA * f,
+            "cap": EXT_CAP * f, "t1_ns": tuple(n * f for n in T1_NS)}
+
+
+def nomes_celulas(esc: dict = None) -> tuple:
+    """CELULAS no tf de `esc` (numeros = barras do tf). Em 4h = CELULAS."""
+    esc = esc or escala("4h")
+    return ((f"BASE_{esc['cap']}", "BASE") +
+            tuple(f"T1_{n}" for n in esc["t1_ns"]) + ("T2", "T3") +
+            tuple(f"T4_{k}" for k in T4_KS) + ("T5s", "T5e"))
+
+
+def nomes_simb(esc: dict = None) -> tuple:
+    """CEL_SIMB no tf de `esc`. Em 4h = CEL_SIMB."""
+    esc = esc or escala("4h")
+    return ((f"BASE_{esc['cap']}", "BASE") +
+            tuple(f"T1_{n}" for n in esc["t1_ns"]) + ("T3", "T5s", "T5e"))
 
 
 # ------------------------------------------------------- limiares (T5) ------
@@ -209,7 +251,7 @@ def simula(cndl: list, i: int, e: int, entry: float, atr: float, sg: float,
 
 def _trade(cel: str, sym: str, cndl: list, i: int, lg: bool, entry: float,
            atr: float, sim: tuple, falso_e: bool = False,
-           falso_s: bool = False) -> dict:
+           falso_s: bool = False, teto_hold: int = TETO_HOLD) -> dict:
     execs, mfe, mae = sim
     r = 0.0
     for x in execs:
@@ -220,7 +262,7 @@ def _trade(cel: str, sym: str, cndl: list, i: int, lg: bool, entry: float,
             "execs": tuple((cndl[x[0]]["ts"], x[2], x[3], x[4]) for x in execs),
             "tipos": "+".join(x[4] for x in execs), "ret6": ret6,
             "ret10": ret6 - DELTA_10, "mfe": mfe, "mae": mae,
-            "corte": execs[-1][0] - i > TETO_HOLD,
+            "corte": execs[-1][0] - i > teto_hold,
             "falso_e": falso_e, "falso_s": falso_s}
 
 
@@ -235,11 +277,16 @@ CEL_SIMB = ("BASE_256", "BASE") + tuple(f"T1_{n}" for n in T1_NS) + \
 
 
 def eventos(cndl: list, modo: str, cont: dict, janela=JANELA,
-            incl=None, adx=None):
+            incl=None, adx=None, esc: dict = None):
     """Entradas aceitas pelo portao, com o fim de cada trade, nas regras do
     kis_saida.run (sandbox: borda 48) e do holdout_2026 (novo: janela, sem
     borda). Gera dicts {i, lg, sg, en, atr, e_inv, e_full, t_full, hold,
-    t256}. Fonte unica das entradas do kis_refino e do kis_grade."""
+    t256}. Fonte unica das entradas do kis_refino e do kis_grade. `esc` =
+    `escala(tf)` (default 4h): borda, teto do caminho e duracao da barra.
+    `hold` = barras ate a proxima inversao, piso 1 e teto esc["cap"] (em 4h
+    = o `hold` do `kis_horizonte.entradas`, mesma conta)."""
+    esc = esc or escala("4h")
+    cap, borda = esc["cap"], esc["borda"]
     if incl is None:
         closes = [c["close"] for c in cndl]
         incl, adx = inclinacoes(cndl, closes), _adx(cndl)
@@ -256,30 +303,32 @@ def eventos(cndl: list, modo: str, cont: dict, janela=JANELA,
                      PORTAO_ADX_MIN):
             cont["vetadas"] += 1
             continue
-        m = medir_sem_borda(cndl, i, ev["direction"])
+        m = medir_sem_borda(cndl, i, ev["direction"], bar_ms=esc["bar_ms"],
+                            cap=cap)
         if m is None:
             cont["atr0"] += 1
             continue
         ultimo = n_ev == len(evs) - 1
         e_inv = None if ultimo else idx[n_ev + 1]
         dist = (ult if ultimo else e_inv) - i
+        hold_b = min(max(dist, 1), cap)           # 4h: = ev["hold"]
         if modo == "sandbox":                     # regra do kis_saida.run
-            if len(m["fwd_bar"]) < BORDA:
+            if len(m["fwd_bar"]) < borda:
                 cont["excl_borda"] += 1
                 continue
-            hold = ev["hold"]
+            hold = hold_b
             if hold > len(m["fwd_bar"]):
                 cont["excl_hold"] += 1
                 continue
             t256 = "fim" if ultimo and i + hold == ult else \
-                ("teto" if dist > EXT_CAP else "inversao")
+                ("teto" if dist > cap else "inversao")
         else:                                     # regra do holdout_2026
-            fim = ultimo and ult - i <= EXT_CAP
-            hold = _hold_visivel(m, min(ev["hold"], ult - i) if fim
-                                 else ev["hold"], fim, cont)
+            fim = ultimo and ult - i <= cap
+            hold = _hold_visivel(m, min(hold_b, ult - i) if fim
+                                 else hold_b, fim, cont)
             if hold is None:
                 continue
-            t256 = "fim" if fim else ("teto" if dist > EXT_CAP else "inversao")
+            t256 = "fim" if fim else ("teto" if dist > cap else "inversao")
         lg = ev["direction"] == "LONG"
         yield {"i": i, "lg": lg, "sg": 1.0 if lg else -1.0,
                "en": m["entry"], "atr": m["atr"], "e_inv": e_inv,
@@ -289,24 +338,28 @@ def eventos(cndl: list, modo: str, cont: dict, janela=JANELA,
 
 
 def trades_simbolo(cndl: list, sym: str, modo: str, cont: dict,
-                   janela=JANELA) -> dict:
+                   janela=JANELA, esc: dict = None) -> dict:
     """Trades de um simbolo nas celulas que dependem so dele. modo 'sandbox'
-    (borda 48, sem janela) ou 'novo' (janela de entrada, sem borda)."""
-    out = {c: [] for c in CEL_SIMB}
+    (borda 48, sem janela) ou 'novo' (janela de entrada, sem borda). `esc` =
+    `escala(tf)` (default 4h); chaves = `nomes_simb(esc)`."""
+    esc = esc or escala("4h")
+    nomes = nomes_simb(esc)
+    out = {c: [] for c in nomes}
     if not cndl:
         return out
     closes = [c["close"] for c in cndl]
     incl, adx = inclinacoes(cndl, closes), _adx(cndl)
     gL, gS, st = gatilhos(cndl, closes)
-    for ev in eventos(cndl, modo, cont, janela, incl, adx):
+    for ev in eventos(cndl, modo, cont, janela, incl, adx, esc):
         i, lg, sg, en, atr = ev["i"], ev["lg"], ev["sg"], ev["en"], ev["atr"]
         e_inv, e_full, t_full = ev["e_inv"], ev["e_full"], ev["t_full"]
         add = lambda cel, sim, **kw: out[cel].append(            # noqa: E731
-            _trade(cel, sym, cndl, i, lg, en, atr, sim, **kw))
-        add("BASE_256", simula(cndl, i, i + ev["hold"], en, atr, sg,
-                               tipo_fim=ev["t256"]))
+            _trade(cel, sym, cndl, i, lg, en, atr, sim,
+                   teto_hold=esc["cap"], **kw))
+        add(nomes[0], simula(cndl, i, i + ev["hold"], en, atr, sg,
+                             tipo_fim=ev["t256"]))
         add("BASE", simula(cndl, i, e_full, en, atr, sg, tipo_fim=t_full))
-        for n in T1_NS:
+        for n in esc["t1_ns"]:
             add(f"T1_{n}", simula(cndl, i, e_full, en, atr, sg, tempo_n=n,
                                   tipo_fim=t_full))
         add("T3", simula(cndl, i, e_full, en, atr, sg, parciais=T3_PARCIAIS,
@@ -317,7 +370,8 @@ def trades_simbolo(cndl: list, sym: str, modo: str, cont: dict,
         x = sim[0][-1]
         add("T5s", sim, falso_s=x[4] == "inversao" and (
             e_inv is None or x[0] < e_inv))
-    out["T5e"] = trades_t5e(cndl, sym, modo, cont, closes, gL, gS, st, janela)
+    out["T5e"] = trades_t5e(cndl, sym, modo, cont, closes, gL, gS, st, janela,
+                            esc)
     return out
 
 
@@ -335,15 +389,17 @@ def viradas_t5e(cndl: list, gL: list, gS: list, ini: int = PAR[1]) -> list:
 
 
 def trades_t5e(cndl: list, sym: str, modo: str, cont: dict, closes: list,
-               gL: list, gS: list, st: list, janela=JANELA) -> list:
+               gL: list, gS: list, st: list, janela=JANELA,
+               esc: dict = None) -> list:
     from backtest.excursion import _wilder_atr        # tardio, como no kis_tf
+    esc = esc or escala("4h")
     pL, pS, ok = limiares_portao(cndl, closes)
     fl, ult, out = viradas_t5e(cndl, gL, gS), len(cndl) - 1, []
     for k, (t, sd) in enumerate(fl):
         c = cndl[t]
         if modo == "novo" and not na_janela(c["ts"], janela):
             continue
-        if modo == "sandbox" and ult - t < BORDA:
+        if modo == "sandbox" and ult - t < esc["borda"]:
             cont["t5e_borda"] += 1
             continue
         cont["t5e_viradas"] += 1
@@ -379,7 +435,8 @@ def trades_t5e(cndl: list, sym: str, modo: str, cont: dict, closes: list,
             falso_s = (nxt is not None and x[4] == "inversao" and
                        st[x[0]] != ("VERM" if lg else "VERDE"))
         out.append(_trade("T5e", sym, cndl, t, lg, en, atr, sim,
-                          falso_e=falso_e, falso_s=falso_s))
+                          falso_e=falso_e, falso_s=falso_s,
+                          teto_hold=esc["cap"]))
     return out
 
 
@@ -501,11 +558,14 @@ def para_carteira(t: dict) -> dict:
 
 # ------------------------------------------------------------ coleta --------
 def coleta(conn, symbols: list, tf: str, teto_ms: int, end_ms: int,
-           conferir: bool = True) -> dict:
-    """Uma leitura por simbolo (ate end_ms); sandbox = prefixo ts < teto."""
+           conferir: bool = True, esc: dict = None) -> dict:
+    """Uma leitura por simbolo (ate end_ms); sandbox = prefixo ts < teto.
+    `conferir` liga a referencia do holdout_2026 (so faz sentido em 4h: o
+    `trades_kis` mede em barras de 4h)."""
     from backtest.candle_store import read_candles
     from backtest.holdout_2026 import novo_cont as nc_h, trades_kis
-    tr = {m: {c: [] for c in CEL_SIMB} for m in ("sandbox", "novo")}
+    esc = esc or escala(tf)
+    tr = {m: {c: [] for c in nomes_simb(esc)} for m in ("sandbox", "novo")}
     cont = {m: novo_cont() for m in ("sandbox", "novo")}
     cam = {"sandbox": {}, "novo": {}}
     amp, ref_novo, sem, rss = {}, {}, [], _rss_mib()
@@ -516,7 +576,8 @@ def coleta(conn, symbols: list, tf: str, teto_ms: int, end_ms: int,
             continue
         sb = [c for c in cndl if c["ts"] < teto_ms]
         for modo, cv in (("sandbox", sb), ("novo", cndl)):
-            for cel, lst in trades_simbolo(cv, sym, modo, cont[modo]).items():
+            for cel, lst in trades_simbolo(cv, sym, modo, cont[modo],
+                                           esc=esc).items():
                 tr[modo][cel].extend(lst)
         if conferir:
             for t in trades_kis(cndl, sym, nc_h()):
@@ -532,8 +593,8 @@ def coleta(conn, symbols: list, tf: str, teto_ms: int, end_ms: int,
         cam["novo"][sym] = cart.caminho(cndl, JANELA[0])
         del cndl, sb, a
         rss = _rss_mib()
-        if rss > RSS_CEILING_MIB:
-            raise MemoryError(f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} "
+        if rss > teto_rss():
+            raise MemoryError(f"RSS {rss:.0f} MiB > teto {teto_rss():.0f} "
                               f"apos {sym}; PARANDO.")
     return {"tr": tr, "cont": cont, "cam": cam, "amp": amp,
             "ref_novo": ref_novo, "sem": sem, "rss": rss}
@@ -559,7 +620,7 @@ def compara(meus: dict, ref: dict) -> tuple:
 
 
 # ------------------------------------------------------------ log -----------
-def _fmt_cel(cel: str, r: dict) -> str:
+def _fmt_cel(cel: str, r: dict, base_cap: str = "BASE_256") -> str:
     sd = " ".join(f"{k[:4]} {v:.0f}" for k, v in r["saidas"].items() if v)
     return (f"  {cel:>8} | {r['n']:>5} | {r['tot10']:>+9.0f} {r['bpt10']:>+7.1f}"
             f" | {r['tot6']:>+9.0f} {r['bpt6']:>+7.1f} | {r['acerto']:>5.1f} | "
@@ -568,27 +629,43 @@ def _fmt_cel(cel: str, r: dict) -> str:
             f"{r['sem_mes']:>+9.0f} ({r['melhor_mes']}) | {r['sem_top']:>+9.0f}"
             f" | L {r['lados']['L'][0]:>4} {r['lados']['L'][1]:>+8.0f} "
             f"S {r['lados']['S'][0]:>4} {r['lados']['S'][1]:>+8.0f} | "
-            f"teto256 {r['corte'] if cel != 'BASE_256' else r['teto']:>3} | "
+            f"teto256 {r['corte'] if cel != base_cap else r['teto']:>3} | "
             f"{sd}")
+
+
+def _arg_tf(txt: str) -> str:
+    """Validacao de entrada (nao regra de estudo): tf com duracao conhecida."""
+    try:
+        escala(txt)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e))
+    return txt
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="KIS 34/89 E1-3: refinamentos "
                                  "e carteira (sandbox)")
-    ap.add_argument("--tf", default="4h")
+    ap.add_argument("--tf", default="4h", type=_arg_tf,
+                    help="tempo grafico (15m, 1h, 4h); default 4h")
     ap.add_argument("--end", default=END_ISO,
                     help='exclusivo, UTC; default "%(default)s"')
     ap.add_argument("--store", default=str(ROOT / "backtest" / "candles_v9.db"))
     ap.add_argument("--symbols", nargs="+", default=None,
                     help="default: SYMBOLS_KIS_3489 (65)")
     ap.add_argument("--out", default=None, help="CSV; log ao lado (.log)")
-    ap.add_argument("--carteira-celulas", nargs="+", default=list(CELULAS))
+    ap.add_argument("--carteira-celulas", nargs="+", default=None,
+                    help="default: todas as celulas do tf")
     ap.add_argument("--sem-conferencia", action="store_true")
     ap.add_argument("--sem-guarda-relogio", action="store_true")
+    add_teto_rss(ap)
     args = ap.parse_args(argv)
-    if args.tf != "4h":
-        raise SystemExit("[kis_refino] so 4h")
-    ruins = set(args.carteira_celulas) - set(CELULAS)
+    define_teto_rss(args.teto_rss)
+    esc = escala(args.tf)
+    nomes_cel = nomes_celulas(esc)
+    base_cap = nomes_cel[0]
+    if args.carteira_celulas is None:
+        args.carteira_celulas = list(nomes_cel)
+    ruins = set(args.carteira_celulas) - set(nomes_cel)
     if ruins:
         raise SystemExit(f"[kis_refino] celulas desconhecidas: {sorted(ruins)}")
     teto_ms, end_ms = _ms(TETO_ISO), _ms(args.end)
@@ -610,16 +687,23 @@ def main(argv=None) -> int:
         f"{args.tf} | universo {len(symbols)} | sandbox H1 {H1[0]}..{H1[1]}, "
         f"H2 {H2[0]}..{H2[1]} (velas < {TETO_ISO}) | NOVO entradas "
         f"{_iso(JANELA[0])}..{_iso(JANELA[1])} (velas < {args.end}) | custo "
-        f"10 e 6 bps/trade | parametros: T1 N={T1_NS} progresso "
+        f"10 e 6 bps/trade | parametros: T1 N={esc['t1_ns']} progresso "
         f"{T1_PROGRESSO:g} ATR; T2 {T2_LIMIAR:g}%; T3 {T3_PARCIAIS}; T4 "
-        f"K={T4_KS}; TETO_HOLD {TETO_HOLD} so na BASE_256")
+        f"K={T4_KS}; TETO_HOLD {esc['cap']} so na {base_cap}")
+    if esc["fator"] != 1:
+        log(f"  tf {args.tf}: duracoes de 4h convertidas para a mesma duracao "
+            f"em barras de {args.tf} (x{esc['fator']}): borda {BORDA} -> "
+            f"{esc['borda']}, teto do caminho/hold {EXT_CAP} -> {esc['cap']} "
+            f"(BASE_256 -> {base_cap}), T1 {T1_NS} -> {esc['t1_ns']}. "
+            f"Indicadores, portao e confirmacao em barras de {args.tf}.")
     conn = conecta_com_teto(args.store, end_ms)
     try:
         mx = conn.execute("SELECT MAX(ts) FROM candles").fetchone()[0]
         if mx is not None and mx >= end_ms:
             raise SystemExit("[kis_refino] view deixou passar candle >= --end")
+        conferir = not args.sem_conferencia and esc["fator"] == 1
         A = coleta(conn, symbols, args.tf, teto_ms, end_ms,
-                   conferir=not args.sem_conferencia)
+                   conferir=conferir, esc=esc)
     finally:
         conn.close()
     tr = A["tr"]
@@ -638,6 +722,11 @@ def main(argv=None) -> int:
     log("\n===== CONFERENCIAS =====")
     if args.sem_conferencia:
         log("  pulada (--sem-conferencia)")
+    elif not conferir:
+        log(f"  DESLIGADA em {args.tf}: as referencias (kis_saida.run, borda "
+            f"48 e caminho 256 em barras do tf; holdout_2026.trades_kis, "
+            f"barra de 4h fixa) medem em barras de 4h e nao conferem a "
+            f"conversao de duracao. Em 4h continua ligada.")
     else:
         from backtest import kis_saida as ks
         ct = conecta_com_teto(args.store, teto_ms)
@@ -649,13 +738,13 @@ def main(argv=None) -> int:
             ct.close()
         k3 = ks.NOMES.index("E1-3")
         r = compara({(t["ts"], t["sym"]): t["ret6"]
-                     for t in tr["sandbox"]["BASE_256"]},
+                     for t in tr["sandbox"][base_cap]},
                     {(t[0], t[1]): t[3][k3] for t in ref})
         log(f"  sandbox BASE_256 x kis_saida E1-3: iguais {r[0]} de "
             f"{len(ref)} | max|dif| {r[1]:.2e} bps | so no kis_saida {r[2]} | "
             f"so aqui {r[3]}")
         r = compara({(t["ts"], t["sym"]): t["ret6"]
-                     for t in tr["novo"]["BASE_256"]}, A["ref_novo"])
+                     for t in tr["novo"][base_cap]}, A["ref_novo"])
         log(f"  NOVO BASE_256 x holdout_2026 KIS_E1-3: iguais {r[0]} de "
             f"{len(A['ref_novo'])} | max|dif| {r[1]:.2e} bps | so no holdout "
             f"{r[2]} | so aqui {r[3]}")
@@ -666,7 +755,7 @@ def main(argv=None) -> int:
             "alem dele)")
 
     # ---- por periodo ------------------------------------------------------------
-    por = {(cel, p): [] for cel in CELULAS for p in PERIODOS}
+    por = {(cel, p): [] for cel in nomes_cel for p in PERIODOS}
     for modo, cels in tr.items():
         for cel, lst in cels.items():
             for t in lst:
@@ -684,15 +773,15 @@ def main(argv=None) -> int:
         log(f"\n===== {p} — por celula (bps somados por trade; curva @10 na "
             "ordem de entrada) =====")
         log(cab)
-        for cel in CELULAS:
-            log(_fmt_cel(cel, res[(cel, p)]))
+        for cel in nomes_cel:
+            log(_fmt_cel(cel, res[(cel, p)], base_cap))
         x = res[("T3", p)]
         log(f"  T3: trades com parcial1 {x['p1']} | com parcial2 {x['p2']}")
     log("\n===== DIFERENCA CONTRA A BASE (sem teto), @10: total | bps/trade "
         "=====")
     for p in PERIODOS:
         b = res[("BASE", p)]
-        for cel in CELULAS:
+        for cel in nomes_cel:
             if cel == "BASE":
                 continue
             r = res[(cel, p)]
@@ -727,7 +816,7 @@ def main(argv=None) -> int:
         w = csv.DictWriter(fh, fieldnames=CAMPOS)
         w.writeheader()
         n_csv = 0
-        for cel in CELULAS:
+        for cel in nomes_cel:
             for p in PERIODOS:
                 for t in por[(cel, p)]:
                     w.writerow(linha_csv(t, p))
@@ -743,25 +832,29 @@ def main(argv=None) -> int:
         for cel in args.carteira_celulas:
             for p in PERIODOS:
                 cam = A["cam"]["novo" if p == "NOVO" else "sandbox"]
-                rc = cart.roda([para_carteira(t) for t in por[(cel, p)]], cam)
+                rc = cart.roda([para_carteira(t) for t in por[(cel, p)]], cam,
+                               bar_ms=esc["bar_ms"])
                 dia.anexa(cel, p, rc["diario"])
                 log(f"  {cel} {p}:")
-                for s in cart.linhas_log(rc):
+                for s in cart.linhas_log(rc, args.tf):
                     log(s)
                 del rc
     log(f"  CSV diario unico da carteira: {arq} ({dia.n} linhas)")
     log(f"\n  RSS de pico {max(A['rss'], _rss_mib()):.0f} MiB (teto "
-        f"{RSS_CEILING_MIB:.0f}) | {time.monotonic() - t0:.0f} s")
+        f"{teto_rss():.0f}) | {time.monotonic() - t0:.0f} s")
     log("caveat: so medicao, sem veredito. Custo por trade @10 = @6 - 4 bps; "
-        "T3 paga o mesmo custo por trade (pernas proporcionais). BASE_256 = "
-        "conferencia (teto de 256 barras); demais celulas sem teto, trade "
-        "aberto no fim do dado marcado no ultimo fechamento. Sandbox com "
-        "exclusao de borda de 48 barras (kis_saida); NOVO sem. Stop e alvo na "
+        f"T3 paga o mesmo custo por trade (pernas proporcionais). {base_cap} "
+        f"= conferencia (teto de {esc['cap']} barras); demais celulas sem "
+        "teto, "
+        "trade aberto no fim do dado marcado no ultimo fechamento. Sandbox "
+        f"com exclusao de borda de {esc['borda']} barras (kis_saida); NOVO "
+        "sem. Stop e alvo na "
         "mesma barra: stop primeiro. T5: limiares de preco com valores de t-1; "
         "T5e usa ATR14/ADX13 de t-1 no portao e no stop (aproximacao) e checa "
         "o stop na propria barra de entrada de forma conservadora. Curva e "
         "rebaixamento da tabela sobre trades ordenados por entrada; carteira "
-        "marca a mercado a cada 4h, sem funding, nocional fixo de 300 USD, "
+        f"marca a mercado a cada {args.tf}, sem funding, nocional fixo de "
+        "300 USD, "
         "uma banca isolada por celula e periodo; movimento adverso da "
         "carteira nao ve a barra de entrada (entrada dentro da barra no T5e "
         "fica subestimada).")

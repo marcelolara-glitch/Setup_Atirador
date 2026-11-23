@@ -61,7 +61,8 @@ from backtest.keepitsimple import EXT_CAP, extremos_entries   # noqa: E402
 ARMES, RECUOS = (1, 2, 3, 4), (1, 2, 3, 4)
 GRADE = [(0, 0)] + [(a, r) for a in ARMES for r in RECUOS]   # 17 celulas
 COST_BPS = 6.0                  # custo por trade, mesmo GATE_COST do stage1
-RSS_CEILING_MIB = 250.0         # teto duro; acima disso ABORTA sem seguir
+RSS_CEILING_MIB = 250.0         # teto DEFAULT de RSS; acima disso ABORTA
+_TETO_RSS = [RSS_CEILING_MIB]   # valor da rodada (`--teto-rss`, 23/11/2026)
 # Metades por data de ENTRADA do trade. Fronteira do ledger de 20/08: ajusta na
 # primeira, confere na segunda sem mexer em nada.
 METADE_1 = ("2024-05-22", "2025-06-06")
@@ -93,6 +94,37 @@ def trail_exit(fav: list, adv: list, abertura: list, fwd_bar, hold: int,
         if fav[j] > mfe:
             mfe = fav[j]
     return fwd_bar[hold - 1]
+
+
+def teto_rss() -> float:
+    """Teto de RSS da rodada, em MiB. Default RSS_CEILING_MIB (250); a VM tem
+    956 MiB. E integridade da maquina, nao regra de estudo: muda por
+    parametro, nao sai."""
+    return _TETO_RSS[0]
+
+
+def define_teto_rss(mib: float) -> None:
+    if not mib > 0:
+        raise ValueError(f"teto de RSS {mib}: exige > 0")
+    _TETO_RSS[0] = float(mib)
+
+
+def _arg_teto_rss(txt: str) -> float:
+    try:
+        x = float(txt)
+    except ValueError:
+        x = float("nan")
+    if not x > 0:
+        raise argparse.ArgumentTypeError(f"--teto-rss '{txt}': MiB > 0")
+    return x
+
+
+def add_teto_rss(ap) -> None:
+    """`--teto-rss` (MiB, default 250) num parser de instrumento. O main chama
+    `define_teto_rss(args.teto_rss)` logo apos o parse."""
+    ap.add_argument("--teto-rss", type=_arg_teto_rss, default=RSS_CEILING_MIB,
+                    help="teto de RSS em MiB (integridade da VM de 956 MiB); "
+                         "default %(default)g")
 
 
 def _rss_mib() -> float:
@@ -184,10 +216,10 @@ def run(store: str, symbols: list, start_iso: str, end_iso: str, tf: str) -> dic
                 for a, r in GRADE])))
         por_sym[sym] = trades
         rss = _rss_mib()
-        if rss > RSS_CEILING_MIB:
+        if rss > teto_rss():
             conn.close()
             raise MemoryError(
-                f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} MiB apos "
+                f"RSS {rss:.0f} MiB > teto {teto_rss():.0f} MiB apos "
                 f"{sym}; PARANDO antes de estourar a VM.")
     conn.close()
     return {"por_sym": por_sym, "excl_borda": excl_borda,
@@ -233,7 +265,9 @@ def main() -> int:
     ap.add_argument("--store", default=str(ROOT / "backtest" / "candles_v9.db"))
     ap.add_argument("--symbols", nargs="+", default=None, help="default: TIER1")
     ap.add_argument("--out", default=None, help="default: logs/sweep_kis_<data>.csv")
+    add_teto_rss(ap)
     args = ap.parse_args()
+    define_teto_rss(args.teto_rss)
     from backtest.sweep import TIER1                                 # noqa: E402
     symbols = args.symbols if args.symbols else TIER1
     print(f"[kis_trail] tf={args.tf} janela {args.start}->{args.end} "
@@ -259,7 +293,7 @@ def main() -> int:
           f"excluidas_hold: {r['excl_hold']}")
     print(f"grade: arme {list(ARMES)} x recuo {list(RECUOS)} + controle "
           f"arme=0 (sem trail) = {len(GRADE)} celulas | custo {COST_BPS:.0f} bps")
-    print(f"RSS de pico: {r['rss_mib']:.0f} MiB (teto {RSS_CEILING_MIB:.0f})")
+    print(f"RSS de pico: {r['rss_mib']:.0f} MiB (teto {teto_rss():.0f})")
     print(f"CSV: {out}")
 
     print("\n===== RESUMO — celulas que passam no criterio de 20/08 =====")

@@ -66,14 +66,17 @@ def test_4h_bate_com_etapa1(tmp_path):
         assert a[:3] == b[:3] and a[3] == [b[3][0], b[3][2]]
 
 
-def test_main_sem_1h_nao_roda_1h(tmp_path, capsys):
+def test_main_sem_1h_avisa_e_nao_tem_linha_1h(tmp_path, capsys):
+    # 23/11/2026: a cobertura abaixo de 90% virou AVISO (era "NAO RODA"); sem
+    # nenhuma vela 1h no store, o CSV continua sem linha de 1h.
     db = tmp_path / "c.db"
     _store(db, ["BTCUSDT", "ETHUSDT"], "2026-11-14")
     out = tmp_path / "o.csv"
     assert kt.main(["--store", str(db), "--symbols", "BTCUSDT", "ETHUSDT",
                     "--out", str(out), "--sem-guarda-relogio"]) == 0
     txt = capsys.readouterr().out
-    assert "NAO RODA" in txt and txt.rstrip().splitlines()[-1].startswith("caveat")
+    assert "NAO RODA" not in txt and "AVISO: abaixo de 90%" in txt
+    assert txt.rstrip().splitlines()[-1].startswith("caveat")
     tfs = {l.split(",")[1] for l in out.read_text().splitlines()[1:]}
     assert tfs == {"4h", "8h", "12h", "1D"}
 
@@ -98,6 +101,10 @@ def test_main_com_1h_roda(tmp_path, capsys):
     assert "1h" in {l.split(",")[1] for l in out.read_text().splitlines()[1:]}
 
 
-def test_end_alem_do_teto_aborta(tmp_path):
-    with pytest.raises(SystemExit, match="T1"):
-        kt.main(["--end", "2026-10-01", "--store", str(tmp_path / "x.db")])
+def test_end_alem_de_2026_08_26_e_aceito(tmp_path):
+    # 23/11/2026: a recusa T1 saiu; o --end passa e a rodada so para na
+    # validacao de entrada (store inexistente). Execucao completa com
+    # --end alem do teto: tests/test_sem_travas_de_estudo.py.
+    with pytest.raises(SystemExit, match="inexistente"):
+        kt.main(["--end", "2026-10-01", "--store", str(tmp_path / "x.db"),
+                 "--out", str(tmp_path / "o.csv")])

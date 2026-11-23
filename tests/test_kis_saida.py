@@ -73,9 +73,13 @@ def test_view_do_teto_esconde_holdout(tmp_path):
     raw.close()
 
 
-def test_end_alem_do_teto_aborta(tmp_path):
-    with pytest.raises(SystemExit, match="T1"):
-        ks.main(["--end", "2026-08-27", "--store", str(tmp_path / "x.db")])
+def test_end_alem_de_2026_08_26_e_aceito(tmp_path):
+    # 23/11/2026: a recusa T1 saiu; o --end passa e a rodada so para na
+    # validacao de entrada (store inexistente). Execucao completa com
+    # --end alem do teto: tests/test_sem_travas_de_estudo.py.
+    with pytest.raises(SystemExit, match="inexistente"):
+        ks.main(["--end", "2026-08-27", "--store", str(tmp_path / "x.db"),
+                 "--out", str(tmp_path / "o.csv")])
 
 
 def test_store_inexistente_aborta(tmp_path):

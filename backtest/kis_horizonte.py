@@ -90,7 +90,9 @@ from backtest.keepitsimple import EXT_CAP, EXT_CONF, _adx      # noqa: E402
 from backtest.kis_regime import alvos, inclinacoes, passa      # noqa: E402
 from backtest.kis_trail import (COST_BPS, METADE_1, METADE_2,  # noqa: E402
                                 MIN_TRADES, RSS_CEILING_MIB, _dentro,
-                                _rss_mib, aprovada, metricas, trail_exit)
+                                _rss_mib, add_teto_rss, aprovada,
+                                define_teto_rss, metricas, teto_rss,
+                                trail_exit)
 
 # GRADE FECHADA, definida no briefing e NAO ajustavel depois do fato: 4 pares x
 # portao desligado/ligado = 8 celulas. (8, 21) e o par de hoje, entao
@@ -213,10 +215,10 @@ def run(store: str, symbols: list, start_iso: str, end_iso: str, tf: str) -> dic
                                ev["direction"] == "LONG"))
             por_par[par] = trades
             rss = _rss_mib()
-            if rss > RSS_CEILING_MIB:
+            if rss > teto_rss():
                 conn.close()
                 raise MemoryError(
-                    f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} MiB apos "
+                    f"RSS {rss:.0f} MiB > teto {teto_rss():.0f} MiB apos "
                     f"{sym} par {par}; PARANDO antes de estourar a VM.")
         por_sym[sym] = por_par
     conn.close()
@@ -355,7 +357,9 @@ def main() -> int:
                     help="roda tambem o kis_regime e prova max|dif| = 0")
     ap.add_argument("--buyhold", action="store_true",
                     help="linha de base: comprar e segurar, por metade")
+    add_teto_rss(ap)
     args = ap.parse_args()
+    define_teto_rss(args.teto_rss)
     from backtest.sweep import TIER1                                 # noqa: E402
     symbols = args.symbols if args.symbols else TIER1
     print(f"[kis_horizonte] tf={args.tf} janela {args.start}->{args.end} "
@@ -399,7 +403,7 @@ def main() -> int:
           f">= {PORTAO_LIMIAR} ATR/barra a favor E ADX(13) >= {PORTAO_ADX_MIN}")
     print(f"warmup por celula = EMA lenta do par "
           f"{[p[1] for p in PARES]} — par longo gera menos sinal por construcao")
-    print(f"RSS de pico: {r['rss_mib']:.0f} MiB (teto {RSS_CEILING_MIB:.0f})")
+    print(f"RSS de pico: {r['rss_mib']:.0f} MiB (teto {teto_rss():.0f})")
     print(f"CSV: {out}")
 
     print("\n===== RESUMO — TODAS as celulas, por simbolo e UNIVERSO =====")

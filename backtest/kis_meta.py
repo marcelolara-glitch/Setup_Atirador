@@ -9,8 +9,9 @@
 #
 # MOTOR REUSADO, nao reescrito: os trades saem de `kis_saida.run` (par 34/89,
 # so quem passa no portao; rets liquidos a 6 bps, ordem `kis_saida.CELULAS`:
-# indice 0 = E0, indice 2 = E1-3). Teto T1 = `kis_saida.conecta_com_teto` +
-# `--end` acima do teto ABORTA. Metades = `kis_saida.H1/H2` por ENTRADA.
+# indice 0 = E0, indice 2 = E1-3). Teto de leitura =
+# `kis_saida.conecta_com_teto` no `--end` (qualquer data; vazamento ABORTA).
+# Metades = `kis_saida.H1/H2` por ENTRADA.
 #
 # DUAS PASSADAS, uma vela de simbolo por vez (VM de 956 MiB):
 #   A) `kis_saida.run` -> lista de trades (escalares).
@@ -77,7 +78,8 @@ from backtest.keepitsimple import _adx, _ema                      # noqa: E402
 from backtest.kis_horizonte import entradas                       # noqa: E402
 from backtest.kis_knn import SEMENTES                             # noqa: E402
 from backtest.kis_regime import _atr_series, inclinacoes          # noqa: E402
-from backtest.kis_trail import RSS_CEILING_MIB, _dentro, _rss_mib  # noqa: E402
+from backtest.kis_trail import (_dentro, _rss_mib, add_teto_rss,  # noqa: E402
+                                define_teto_rss, teto_rss)
 
 PAR = (34, 89)
 K_E0, K_E13 = ks.NOMES.index("E0"), ks.NOMES.index("E1-3")       # 0 e 2
@@ -242,8 +244,8 @@ def coleta(conn, symbols: list, tf: str, end_ms: int, trades: list) -> dict:
         if sym == BTC:
             btc = b
         rss = _rss_mib()
-        if rss > RSS_CEILING_MIB:
-            raise MemoryError(f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} "
+        if rss > teto_rss():
+            raise MemoryError(f"RSS {rss:.0f} MiB > teto {teto_rss():.0f} "
                               f"apos {sym}; PARANDO antes de estourar a VM.")
     if any(f is None for f in feats):
         raise RuntimeError("trade sem indicadores apos a passada B. ABORTADO.")
@@ -405,10 +407,9 @@ def main(argv=None) -> int:
     ap.add_argument("--symbols", nargs="+", default=None)
     ap.add_argument("--out", default=None, help="CSV; o log vai ao lado (.log)")
     ap.add_argument("--sem-guarda-relogio", action="store_true")
+    add_teto_rss(ap)
     args = ap.parse_args(argv)
-    if args.end > ks.TETO_ISO:                                     # T1 camada 1
-        raise SystemExit(f"[kis_meta] T1: --end {args.end} passa do teto "
-                         f"{ks.TETO_ISO}. Hold-out trancado. ABORTADO.")
+    define_teto_rss(args.teto_rss)
     if not args.sem_guarda_relogio:
         ks._guarda_relogio()
     from v10.registro import SYMBOLS_KIS_3489
@@ -422,7 +423,8 @@ def main(argv=None) -> int:
     try:
         mx = conn.execute("SELECT MAX(ts) FROM candles").fetchone()[0]
         if mx is not None and mx >= teto_ms:
-            raise SystemExit("[kis_meta] T1 VIOLADO. ABORTADO.")
+            raise SystemExit("[kis_meta] VAZAMENTO: view deixou passar "
+                             "candle >= --end. ABORTADO.")
         ini = ks.inicio_por_simbolo(conn, symbols, args.tf)
         log(f"[kis_meta] teto {args.end} (exclusivo) | maior ts visivel "
             f"{ks._iso(mx) if mx else '-'} | tf {args.tf} | simbolos "
@@ -492,7 +494,7 @@ def main(argv=None) -> int:
         + (" | " + " ".join(f"{s}:{n}" for s, n in c["viol"].items()) if nv
            else ""))
     alerta |= nv > 0
-    log(f"  RSS de pico {c['rss']:.0f} MiB (teto {RSS_CEILING_MIB:.0f}) | CSV "
+    log(f"  RSS de pico {c['rss']:.0f} MiB (teto {teto_rss():.0f}) | CSV "
         f"{out}" + (" | ALERTA: contagem fora do esperado acima" if alerta
                     else ""))
 
@@ -538,7 +540,8 @@ def main(argv=None) -> int:
 
     log("\ncaveat: DESCRITIVO (camada 2), nada promove; 10 colunas x 2 rotulos "
         "= 20 spreads sem correcao de multiplicidade: sob H0 cada um da "
-        "placebo_pct >= 95 com P = 2/21, entao ~2 de 20 por acaso. Teto T1 " + ks.TETO_ISO + "; trades do kis_saida "
+        "placebo_pct >= 95 com P = 2/21, entao ~2 de 20 por acaso. Teto de "
+        "leitura " + args.end + "; trades do kis_saida "
         "34/89 com portao; metades por ENTRADA; cortes so de H1; placebo "
         "embaralha so H2 dentro da direcao; spread de classe com n pequeno e "
         "ruido; E0 e E1-3 sao o MESMO conjunto de trades (rotulos correlatos).")

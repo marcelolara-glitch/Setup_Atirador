@@ -39,8 +39,19 @@
 # com L = 3, 5, 10 e MMR --mmr; distancia do stop em % do preco de entrada.
 #
 # VM 956 MiB: velas em arrays compactos (`Velas`), uma leitura por simbolo;
-# celulas em sequencia, uma por vez, trades da celula descartados ao fim dela;
-# teto de RSS de 250 MiB que interrompe; guarda de horario do kis_saida.
+# gatilhos UMA vez por simbolo (causais: o sandbox usa o prefixo); caminhos da
+# carteira sem copia (memoryview); celulas em sequencia, uma por vez, trades
+# da celula descartados ao fim dela; teto de RSS que interrompe (`--teto-rss`,
+# default 250 MiB); guarda de horario do kis_saida (aviso, nao recusa).
+#
+# TEMPO GRAFICO (23/11/2026): `--tf 1h` (ou 15m) roda o MESMO setup em barras
+# do tf: EMA 34/89, ATR14, ADX13, confirmacao 2 e portao 0,02 em barras; stop
+# e parciais em ATR14 do tf. O que e DURACAO em barras de 4h vira a mesma
+# duracao em barras do tf (`kis_refino.escala`): borda 48 -> 192 em 1h,
+# caminho/hold 256 -> 1024, tetos default 128/256/384 -> 512/1024/1536 (o eixo
+# `--tetos` e em barras do tf). Mesmas datas de H1, H2 e NOVO. Conferencia
+# contra o kis_refino ligada em todo tf. Em 4h nada muda (gabarito de bytes em
+# tests/test_sem_travas_de_estudo.py).
 #
 # EIXOS PARAMETRIZAVEIS (briefing de 23/11/2026, v1 da sensibilidade do
 # stop): --ks, --parciais (0 = sem), --fracoes, --tetos; defaults = a grade
@@ -73,7 +84,8 @@ from backtest.aio_graduado import _Log                               # noqa: E40
 from backtest.holdout_2026 import END_ISO, JANELA                    # noqa: E402
 from backtest.kis_saida import (H1, H2, TETO_ISO, _guarda_relogio,   # noqa: E402
                                 _iso, _ms, conecta_com_teto)
-from backtest.kis_trail import RSS_CEILING_MIB, _rss_mib             # noqa: E402
+from backtest.kis_trail import (_rss_mib, add_teto_rss,           # noqa: E402
+                                define_teto_rss, teto_rss)
 
 # ----------------------------------------------------------- parametros -----
 SETUP = "KIS_GRADE"
@@ -148,12 +160,20 @@ def _cel(k: float, p, f, t: int) -> dict:
             "frac": f if p else None, "teto": t, "toque": True, "ref": None}
 
 
+def tetos_do_tf(esc: dict) -> list:
+    """Default do eixo de teto no tf: TETOS (barras de 4h) na MESMA duracao
+    em barras do tf (1h: 0 512 1024 1536)."""
+    return [t * esc["fator"] for t in TETOS]
+
+
 def celulas(ks=STOPS, parciais=PARCIAIS, fracoes=FRACOES,
-            tetos=TETOS) -> list:
+            tetos=None) -> list:
     """Referencias + grade. Cada celula: {nome, k, parc, frac, teto, toque,
-    ref}. parc = niveis em ATR ou None; frac = fracoes ou None. Ordem: k,
-    depois parciais na ordem dada (cada uma com todas as fracoes), depois
-    teto. Duplicatas de eixo sao descartadas (primeira ocorrencia)."""
+    ref}. parc = niveis em ATR ou None; frac = fracoes ou None; teto em
+    barras do tf (None = TETOS, os de 4h). Ordem: k, depois parciais na ordem
+    dada (cada uma com todas as fracoes), depois teto. Duplicatas de eixo sao
+    descartadas (primeira ocorrencia)."""
+    tetos = TETOS if tetos is None else tetos
     out = [{"nome": "REF_BASE", "k": 3.0, "parc": None, "frac": None,
             "teto": 0, "toque": False, "ref": "BASE"},
            {"nome": "REF_T5s", "k": 3.0, "parc": None, "frac": None,
@@ -209,10 +229,12 @@ class Velas:
                 "low": self.l[k], "close": self.c[k]}
 
     def caminho(self, ini_ms: int) -> tuple:
-        """(ts, high, low, close) da carteira, a partir de ini_ms."""
+        """(ts, high, low, close) da carteira, a partir de ini_ms. Fatias
+        SEM copia (memoryview sobre os arrays): em 1h a copia custava ~40
+        MiB."""
         a = bisect_left(self.ts, ini_ms, 0, self.n)
-        return (self.ts[a:self.n], self.h[a:self.n], self.l[a:self.n],
-                self.c[a:self.n])
+        return tuple(memoryview(x)[a:self.n] for x in (self.ts, self.h,
+                                                        self.l, self.c))
 
 
 def _garr(g: list) -> array:
@@ -253,10 +275,13 @@ def _ev_compacto(ev: dict) -> dict:
 
 
 def coleta(conn, symbols: list, tf: str, teto_ms: int, end_ms: int,
-           conferir: bool = True) -> dict:
-    """Uma leitura por simbolo. Guarda velas compactas, eventos e gatilhos por
-    modo, e o BASE/T5s do proprio kis_refino (conferencia e REF_T5s)."""
+           conferir: bool = True, esc: dict = None) -> dict:
+    """Uma leitura por simbolo. Guarda velas compactas, eventos por modo,
+    gatilhos UMA vez (o `kr.gatilhos` e causal: o do prefixo sandbox e o
+    prefixo do da serie inteira; os trades do sandbox nunca leem alem do
+    prefixo), e o BASE/T5s do proprio kis_refino (conferencia e REF_T5s)."""
     from backtest.candle_store import read_candles
+    esc = esc or kr.escala(tf)
     dados, cont, sem = {}, {m: kr.novo_cont() for m in ("sandbox", "novo")}, []
     ref = {"BASE": {"sandbox": [], "novo": []},
            "T5s": {"sandbox": [], "novo": []}}
@@ -268,23 +293,25 @@ def coleta(conn, symbols: list, tf: str, teto_ms: int, end_ms: int,
             continue
         n_sb = bisect_left([c["ts"] for c in cndl], teto_ms)
         v = Velas(cndl)
+        gL, gS, _st = kr.gatilhos(cndl)
+        gL, gS = _garr(gL), _garr(gS)
         d = {"v": v, "n_sb": n_sb}
         for modo, cv in (("sandbox", cndl[:n_sb]), ("novo", cndl)):
-            gL, gS, _st = kr.gatilhos(cv)
             d[modo] = {"evs": [_ev_compacto(e) for e in
-                               kr.eventos(cv, modo, cont[modo])],
-                       "gL": _garr(gL), "gS": _garr(gS)}
+                               kr.eventos(cv, modo, cont[modo], esc=esc)],
+                       "gL": gL, "gS": gS}
             if conferir:
-                r = kr.trades_simbolo(cv, sym, modo, kr.novo_cont())
+                r = kr.trades_simbolo(cv, sym, modo, kr.novo_cont(), esc=esc)
                 ref["BASE"][modo].extend(r["BASE"])
                 ref["T5s"][modo].extend(r["T5s"])
                 del r
-            del cv, gL, gS, _st
+            del cv
+        del gL, gS, _st
         dados[sym] = d
         del cndl
         rss = _rss_mib()
-        if rss > RSS_CEILING_MIB:
-            raise MemoryError(f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} "
+        if rss > teto_rss():
+            raise MemoryError(f"RSS {rss:.0f} MiB > teto {teto_rss():.0f} "
                               f"apos {sym}; PARANDO.")
     cam = {"sandbox": {s: d["v"].prefixo(d["n_sb"]).caminho(_ms(H1[0]))
                        for s, d in dados.items()},
@@ -423,7 +450,8 @@ def linha_trade(t: dict, per: str, cel: dict) -> dict:
 def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="KIS 34/89: grade de "
                                  "sensibilidade das saidas (sandbox)")
-    ap.add_argument("--tf", default="4h")
+    ap.add_argument("--tf", default="4h", type=kr._arg_tf,
+                    help="tempo grafico (15m, 1h, 4h); default 4h")
     ap.add_argument("--end", default=END_ISO,
                     help='exclusivo, UTC; default "%(default)s"')
     ap.add_argument("--store", default=str(ROOT / "backtest" / "candles_v9.db"))
@@ -439,20 +467,24 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--fracoes", nargs="+", type=arg_fracao,
                     default=list(FRACOES),
                     help="A-B em %% da posicao; default 50-25 33-33")
-    ap.add_argument("--tetos", nargs="+", type=arg_teto, default=list(TETOS),
-                    help="barras, 0 = sem; default 0 128 256 384")
+    ap.add_argument("--tetos", nargs="+", type=arg_teto, default=None,
+                    help="barras DO TF, 0 = sem; default 0 128 256 384 em 4h "
+                         "(a mesma duracao no tf: 1h 0 512 1024 1536)")
     ap.add_argument("--celulas", nargs="+", default=None,
                     help="subconjunto (default: todas as da grade)")
     ap.add_argument("--logs", default=str(ROOT / "logs"))
     ap.add_argument("--sem-conferencia", action="store_true")
     ap.add_argument("--sem-guarda-relogio", action="store_true")
+    add_teto_rss(ap)
     return ap
 
 
 def main(argv=None) -> int:
     args = parser().parse_args(argv)          # eixos validados aqui
-    if args.tf != "4h":
-        raise SystemExit("[kis_grade] so 4h")
+    define_teto_rss(args.teto_rss)
+    esc = kr.escala(args.tf)
+    if args.tetos is None:
+        args.tetos = tetos_do_tf(esc)
     eixos = dict(ks=args.ks, parciais=args.parciais, fracoes=args.fracoes,
                  tetos=args.tetos)
     todas = celulas(**eixos)
@@ -486,7 +518,8 @@ def main(argv=None) -> int:
         f"{kr.PORTAO_ADX_MIN}/EMA{kr.EMA_REF}) | saida na inversao sem esperar "
         f"o fechamento (T5s) | tf {args.tf} | universo {len(symbols)} | "
         f"sandbox H1 {H1[0]}..{H1[1]}, H2 {H2[0]}..{H2[1]} (velas < "
-        f"{TETO_ISO}, borda {kr.BORDA}) | NOVO entradas {_iso(JANELA[0])}.."
+        f"{TETO_ISO}, borda {esc['borda']}) | NOVO entradas "
+        f"{_iso(JANELA[0])}.."
         f"{_iso(JANELA[1])} (velas < {args.end}) | custo 10 e 6 bps/trade")
     e_k = " ".join(_n(k) for k in args.ks)
     e_p = " ".join("0" if p is None else f"{_n(p[0])}-{_n(p[1])}"
@@ -500,13 +533,24 @@ def main(argv=None) -> int:
         f"{cart.BANCA_INICIAL:,.0f} USD por celula e periodo, "
         f"{cart.NOCIONAL:.0f} USD/trade, {cart.CUSTO_BPS:g} bps/perna | "
         f"liquidacao L {ALAVS}, MMR {args.mmr:g}")
+    if esc["fator"] != 1:
+        log(f"  tf {args.tf}: mesma duracao das regras de 4h em barras de "
+            f"{args.tf} (x{esc['fator']}): borda {kr.BORDA} -> {esc['borda']},"
+            f" caminho/hold {kr.EXT_CAP} -> {esc['cap']}, tetos default "
+            f"{' '.join(map(str, TETOS))} -> "
+            f"{' '.join(map(str, tetos_do_tf(esc)))} (eixo --tetos em barras "
+            f"do tf). EMA 34/89, ATR14, ADX13, confirmacao 2 e portao 0.02 "
+            f"em barras de {args.tf}; stop e parciais em ATR14 do tf. "
+            f"Conferencia contra o kis_refino ligada (o mesmo `eventos` e "
+            f"`trades_simbolo` com a mesma escala). Fechamento diario da "
+            f"carteira: barra das {24 - esc['bar_ms'] // 3_600_000}:00 UTC.")
     conn = conecta_com_teto(args.store, end_ms)
     try:
         mx = conn.execute("SELECT MAX(ts) FROM candles").fetchone()[0]
         if mx is not None and mx >= end_ms:
             raise SystemExit("[kis_grade] view deixou passar candle >= --end")
         A = coleta(conn, symbols, args.tf, teto_ms, end_ms,
-                   conferir=not args.sem_conferencia)
+                   conferir=not args.sem_conferencia, esc=esc)
     finally:
         conn.close()
     log(f"  maior ts visivel {_iso(mx) if mx else '-'} | sem candle: "
@@ -546,7 +590,8 @@ def main(argv=None) -> int:
             for p in PERIODOS:
                 cam = A["cam"]["novo" if p == "NOVO" else "sandbox"]
                 tr = por[p]
-                rc = cart.roda([kr.para_carteira(t) for t in tr], cam)
+                rc = cart.roda([kr.para_carteira(t) for t in tr], cam,
+                               bar_ms=esc["bar_ms"])
                 dia.anexa(cel["nome"], p, rc["diario"])
                 w_rs.writerow(linha_resumo(cel, p, tr, rc, cam, args.mmr))
                 for t in tr:
@@ -559,9 +604,9 @@ def main(argv=None) -> int:
             del por
             gc.collect()
             rss = max(rss, _rss_mib())
-            if rss > RSS_CEILING_MIB:
+            if rss > teto_rss():
                 raise MemoryError(f"RSS {rss:.0f} MiB > teto "
-                                  f"{RSS_CEILING_MIB:.0f} na celula "
+                                  f"{teto_rss():.0f} na celula "
                                   f"{cel['nome']}; PARANDO.")
             print(f"  [{n_c}/{len(todas)}] {cel['nome']} "
                   f"{time.monotonic() - tc:.1f} s | total "
@@ -591,7 +636,7 @@ def main(argv=None) -> int:
     log(f"  CSV de resumo: {p_rs} ({len(todas) * len(PERIODOS)} linhas)")
     log(f"  CSV diario unico da carteira: {p_dia} ({dia.n} linhas)")
     log(f"  RSS de pico {max(rss, _rss_mib()):.0f} MiB (teto "
-        f"{RSS_CEILING_MIB:.0f}) | {time.monotonic() - t0:.0f} s")
+        f"{teto_rss():.0f}) | {time.monotonic() - t0:.0f} s")
     log("caveat: so medicao, sem veredito e sem celula escolhida. Entradas no "
         "fechamento (KIS_E1); saida na inversao no toque do gatilho (valores "
         "de t-1; toque falso conta como saida), exceto REF_BASE (no "
@@ -599,8 +644,9 @@ def main(argv=None) -> int:
         "abertura); parciais limite; stop e alvo na mesma barra: stop "
         "primeiro; teto sai no fechamento da barra i+T. Custo por trade @10 "
         "= @6 - 4 bps, pernas proporcionais. Sandbox com exclusao de borda "
-        "de 48 barras; NOVO sem, trade aberto no fim marcado no ultimo "
-        "fechamento. Rebaixamento do resumo nas marcas de 4h (% e USD, cada "
+        f"de {esc['borda']} barras; NOVO sem, trade aberto no fim marcado no "
+        "ultimo fechamento. Rebaixamento do resumo nas marcas de "
+        f"{args.tf} (% e USD, cada "
         "um com o seu pico e vale); dias abaixo do pico nos fechamentos "
         "diarios. Liquidacao so medida: margem isolada, nocional fixo, MMR "
         f"{args.mmr:g}, barras do movimento adverso (sem a barra de entrada),"

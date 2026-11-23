@@ -83,7 +83,8 @@
 #   ao acaso de trades do G1 (mesma contagem por lado que o portao tirou DO G1)
 #   — este e o que mede se o portao acrescenta algo ao G1.
 # VM 956 MiB: velas de UM simbolo por vez; teto de RSS do kis_trail checado a
-#   cada simbolo. T1: --end <= 2026-08-26 e TEMP VIEW (`conecta_com_teto`).
+#   cada simbolo. Teto de leitura: TEMP VIEW no --end (`conecta_com_teto`),
+#   qualquer data desde 23/11/2026; vazamento ABORTA.
 # Uso (VM): python -m backtest.aio_graduado --store <candles_v9.db>
 from __future__ import annotations
 import argparse
@@ -108,8 +109,9 @@ from backtest.kis_saida import (COST_FWD_BPS, H1, H2, TETO_ISO,   # noqa: E402
                                 _guarda_relogio, _iso, _ms,
                                 conecta_com_teto, resumo, stop_exit)
 from backtest.kis_tf import agregar, medir                         # noqa: E402
-from backtest.kis_trail import (COST_BPS, RSS_CEILING_MIB, _dentro,  # noqa: E402
-                                _quarter, _rss_mib, trail_exit)
+from backtest.kis_trail import (COST_BPS, _dentro, _quarter,      # noqa: E402
+                                _rss_mib, add_teto_rss,
+                                define_teto_rss, teto_rss, trail_exit)
 from backtest.vwma_knn import concentracao                         # noqa: E402
 
 SENS, ATR_N = 3.0, 10
@@ -469,8 +471,8 @@ def coleta(conn, symbols: list, tf: str, end_ms: int, esp: dict) -> dict:
                                     for h, f in METADES}}
         del cndl, sg
         rss = _rss_mib()
-        if rss > RSS_CEILING_MIB:
-            raise MemoryError(f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} "
+        if rss > teto_rss():
+            raise MemoryError(f"RSS {rss:.0f} MiB > teto {teto_rss():.0f} "
                               f"apos {sym}; PARANDO.")
     trades.sort(key=lambda t: (t[0], t[1]))
     for c in TARDIAS:
@@ -708,12 +710,21 @@ def main(argv=None) -> int:
     ap.add_argument("--symbols", nargs="+", default=None)
     ap.add_argument("--out", default=None, help="CSV; o log vai ao lado (.log)")
     ap.add_argument("--sem-guarda-relogio", action="store_true")
+    add_teto_rss(ap)
     args = ap.parse_args(argv)
-    if args.tf != "4h":
-        raise SystemExit("[aio_graduado] so 4h nesta rodada (diario = 6 barras)")
-    if args.end > TETO_ISO:                                      # T1 camada 1
-        raise SystemExit(f"[aio_graduado] T1: --end {args.end} passa do teto "
-                         f"{TETO_ISO}. Hold-out trancado. ABORTADO.")
+    define_teto_rss(args.teto_rss)
+    aviso_tf = None
+    if args.tf != "4h":                    # 23/11/2026: aviso, nao recusa
+        aviso_tf = (
+            f"[aviso] tf {args.tf}: este instrumento mede em barras de 4h e "
+            f"NAO foi parametrizado pelo tf. Fica DISTORCIDO: (1) o diario "
+            f"(`kis_tf.agregar(c, 6)` e a conta de faltas por SQL) espera 6 "
+            f"velas de 4h por dia, entao todo dia some e o filtro diario "
+            f"(G2, G2T) veta tudo; (2) `medir` usa barra de 4h fixa e pula "
+            f"as barras do tf nas primeiras 4h apos a entrada; (3) borda de "
+            f"48 barras e teto do hold {EXT_CAP} sao barras do tf, nao a "
+            f"mesma duracao. Numeros desta rodada nao comparam com os de 4h.")
+        print(aviso_tf, flush=True)
     if not args.sem_guarda_relogio:
         _guarda_relogio()
     from v10.registro import SYMBOLS_KIS_3489
@@ -729,7 +740,8 @@ def main(argv=None) -> int:
     try:
         mx = conn.execute("SELECT MAX(ts) FROM candles").fetchone()[0]
         if mx is not None and mx >= teto_ms:
-            raise SystemExit("[aio_graduado] T1 VIOLADO. ABORTADO.")
+            raise SystemExit("[aio_graduado] VAZAMENTO: view deixou passar "
+                             "candle >= --end. ABORTADO.")
         log(f"[aio_graduado] teto {args.end} (exclusivo) | maior ts visivel "
             f"{_iso(mx) if mx else '-'} | tf {args.tf} | simbolos "
             f"{len(symbols)} | linha {SENS}xATR{ATR_N} | vol {VOL_MIN}x/"
@@ -737,6 +749,8 @@ def main(argv=None) -> int:
             f"(D-{DIA_LIDO}) | stop S2 {STOP_K}xATR14 | portao (R0P, G1P) incl "
             f"EMA{EMA_SLOW}/{INCL_LOOKBACK}b/ATR{ATR_LEN} >= {PORTAO_LIMIAR} a "
             f"favor e ADX{ADX_LEN} >= {PORTAO_ADX_MIN}, fixo")
+        if aviso_tf:
+            log(aviso_tf)
         # ---- faltas ESPERADAS, declaradas ANTES de contar (fonte: SQL) -----
         esp = faltas_esperadas(conn, symbols, args.tf)
         log("\n===== FALTAS ESPERADAS (declaradas antes da contagem) =====")
@@ -849,7 +863,7 @@ def main(argv=None) -> int:
             f" | store {m['viradas']} em {anos_dado:.2f} anos = "
             f"{m['viradas'] / anos_dado if anos_dado else 0:.0f}/ano | por ano "
             f"civil {dict(sorted(m['anos'].items()))}")
-    log(f"  RSS de pico {A['rss']:.0f} MiB (teto {RSS_CEILING_MIB:.0f}) | "
+    log(f"  RSS de pico {A['rss']:.0f} MiB (teto {teto_rss():.0f}) | "
         f"tempo coleta {t_a:.0f}s, placebos {t_b:.0f}s")
 
     # ---- 2. ANCORA DO VIDEO --------------------------------------------
@@ -951,7 +965,8 @@ def main(argv=None) -> int:
 
     log(f"\n  CSV: {out} | placebos: {out_p}")
     log("caveat: EXPLORATORIO (camada 2), nada promove; defaults do autor "
-        f"intactos. Teto T1 {TETO_ISO}. Entrada no close da virada (autor: "
+        f"intactos. Teto de leitura {args.end}. Entrada no close da virada "
+        "(autor: "
         "open seguinte). Saida na virada contraria bruta = leitura suposta do "
         "video (ver ancora). ATR10 da linha semeado 1 barra depois do Pine. "
         "Diario por dias completos (dia incompleto descartado = veto). "

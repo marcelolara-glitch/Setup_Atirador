@@ -6,10 +6,11 @@
 # ENTRADA (generica): lista de trades de UM setup/celula, cada um um dict
 #   {rotulo, sym, direcao ("LONG"/"SHORT"), ts_entrada, preco_entrada,
 #    saidas: [(ts, preco, fracao), ...]}
-# `ts` = ts de ABERTURA da barra de 4h em que a execucao acontece (dentro dela
-# ou no fechamento); a execucao entra na banca na marcacao do fechamento dessa
-# barra. As fracoes somam 1. `caminhos` = {sym: (ts, high, low, close)} com
-# array('q')/array('d') (nao dicts: VM de 956 MiB), lidos do store.
+# `ts` = ts de ABERTURA da barra (do tf) em que a execucao acontece (dentro
+# dela ou no fechamento); a execucao entra na banca na marcacao do fechamento
+# dessa barra. As fracoes somam 1. `caminhos` = {sym: (ts, high, low,
+# close)} com array('q')/array('d') ou memoryview deles (nao dicts: VM de 956
+# MiB), lidos do store.
 #
 # UMA BANCA POR SETUP, ISOLADA (regra do Marcelo): uma chamada recebe os trades
 # de UM unico setup/celula e devolve UMA banca. Trades com rotulos diferentes
@@ -21,13 +22,14 @@
 # perna sobre o nocional EXECUTADO (entrada: 300; cada saida: qtd x fracao x
 # preco); sem funding.
 #
-# CALCULO: marcacao a mercado no fechamento de cada barra de 4h da uniao dos
+# CALCULO: marcacao a mercado no fechamento de cada barra (do tf) da uniao dos
 # caminhos, com todas as posicoes abertas: banca = inicial + realizado + nao
 # realizado. Preco de marcacao = ultimo close do simbolo com ts <= marca.
 # Nocional por lado = qtd x fracao restante x close da marca (marcado).
 #
-# REGISTRO DIARIO: fechamento do dia = marca da barra das 20:00 UTC (fecha a
-# 00:00 UTC = 21:00 em Brasilia). Dia sem barra das 20:00 usa a ultima marca
+# REGISTRO DIARIO: fechamento do dia = marca da ULTIMA barra do dia UTC, a que
+# fecha a 00:00 UTC = 21:00 em Brasilia (4h: barra das 20:00; 1h: das 23:00;
+# `bar_ms` do `roda`, 23/11/2026). Dia sem essa barra usa a ultima marca
 # anterior. Rebaixamento do CSV diario contra o pico dos fechamentos diarios.
 #
 # MOVIMENTO ADVERSO POR POSICAO (% do preco de entrada ate a saida final):
@@ -64,8 +66,8 @@ from statistics import median
 BANCA_INICIAL = 10_000.0
 NOCIONAL = 300.0
 CUSTO_BPS = 5.0
-BAR_MS = 14_400_000
-HORA_FECHO_DIA = 20             # barra das 20:00 UTC fecha o dia
+BAR_MS = 14_400_000             # default 4h; outro tf: `roda(..., bar_ms=)`
+DIA_MS = 86_400_000
 MMR = 0.01                      # manutencao (fracao); o Marcelo confirma a OKX
 CAMPOS_DIA = ["data", "banca_usd", "realizado_dia_usd", "nao_realizado_usd",
               "rebaixamento_usd", "rebaixamento_pct", "n_abertas", "n_long",
@@ -134,7 +136,8 @@ def adverso_pct(t: dict, cam: tuple) -> float:
 
 def roda(trades: list, caminhos: dict, banca: float = BANCA_INICIAL,
          nocional: float = NOCIONAL, custo_bps: float = CUSTO_BPS,
-         ini_ms: int = None, fim_ms: int = None) -> dict:
+         ini_ms: int = None, fim_ms: int = None,
+         bar_ms: int = BAR_MS) -> dict:
     """Uma banca para os trades de UM setup/celula. Devolve {rotulo, marcas,
     diario, metricas, adverso}. Funcao pura: nada fica guardado entre chamadas,
     logo duas celulas rodadas em separado nao se tocam."""
@@ -188,23 +191,24 @@ def roda(trades: list, caminhos: dict, banca: float = BANCA_INICIAL,
                 cs += 1
         marcas.append((m, banca + realizado + nr, realizado, nr, cl, cs, nl,
                        ns, n_ab, n_fe))
-    diario = diario_de(marcas, banca)
+    diario = diario_de(marcas, banca, bar_ms)
     adv = [adverso_pct(t, caminhos[t["sym"]]) for t in ordem]
     return {"rotulo": rotulo, "marcas": marcas, "diario": diario,
             "metricas": metricas(marcas, diario, banca), "adverso": adv}
 
 
-def diario_de(marcas: list, banca: float) -> list:
-    """Uma linha por dia UTC: marca da barra das 20:00 (ou a ultima antes)."""
+def diario_de(marcas: list, banca: float, bar_ms: int = BAR_MS) -> list:
+    """Uma linha por dia UTC: marca da ultima barra do dia (a que abre em
+    24h - bar_ms; 4h: 20:00), ou a ultima antes dela."""
     if not marcas:
         return []
-    dia_ms = 86_400_000
+    dia_ms = DIA_MS
     d0 = marcas[0][0] - marcas[0][0] % dia_ms
     d1 = marcas[-1][0] - marcas[-1][0] % dia_ms
     out, k, pico = [], -1, None
     ant = (0.0, 0, 0)                        # realizado, n_ab, n_fe do dia ant.
     for d in range(d0, d1 + dia_ms, dia_ms):
-        corte = d + HORA_FECHO_DIA * 3_600_000
+        corte = d + dia_ms - bar_ms
         while k + 1 < len(marcas) and marcas[k + 1][0] <= corte:
             k += 1
         if k < 0:
@@ -356,7 +360,7 @@ def liquidacao(t: dict, cam: tuple, alav: float, mmr: float = MMR,
     return True, real, liq
 
 
-def linhas_log(res: dict) -> list:
+def linhas_log(res: dict, tf: str = "4h") -> list:
     """Texto do registro 2 e 3 (secao 5) para UMA banca."""
     m, adv = res["metricas"], res["adverso"]
     if not m.get("n_marcas"):
@@ -370,8 +374,8 @@ def linhas_log(res: dict) -> list:
                 f"{f(m[pre + '_usd_pico'])} vale {f(m[pre + '_usd_vale'])}")
     return [
         f"    banca final {m['banca_final']:,.2f} USD | retorno "
-        f"{m['retorno_pct']:+.2f}% | marcas de 4h {m['n_marcas']}",
-        dd("dd4", "marcas 4h"),
+        f"{m['retorno_pct']:+.2f}% | marcas de {tf} {m['n_marcas']}",
+        dd("dd4", f"marcas {tf}"),
         dd("ddd", "fechamentos diarios") +
         f" | dias seguidos abaixo do pico {m['dias_abaixo_pico_max']} | pior "
         f"dia {f(m['pior_dia'])} {m['pior_dia_usd']:+,.2f} USD",

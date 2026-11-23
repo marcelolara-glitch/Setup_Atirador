@@ -48,7 +48,8 @@
 #   cruzamentos (ts, lado, adx, mfi, open) e escalares; B) por simbolo mede e
 #   percorre os 43 caminhos (3 celulas + 40 placebos). Placebos guardam so
 #   agregados. Teto de RSS do kis_trail checado a cada simbolo.
-# T1: `--end` <= 2026-08-26 e TEMP VIEW (`kis_saida.conecta_com_teto`).
+# Teto de leitura: TEMP VIEW no `--end` (`kis_saida.conecta_com_teto`);
+# qualquer `--end` e aceito desde 23/11/2026, vazamento ABORTA.
 # Uso (VM): python -m backtest.vwma_knn --store <candles_v9.db>
 from __future__ import annotations
 import argparse
@@ -69,8 +70,9 @@ from backtest.kis_knn import (K_VIZ, SEMENTES, _pct, adx_knn,      # noqa: E402
                               decidir, mfi_knn, placebo)
 from backtest.kis_saida import (H1, H2, TETO_ISO, _guarda_relogio,  # noqa: E402
                                 _iso, _ms, conecta_com_teto, resumo)
-from backtest.kis_trail import (COST_BPS, RSS_CEILING_MIB, _dentro,  # noqa: E402
-                                _rss_mib, trail_exit)
+from backtest.kis_trail import (COST_BPS, _dentro, _rss_mib,      # noqa: E402
+                                add_teto_rss, define_teto_rss, teto_rss,
+                                trail_exit)
 
 N_RAPIDA, N_LENTA = 13, 19
 CELULAS = ("C0", "K_tok", "K_agr")
@@ -194,8 +196,8 @@ def coleta(conn, symbols: list, tf: str, end_ms: int) -> dict:
                      "bh": bh, "n": len(cndl), "first": cndl[0]["ts"]}
         del cndl
         rss = _rss_mib()
-        if rss > RSS_CEILING_MIB:
-            raise MemoryError(f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} "
+        if rss > teto_rss():
+            raise MemoryError(f"RSS {rss:.0f} MiB > teto {teto_rss():.0f} "
                               f"apos {sym} (passada A); PARANDO.")
     return {"G": G, "fatia": fatia, "meta": meta, "sem_candles": sem,
             "rss": rss}
@@ -277,8 +279,8 @@ def mede(conn, tf: str, A: dict, configs: list) -> dict:
                     x["ret_long"] += r if lg else 0.0
                     x["n_trunc"] += tr
         rss = _rss_mib()
-        if rss > RSS_CEILING_MIB:
-            raise MemoryError(f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} "
+        if rss > teto_rss():
+            raise MemoryError(f"RSS {rss:.0f} MiB > teto {teto_rss():.0f} "
                               f"apos {sym} (passada B); PARANDO.")
     for c in trades:
         trades[c].sort(key=lambda t: (t[0], t[1]))
@@ -315,10 +317,9 @@ def main(argv=None) -> int:
     ap.add_argument("--symbols", nargs="+", default=None)
     ap.add_argument("--out", default=None, help="CSV; o log vai ao lado (.log)")
     ap.add_argument("--sem-guarda-relogio", action="store_true")
+    add_teto_rss(ap)
     args = ap.parse_args(argv)
-    if args.end > TETO_ISO:                                      # T1 camada 1
-        raise SystemExit(f"[vwma_knn] T1: --end {args.end} passa do teto "
-                         f"{TETO_ISO}. Hold-out trancado. ABORTADO.")
+    define_teto_rss(args.teto_rss)
     if not args.sem_guarda_relogio:
         _guarda_relogio()
     from v10.registro import SYMBOLS_KIS_3489
@@ -333,7 +334,8 @@ def main(argv=None) -> int:
     try:
         mx = conn.execute("SELECT MAX(ts) FROM candles").fetchone()[0]
         if mx is not None and mx >= teto_ms:
-            raise SystemExit("[vwma_knn] T1 VIOLADO. ABORTADO.")
+            raise SystemExit("[vwma_knn] VAZAMENTO: view deixou passar "
+                             "candle >= --end. ABORTADO.")
         log(f"[vwma_knn] teto {args.end} (exclusivo) | maior ts visivel "
             f"{_iso(mx) if mx else '-'} | tf {args.tf} | simbolos "
             f"{len(symbols)} | VWMA {N_RAPIDA}/{N_LENTA} open | k {K_VIZ}")
@@ -410,7 +412,7 @@ def main(argv=None) -> int:
         tr = [B["cont"][(c, s)]["trunc"] for s in SEMENTES]
         log(f"  placebo {c}: truncados 256 por semente min {min(tr)} | "
             f"mediana {median(tr):.0f} | max {max(tr)}")
-    log(f"  RSS de pico {B['rss']:.0f} MiB (teto {RSS_CEILING_MIB:.0f}) | "
+    log(f"  RSS de pico {B['rss']:.0f} MiB (teto {teto_rss():.0f}) | "
         f"tempo passada A {t_a:.0f}s, passada B {t_b:.0f}s")
 
     # ---- CSV ------------------------------------------------------------
@@ -504,7 +506,8 @@ def main(argv=None) -> int:
 
     log(f"\n  CSV: {out}")
     log("caveat: EXPLORATORIO (camada 2), nada promove; defaults do autor "
-        f"intactos. Teto T1 {TETO_ISO}. Entrada no close do cruzamento (o "
+        f"intactos. Teto de leitura {args.end}. Entrada no close do "
+        "cruzamento (o "
         "original usa o open seguinte). Memoria vazia/feature NA = veto. "
         "Placebo refaz o caminho (veto muda hold). ret por trade em bps de "
         "6 de custo, mergulho sobre a curva de trades por entrada (nao marca a "

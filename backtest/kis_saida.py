@@ -27,11 +27,14 @@
 # Depois do stop a posicao fica ZERADA ate a proxima inversao — por construcao:
 # cada trade vai de uma inversao a seguinte, e o stop so encurta o trade.
 #
-# T1 — TETO DE DATA (trava desta rodada): nenhum candle com ts >= 2026-08-26
-# 00:00 UTC e lido. Duas camadas: (1) `--end` acima do teto ABORTA; (2) a
-# conexao ganha uma TEMP VIEW `candles` que esconde a tabela real (o SQLite
-# resolve nome sem esquema primeiro em `temp`), entao NENHUMA leitura — inclusive
-# o caminho forward de measure_event, que nao recebe `end` — enxerga o hold-out.
+# TETO DE LEITURA: nenhum candle com ts >= --end (default 2026-08-26 00:00 UTC)
+# e lido: a conexao ganha uma TEMP VIEW `candles` que esconde a tabela real (o
+# SQLite resolve nome sem esquema primeiro em `temp`), entao NENHUMA
+# leitura - inclusive o caminho forward de measure_event, que nao recebe
+# `end` - enxerga o que vem depois; o main confere a view (vazamento de
+# futuro ABORTA). A recusa de `--end` acima de 2026-08-26 (T1) foi retirada
+# em 23/11/2026: qualquer `--end` e aceito (regra de estudo e do Marcelo, nao
+# do instrumento).
 #
 # CUSTO: 6 bps/trade (convencao do motor e do ledger). A coluna a 10 bps
 # (5 bps x 2 pernas, custo do forward) e subtracao linear: ret10 = ret6 - 4n.
@@ -53,8 +56,9 @@ from backtest.kis_horizonte import (PORTAO_ADX_MIN, PORTAO_LIMIAR,  # noqa: E402
                                     entradas)
 from backtest.kis_regime import inclinacoes, passa                # noqa: E402
 from backtest.kis_trail import (COST_BPS, METADE_1, METADE_2,       # noqa: E402
-                                RSS_CEILING_MIB, _dentro, _quarter,
-                                _rss_mib, trail_exit)
+                                _dentro, _quarter, _rss_mib,
+                                add_teto_rss, define_teto_rss, teto_rss,
+                                trail_exit)
 
 TETO_ISO = "2026-08-26"            # T1: exclusivo (ts < 2026-08-26 00:00 UTC)
 H1 = ("2024-08-26", "2025-08-25")  # metades por data de ENTRADA, inclusivas
@@ -180,8 +184,8 @@ def run(conn, symbols: list, tf: str, start_ms, end_ms: int,
                                      ev["direction"] == "LONG", rets, bits,
                                      hold >= EXT_CAP, ultimo))
         rss = _rss_mib()
-        if rss > RSS_CEILING_MIB:
-            raise MemoryError(f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} "
+        if rss > teto_rss():
+            raise MemoryError(f"RSS {rss:.0f} MiB > teto {teto_rss():.0f} "
                               f"apos {sym}; PARANDO antes de estourar a VM.")
     for p in pares:
         por_par[p].sort(key=lambda t: t[0])
@@ -267,13 +271,17 @@ def conferencia(conn, tf: str, symbols: list) -> None:
           "store, TONUSDT delistada; anotar, nao ajustar)")
 
 
-def _guarda_relogio() -> None:
-    """R3: nao disparar perto do minuto 16 das barras 4h (scan do cron)."""
+def _guarda_relogio() -> bool:
+    """R3 como AVISO (23/11/2026; os crons estao desligados desde 14/11): perto
+    do minuto 16 das barras 4h (scan do cron) imprime o aviso e SEGUE. Devolve
+    True se avisou. `--sem-guarda-relogio` nos instrumentos nem chama."""
     now = datetime.now(timezone.utc)
     if now.hour % 4 == 0 and 10 <= now.minute <= 30:
-        raise SystemExit(f"[kis_saida] {now:%H:%M} UTC: janela do scan 4h "
-                         f"(minuto 16). Rodar fora de hh:10-hh:30 nas horas "
-                         f"multiplas de 4.")
+        print(f"[aviso] {now:%H:%M} UTC: janela do scan 4h (minuto 16). Se o "
+              f"cron estiver ligado, a rodada disputa CPU e memoria com ele. "
+              f"Seguindo.", flush=True)
+        return True
+    return False
 
 
 def _fmt(row: dict) -> str:
@@ -291,7 +299,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="KIS: saida (etapa 1, sandbox)")
     ap.add_argument("--tf", default="4h")
     ap.add_argument("--end", default=TETO_ISO,
-                    help=f"exclusivo; maximo {TETO_ISO} (T1)")
+                    help=f"exclusivo; default {TETO_ISO} (qualquer data e "
+                         "aceita)")
     ap.add_argument("--store", default=str(ROOT / "backtest" / "candles_v9.db"))
     ap.add_argument("--symbols", nargs="+", default=None,
                     help="default: SYMBOLS_KIS_3489 (65)")
@@ -299,11 +308,10 @@ def main(argv=None) -> int:
     ap.add_argument("--sem-conferencia", action="store_true")
     ap.add_argument("--sem-guarda-relogio", action="store_true",
                     help="so para teste local")
+    add_teto_rss(ap)
     args = ap.parse_args(argv)
+    define_teto_rss(args.teto_rss)
 
-    if args.end > TETO_ISO:                     # T1, camada 1
-        raise SystemExit(f"[kis_saida] T1: --end {args.end} passa do teto "
-                         f"{TETO_ISO}. Hold-out trancado. ABORTADO.")
     if not args.sem_guarda_relogio:
         _guarda_relogio()
     from backtest.sweep import TIER1
@@ -316,8 +324,8 @@ def main(argv=None) -> int:
         print(f"[kis_saida] teto {args.end} 00:00 UTC (exclusivo) | maior ts "
               f"visivel no store: {_iso(mx) if mx else '-'} | tf={args.tf}")
         if mx is not None and mx >= teto_ms:
-            raise SystemExit("[kis_saida] T1 VIOLADO: view deixou passar candle "
-                             ">= teto. ABORTADO.")
+            raise SystemExit("[kis_saida] VAZAMENTO: view deixou passar "
+                             "candle >= --end. ABORTADO.")
 
         ini = inicio_por_simbolo(conn, symbols, args.tf)
         print("\n===== INICIO POR SIMBOLO (lido do store, atras do teto) =====")
@@ -362,7 +370,7 @@ def main(argv=None) -> int:
               f"(fora das metades) {fora} | hold no teto 256 "
               f"{sum(1 for t in tr if t[5])} | marcados no fim do dado "
               f"{sum(1 for t in tr if t[6])}")
-    print(f"  RSS de pico {r['rss']:.0f} MiB (teto {RSS_CEILING_MIB:.0f}) | "
+    print(f"  RSS de pico {r['rss']:.0f} MiB (teto {teto_rss():.0f}) | "
           f"CSV: {out}")
 
     cab = (f"{'par':>5} {'cel':>5} H  | {'n':>4} | {'ret@6':>9} | {'ret@10':>9} | "
@@ -412,8 +420,9 @@ def main(argv=None) -> int:
                   + " ".join(f" {c}:{rs[(c,'H1')]['ret6']:>+6.0f}|"
                              f"{rs[(c,'H2')]['ret6']:>+6.0f}" for c in NOMES))
 
-    print("\ncaveat: EXPLORATORIO (camada 2), nada promove. Teto T1 "
-          f"{TETO_ISO} (hold-out 31/08->14/11 fora). Metades por data de "
+    print("\ncaveat: EXPLORATORIO (camada 2), nada promove. Teto de leitura "
+          f"{args.end} (default: hold-out 31/08->14/11 fora). Metades por "
+          "data de "
           "ENTRADA; trades antes de H1 nao entram em H1/H2. Mergulho = sobre a "
           "curva de trades ordenada por entrada (nao marca a mercado, nao "
           "considera trades simultaneos). Stop em ATR(14) da barra do sinal, "

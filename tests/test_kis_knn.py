@@ -93,6 +93,10 @@ def test_main_ponta_a_ponta(tmp_path, capsys):
     assert "kNN acima de" in txt
 
 
-def test_end_alem_do_teto_aborta(tmp_path):
-    with pytest.raises(SystemExit, match="T1"):
-        kk.main(["--end", "2026-09-01", "--store", str(tmp_path / "x.db")])
+def test_end_alem_de_2026_08_26_e_aceito(tmp_path):
+    # 23/11/2026: a recusa T1 saiu; o --end passa e a rodada so para na
+    # validacao de entrada (store inexistente). Execucao completa com
+    # --end alem do teto: tests/test_sem_travas_de_estudo.py.
+    with pytest.raises(SystemExit, match="inexistente"):
+        kk.main(["--end", "2026-09-01", "--store", str(tmp_path / "x.db"),
+                 "--out", str(tmp_path / "o.csv")])

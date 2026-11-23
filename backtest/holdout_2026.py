@@ -60,8 +60,8 @@ from backtest.kis_saida import (BAR_4H_MS, COST_FWD_BPS,              # noqa: E4
                                 _guarda_relogio, _iso, _ms,
                                 conecta_com_teto, stop_exit)
 from backtest.kis_tf import CTX                                       # noqa: E402
-from backtest.kis_trail import (COST_BPS, RSS_CEILING_MIB, _rss_mib,  # noqa: E402
-                                trail_exit)
+from backtest.kis_trail import (COST_BPS, _rss_mib, add_teto_rss,  # noqa: E402
+                                define_teto_rss, teto_rss, trail_exit)
 from backtest.vwma_knn import TOP_FRAC, concentracao                  # noqa: E402
 
 INI_ISO = "2026-08-31 16:00"       # 1a barra de entrada (inclusiva)
@@ -249,8 +249,8 @@ def coleta(conn, symbols: list, tf: str, teto_ms: int, janela=JANELA) -> dict:
         passivo[sym] = 1e4 * (b / a - 1) if a and b else None
         del cndl
         rss = _rss_mib()
-        if rss > RSS_CEILING_MIB:
-            raise MemoryError(f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} "
+        if rss > teto_rss():
+            raise MemoryError(f"RSS {rss:.0f} MiB > teto {teto_rss():.0f} "
                               f"apos {sym}; PARANDO.")
     trades.sort(key=lambda t: (t["ts"], t["sym"], t["setup"]))
     return {"trades": trades, "cont": cont, "passivo": passivo,
@@ -390,9 +390,22 @@ def main(argv=None) -> int:
                     help="default: SYMBOLS_KIS_3489 (65)")
     ap.add_argument("--out", default=None, help="CSV; o log vai ao lado (.log)")
     ap.add_argument("--sem-guarda-relogio", action="store_true")
+    add_teto_rss(ap)
     args = ap.parse_args(argv)
-    if args.tf != "4h":
-        raise SystemExit("[holdout_2026] so 4h (diario do AIO = 6 barras)")
+    define_teto_rss(args.teto_rss)
+    aviso_tf = None
+    if args.tf != "4h":                    # 23/11/2026: aviso, nao recusa
+        aviso_tf = (
+            f"[aviso] tf {args.tf}: este instrumento mede em barras de 4h e "
+            f"NAO foi parametrizado pelo tf. Fica DISTORCIDO: (1) o caminho "
+            f"do `medir_sem_borda` usa barra de 4h fixa e pula as barras do "
+            f"tf nas primeiras 4h apos a entrada; (2) o diario do AIO "
+            f"(`kis_tf.agregar(c, 6)`) espera 6 velas de 4h por dia, entao "
+            f"todo dia some e o filtro diario veta tudo; (3) a cobertura "
+            f"esperada conta barras de 4h; (4) teto do hold {EXT_CAP} e "
+            f"aquecimento sao barras do tf, nao a mesma duracao. Numeros "
+            f"desta rodada nao comparam com os de 4h.")
+        print(aviso_tf, flush=True)
     teto_ms = _ms(args.end)
     if teto_ms <= JANELA[0]:
         raise SystemExit(f"[holdout_2026] --end {args.end} nao passa do inicio "
@@ -421,6 +434,8 @@ def main(argv=None) -> int:
             f"{PORTAO_LIMIAR}/ADX {PORTAO_ADX_MIN}, saida na inversao), "
             f"KIS_E1-3 (+ stop {KIS_STOP_K} x ATR14), AIO_G1 (stop "
             f"{STOP_K:g} x ATR14)")
+        if aviso_tf:
+            log(aviso_tf)
         # ---- 2. conferencias (cobertura ANTES de medir) ---------------------
         esp = (teto_ms - JANELA[0]) // BAR_4H_MS
         cob = cobertura(conn, symbols, args.tf, JANELA[0], teto_ms)
@@ -463,7 +478,7 @@ def main(argv=None) -> int:
                                                     t["ts"], t["sym"])):
             w.writerow(linha_csv(t))
     log(f"\n  CSV: {out} ({len(A['trades'])} linhas) | RSS de pico "
-        f"{A['rss']:.0f} MiB (teto {RSS_CEILING_MIB:.0f}) | "
+        f"{A['rss']:.0f} MiB (teto {teto_rss():.0f}) | "
         f"{time.monotonic() - t0:.0f} s")
     # ---- 6. fecho ---------------------------------------------------------------
     log("caveat: so medicao, sem veredito. Custo por trade nas duas colunas "

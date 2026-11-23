@@ -29,7 +29,8 @@
 # PLACEBO: veto aleatorio com a MESMA contagem de vetos do kNN, por lado, sobre a
 # MESMA populacao filtravel (feature definida e memoria nao vazia); 20 sementes.
 #
-# T1: mesma trava do kis_saida (`--end` <= 2026-08-26 e TEMP VIEW na conexao).
+# Teto de leitura: TEMP VIEW no `--end` (`kis_saida.conecta_com_teto`);
+# qualquer `--end` e aceito desde 23/11/2026, vazamento ABORTA.
 # Uso (VM): python -m backtest.kis_knn --store <candles_v9.db>
 from __future__ import annotations
 import argparse
@@ -52,8 +53,9 @@ from backtest.kis_regime import inclinacoes, passa                # noqa: E402
 from backtest.kis_saida import (H1, H2, TETO_ISO, _guarda_relogio,  # noqa: E402
                                 _iso, _ms, conecta_com_teto, resumo,
                                 stop_exit)
-from backtest.kis_trail import (COST_BPS, RSS_CEILING_MIB, _dentro,  # noqa: E402
-                                _rss_mib, trail_exit)
+from backtest.kis_trail import (COST_BPS, _dentro, _rss_mib,      # noqa: E402
+                                add_teto_rss, define_teto_rss, teto_rss,
+                                trail_exit)
 
 K_VIZ = 45
 LIMIAR_SOMA = 2
@@ -251,8 +253,8 @@ def run(conn, symbols: list, tf: str, end_ms: int, pares=PARES) -> dict:
                                 hold >= EXT_CAP,
                                 n_ev == len(evs) - 1 and i + hold == ult)
         rss = _rss_mib()
-        if rss > RSS_CEILING_MIB:
-            raise MemoryError(f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} "
+        if rss > teto_rss():
+            raise MemoryError(f"RSS {rss:.0f} MiB > teto {teto_rss():.0f} "
                               f"apos {sym}; PARANDO antes de estourar a VM.")
     return {"gat": gat, "trd": trd, "cont": cont, "rss": rss}
 
@@ -282,10 +284,9 @@ def main(argv=None) -> int:
     ap.add_argument("--symbols", nargs="+", default=None)
     ap.add_argument("--out", default=None)
     ap.add_argument("--sem-guarda-relogio", action="store_true")
+    add_teto_rss(ap)
     args = ap.parse_args(argv)
-    if args.end > TETO_ISO:
-        raise SystemExit(f"[kis_knn] T1: --end {args.end} passa do teto "
-                         f"{TETO_ISO}. Hold-out trancado. ABORTADO.")
+    define_teto_rss(args.teto_rss)
     if not args.sem_guarda_relogio:
         _guarda_relogio()
     from backtest.sweep import TIER1
@@ -296,7 +297,8 @@ def main(argv=None) -> int:
     try:
         mx = conn.execute("SELECT MAX(ts) FROM candles").fetchone()[0]
         if mx is not None and mx >= teto_ms:
-            raise SystemExit("[kis_knn] T1 VIOLADO. ABORTADO.")
+            raise SystemExit("[kis_knn] VAZAMENTO: view deixou passar "
+                             "candle >= --end. ABORTADO.")
         firsts = {s: conn.execute(
             "SELECT MIN(ts) FROM candles WHERE symbol=? AND timeframe=?",
             (s, args.tf)).fetchone()[0] for s in symbols}
@@ -428,8 +430,9 @@ def main(argv=None) -> int:
     for rec, p, s, h, ab, p90 in ranks:
         print(f"  {rec:>8} {p:>5} {s:>5} {h}: kNN acima de {ab:>2}/20 | "
               f"{'ACIMA do P90' if p90 else 'nao passa do P90'}")
-    print("\ncaveat: EXPLORATORIO (camada 2), nada promove. Teto T1 "
-          f"{TETO_ISO}. Gatilho = inversao do KIS que passa no portao; memoria "
+    print("\ncaveat: EXPLORATORIO (camada 2), nada promove. Teto de leitura "
+          f"{args.end}. Gatilho = inversao do KIS que passa no portao; "
+          "memoria "
           "unica 65 simbolos, ponto entra na RESOLUCAO do rotulo (<= t). "
           "Features ADX/MFI em conta nova fiel ao Pine. Placebo = mesma "
           "contagem de vetos por lado na mesma populacao filtravel, 20 "

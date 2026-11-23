@@ -20,8 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from backtest.candle_store import connect as store_connect, read_candles  # noqa: E402
-from backtest.replay import BAR_15M_MS                                    # noqa: E402
-from backtest.sweep import TIER1, sweep_symbol                            # noqa: E402
+# replay/sweep (pilha de producao: pandas, pandas_ta, aiohttp) so carregam onde
+# sao usados (collapse_events, run, main). Quem so mede (measure_event,
+# _wilder_atr, _BAR_MS) nao paga essa memoria (23/11/2026: o kis_grade em 1h
+# precisa caber no teto de RSS da VM de 956 MiB). Nada numerico muda.
 
 HORIZONS = [4, 8, 16, 32, 48]   # BARRAS do tf medido (15m: 1h..12h)
 FWD_BAR_CAP = 256               # teto de `fwd_bar`. ADITIVO: HORIZONS, `fwd`,
@@ -61,6 +63,7 @@ def collapse_events(signals: list, cooldown_bars: int) -> list:
     """Colapsa re-fires de UM simbolo (ordenados por bar_ts) por direction:
     mantem o PRIMEIRO disparo de cada cluster e suprime disparos da mesma
     direcao enquanto (bar_ts - ultimo_mantido) < cooldown_bars * BAR_15M_MS."""
+    from backtest.replay import BAR_15M_MS                    # tardio
     cooldown_ms = cooldown_bars * BAR_15M_MS
     last_kept: dict = {}   # direction -> bar_ts do ultimo mantido
     out = []
@@ -167,6 +170,7 @@ def run(store_db: str, symbols: list, start_iso: str, end_iso: str,
     """Por simbolo: sweep_symbol -> filtra `setup` -> collapse_events ->
     measure_event (descarta None). Agrega por horizonte e devolve contagens
     (raw, colapsados, medidos, excluidos_borda) + a curva de excursao."""
+    from backtest.sweep import sweep_symbol                   # tardio
     conn = store_connect(store_db)
     start_ms, end_ms = _iso_to_ms(start_iso), _iso_to_ms(end_iso)
 
@@ -210,6 +214,7 @@ def run(store_db: str, symbols: list, start_iso: str, end_iso: str,
 
 
 def main() -> int:
+    from backtest.sweep import TIER1                          # tardio
     ap = argparse.ArgumentParser(
         description="Excursao MFE/MAE por evento (colapso de re-fires + ATR)")
     ap.add_argument("--store", default=str(ROOT / "backtest" / "candles_v9.db"))
