@@ -7,6 +7,8 @@ permanecem nas entradas do ledger apenas como registro histórico.
 Princípio: controle proporcional à camada. Exploração não tem cerimônia;
 promoção tem toda.
 
+Regras de estudo são do Marcelo e circunstanciais: ele as cria e as suspende quando quiser. Instrumentos não recusam simulação ou teste de cenário por regra de estudo; só por integridade do dado (vazamento de futuro, entrada inválida) ou da máquina (memória).
+
 ## Camada 0 — Máquina íntegra (pré-condição da camada 3, não da 2)
 - Guarda em `_abrir`: nunca abrir segunda posição no mesmo símbolo/direção com uma OPEN.
 - Determinismo do sinal: mesma barra não pode ser `alvo=-1` na entrada e `alvo_saida=+1` na saída.
@@ -28,7 +30,6 @@ promoção tem toda.
   2. Uma linha em `research/scratch.md` por tarde (não por rodada). Claude Code pode
      escrever nele. O ledger continua só do Marcelo.
   3. Rodada = comando único com log. Não disparar no minuto 16 de barra 4h (scan do cron).
-- 1h/15m: janela única, sem duas metades, sem promoção até haver histórico.
 
 ## Camada 3 — Promoção ao forward (v10)
 - Portão de entrada (regime 20/08, emenda 23/11): positivo nas duas metades,
@@ -54,3 +55,4 @@ Alterar esta seção e o texto acima no mesmo commit; registrar uma linha no led
 apontando o commit. Nunca reescrever o histórico de emendas.
 - 2026-09-12 — criação. Consolida o regime de 20/08 (camada 3) e abre a camada 2.
 - 2026-11-23 — camada 3: retirado "maioria dos trimestres" do portão de entrada (decisão do Marcelo).
+- 2026-11-23 — retirada a regra de janela única do 1h/15m; regras de estudo não travam simulações (decisão do Marcelo).
