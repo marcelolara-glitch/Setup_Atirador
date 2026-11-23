@@ -1,0 +1,754 @@
+# backtest/kis_refino.py — Setup Atirador (SANDBOX, camada 2) — KIS 34/89 E1-3:
+# cinco refinamentos e a carteira alavancada. Briefing v3 de 22/11/2026.
+#
+# O instrumento SO MEDE E DECOMPOE. Sem veredito, sem criterio de aceite.
+#
+# BASE (nao muda): KIS regra Extremos, EMA 34/89, confirmacao 2, portao (EMA21
+# fixa, 5 barras, >= 0,02 ATR/barra a favor, ADX13 >= 11), saida na inversao ou
+# stop fixo de 3 x ATR14 da barra do sinal, 4h, SYMBOLS_KIS_3489, custo 10 e 6
+# bps por trade (ret10 = ret6 - 4).
+#
+# REUSADO, nao reescrito: entradas = `kis_horizonte.entradas`; portao =
+# `kis_regime.inclinacoes` + `keepitsimple._adx` + `kis_regime.passa`; caminho =
+# `holdout_2026.medir_sem_borda` (entry, ATR14 de 30 velas, fwd ate 256);
+# populacao e marcacao no fim do periodo novo = mesma regra do
+# `holdout_2026.trades_kis` (`_hold_visivel`); teto de leitura = `kis_saida.
+# conecta_com_teto`; amplitude = `kis_meta.series_barra(...)["amp"]` agregada
+# como no `kis_meta.coleta` e lida por `kis_meta.junta` (amplitude_fav).
+# Conferencias chamam `kis_saida.run` e `holdout_2026.trades_kis` de verdade.
+#
+# MOTOR DE SAIDA UNICO (`simula`): barra a barra, nas MESMAS expressoes do
+# `medir_sem_borda` (fav/adv/abertura/fechamento em ATR da barra do sinal).
+# Ordem dentro da barra: (1) nivel adverso (stop -3 ATR; no T5, o gatilho da
+# inversao se estiver acima do stop — o mais alto e tocado primeiro), preco
+# min(nivel, abertura) como o `kis_saida.stop_exit`; (2) parciais do T3, preco
+# max(nivel, abertura); (3) MFE/MAE com a barra inteira; (4) saida por tempo do
+# T1 no fechamento. Stop e alvo na mesma barra: o stop vem primeiro (1 antes de
+# 2). BASE com teto 256 reproduz `stop_exit` (teste de paridade exata).
+#
+# PERIODOS: sandbox H1/H2 (kis_saida.H1/H2, por ENTRADA, velas < 2026-08-26,
+# exclusao de borda de 48 barras como o kis_saida); NOVO = entradas de
+# 2026-08-31 16:00 a 2026-11-14 12:00 (holdout_2026.JANELA), velas < --end,
+# sem exclusao de borda, aberto no fim marcado no fechamento da ultima barra.
+# Uma leitura por simbolo (ate --end); o sandbox usa o prefixo ts < teto.
+#
+# TETO DE HOLD: `TETO_HOLD` = 256 so na celula BASE_256 (conferencia). Todas as
+# outras celulas sem teto: o trade vai ate a proxima inversao (vetada ou nao)
+# ou ate o fim do dado. `corte_teto` conta quantos o teto teria cortado.
+#
+# T5 (execucao sem esperar o fechamento) — ver `gatilhos`/`limiares_portao`:
+# limiares de preco calculados SO com valores de t-1 (recursao da EMA). A
+# confirmacao de 2 barras exige que a barra anterior ja tenha FECHADO no estado
+# extremo. T5s: entradas da BASE (no fechamento); sai na 1a barra em que o
+# preco toca o gatilho contrario (ou o stop). T5e: maquina de alvo propria
+# dirigida pelos toques (o alvo vira no toque, com ou sem portao); entrada no
+# toque de max(gatilho KIS, limiar do portao) — o mais exigente —, com ATR14 e
+# ADX13 da barra t-1 (APROXIMACAO: os da barra t so existem no fechamento); o
+# stop usa o ATR14 de 30 velas ate t-1. Na propria barra de entrada do T5e o
+# stop e checado de forma conservadora (minima/maxima da barra pode ter vindo
+# antes da entrada; assume-se que veio depois). Toque falso = o toque aconteceu
+# e o fechamento daquela barra nao poria o estado no extremo.
+#
+# T3: custo por trade inalterado (5 bps na entrada + 5 bps x fracao em cada
+# perna de saida = 10; idem 6). T2: amplitude NA veta (contado).
+#
+# VM 956 MiB: velas de um simbolo por vez; carteira com arrays ts/high/low/
+# close por simbolo; teto de RSS do kis_trail; guarda de horario do kis_saida.
+#
+# Uso (VM): python -m backtest.kis_refino --store <candles_v9.db>
+from __future__ import annotations
+
+import argparse
+import csv
+import random
+import sys
+import time
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+from statistics import mean
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from backtest import carteira as cart                                # noqa: E402
+from backtest.aio_graduado import _Log                               # noqa: E402
+from backtest.holdout_2026 import (END_ISO, JANELA, _hold_visivel,   # noqa: E402
+                                   medir_sem_borda, na_janela)
+from backtest.keepitsimple import EXT_CAP, _adx, _ema, states        # noqa: E402
+from backtest.kis_horizonte import (PORTAO_ADX_MIN, PORTAO_LIMIAR,   # noqa: E402
+                                    entradas)
+from backtest.kis_knn import SEMENTES                                # noqa: E402
+from backtest.kis_meta import junta, series_barra                    # noqa: E402
+from backtest.kis_regime import (INCL_LOOKBACK, _atr_series,         # noqa: E402
+                                 inclinacoes, passa)
+from backtest.kis_saida import (COST_FWD_BPS, H1, H2, TETO_ISO,      # noqa: E402
+                                _guarda_relogio, _iso, _ms,
+                                conecta_com_teto)
+from backtest.kis_tf import CTX                                      # noqa: E402
+from backtest.kis_trail import (COST_BPS, RSS_CEILING_MIB, _dentro,  # noqa: E402
+                                _quarter, _rss_mib)
+from backtest.vwma_knn import TOP_FRAC, concentracao                 # noqa: E402
+
+# ----------------------------------------------------------- parametros -----
+PAR = (34, 89)
+EMA_REF = 21                       # EMA do portao (fixa)
+STOP_K = 3.0
+TETO_HOLD = EXT_CAP                # 256, so na BASE_256
+BORDA = 48                         # exclusao de borda do sandbox (kis_saida)
+T1_NS = (6, 12, 24)
+T1_PROGRESSO = 1.0                 # ATR a favor (MFE intrabarra) ate a barra N
+T2_LIMIAR = 50.0                   # % do universo com EMA34 > EMA89 (a favor)
+T3_PARCIAIS = ((4.0, 0.50, "parcial1"), (8.0, 0.25, "parcial2"))
+T4_KS = (20, 40)
+SETUP = "KIS_E1-3"
+CELULAS = (("BASE_256", "BASE") + tuple(f"T1_{n}" for n in T1_NS) +
+           ("T2", "T3") + tuple(f"T4_{k}" for k in T4_KS) + ("T5s", "T5e"))
+PERIODOS = ("H1", "H2", "NOVO")
+DELTA_10 = COST_FWD_BPS - COST_BPS
+TIPOS = ("stop", "inversao", "tempo", "parcial1", "parcial2", "teto", "fim")
+
+
+# ------------------------------------------------------- limiares (T5) ------
+def gatilhos(cndl: list, closes: list = None, fast: int = PAR[0],
+             slow: int = PAR[1]) -> tuple:
+    """(gL, gS, st). gL[t] = preco acima do qual o fechamento de t poe o estado
+    em VERDE, definido so se a barra t-1 FECHOU em VERDE (a confirmacao de 2
+    se completaria em t); gS[t] idem VERM. So usa EMAs de t-1:
+      close > EMA34_t        <=> p > EMA34_{t-1}
+      EMA34_t > EMA89_t      <=> p > [(1-b)EMA89_{t-1} - (1-a)EMA34_{t-1}]/(a-b)
+    gL = max dos dois; gS = min (VERM: p < os dois)."""
+    closes = closes if closes is not None else [c["close"] for c in cndl]
+    ef, es, st = _ema(closes, fast), _ema(closes, slow), states(closes, fast,
+                                                                slow)
+    a, b = 2.0 / (fast + 1.0), 2.0 / (slow + 1.0)
+    n = len(closes)
+    gL, gS = [None] * n, [None] * n
+    for t in range(1, n):
+        f, s = ef[t - 1], es[t - 1]
+        if f is None or s is None:
+            continue
+        l2 = ((1.0 - b) * s - (1.0 - a) * f) / (a - b)
+        if st[t - 1] == "VERDE":
+            gL[t] = max(f, l2)
+        elif st[t - 1] == "VERM":
+            gS[t] = min(f, l2)
+    return gL, gS, st
+
+
+def limiares_portao(cndl: list, closes: list = None, ref: int = EMA_REF,
+                    lb: int = INCL_LOOKBACK, limiar: float = PORTAO_LIMIAR,
+                    adx_min: float = PORTAO_ADX_MIN) -> tuple:
+    """(pL, pS, ok_adx). Inclinacao da EMA21 com a recursao: LONG passa se
+    p >= pL[t], SHORT se p <= pS[t], com ATR14 de t-1 no denominador e
+    ok_adx[t] = ADX13[t-1] >= adx_min (aproximacao documentada)."""
+    closes = closes if closes is not None else [c["close"] for c in cndl]
+    e, atr, adx = _ema(closes, ref), _atr_series(cndl), _adx(cndl)
+    c = 2.0 / (ref + 1.0)
+    n = len(closes)
+    pL, pS, ok = [None] * n, [None] * n, [False] * n
+    for t in range(lb + 1, n):
+        a, e1, e5 = atr[t - 1], e[t - 1], e[t - lb]
+        if a is None or a <= 0 or e1 is None or e5 is None:
+            continue
+        base = e5 - (1.0 - c) * e1
+        pL[t] = (base + lb * limiar * a) / c
+        pS[t] = (base - lb * limiar * a) / c
+        ok[t] = adx[t - 1] is not None and adx[t - 1] >= adx_min
+    return pL, pS, ok
+
+
+# ------------------------------------------------------------ motor ---------
+def _barra(c: dict, entry: float, atr: float, sg: float) -> tuple:
+    """(fav, adv, abertura, fechamento) em ATR — expressoes do medir_sem_borda."""
+    if sg > 0:
+        fav, adv = (c["high"] - entry) / atr, (entry - c["low"]) / atr
+    else:
+        fav, adv = (entry - c["low"]) / atr, (c["high"] - entry) / atr
+    return fav, adv, sg * (c["open"] - entry) / atr, \
+        sg * (c["close"] - entry) / atr
+
+
+def simula(cndl: list, i: int, e: int, entry: float, atr: float, sg: float,
+           k: float = STOP_K, tempo_n: int = None, parciais=(), gat=None,
+           tipo_fim: str = "inversao") -> tuple:
+    """Barras i+1..e. Devolve ([(idx, r_atr, preco, fracao, tipo)], mfe, mae).
+    gat(idx) -> preco do gatilho de saida (T5) ou None."""
+    execs, resto, pegos, mfe, mae = [], 1.0, 0, 0.0, 0.0
+    px_stop = entry - sg * k * atr
+    for idx in range(i + 1, e + 1):
+        c = cndl[idx]
+        fav, adv, op, cl = _barra(c, entry, atr, sg)
+        nivel, px_n, tipo = -k, px_stop, "stop"
+        g = gat(idx) if gat is not None else None
+        if g is not None:
+            gl = sg * (g - entry) / atr
+            if gl > nivel:
+                nivel, px_n, tipo = gl, g, "inversao"
+        if -adv <= nivel:
+            r, px = (op, c["open"]) if op < nivel else (nivel, px_n)
+            execs.append((idx, r, px, resto, tipo))
+            return execs, mfe, max(mae, -r)
+        for n, (lvl, fr, nome) in enumerate(parciais):
+            if not pegos >> n & 1 and fav >= lvl:
+                r, px = ((op, c["open"]) if op > lvl
+                         else (lvl, entry + sg * lvl * atr))
+                execs.append((idx, r, px, fr, nome))
+                resto -= fr
+                pegos |= 1 << n
+        mfe, mae = max(mfe, fav), max(mae, adv)
+        if (tempo_n and idx < e and idx - i == tempo_n
+                and mfe < T1_PROGRESSO):
+            execs.append((idx, cl, c["close"], resto, "tempo"))
+            return execs, mfe, mae
+    c = cndl[e]
+    execs.append((e, sg * (c["close"] - entry) / atr, c["close"], resto,
+                  tipo_fim))
+    return execs, mfe, mae
+
+
+def _trade(cel: str, sym: str, cndl: list, i: int, lg: bool, entry: float,
+           atr: float, sim: tuple, falso_e: bool = False,
+           falso_s: bool = False) -> dict:
+    execs, mfe, mae = sim
+    r = 0.0
+    for x in execs:
+        r += x[3] * x[1]
+    ret6 = r * (atr / entry) * 1e4 - COST_BPS
+    return {"cel": cel, "sym": sym, "long": lg, "ts": cndl[i]["ts"],
+            "entry": entry, "atr": atr, "hold": execs[-1][0] - i,
+            "execs": tuple((cndl[x[0]]["ts"], x[2], x[3], x[4]) for x in execs),
+            "tipos": "+".join(x[4] for x in execs), "ret6": ret6,
+            "ret10": ret6 - DELTA_10, "mfe": mfe, "mae": mae,
+            "corte": execs[-1][0] - i > TETO_HOLD,
+            "falso_e": falso_e, "falso_s": falso_s}
+
+
+def novo_cont() -> dict:
+    return {"inversoes": 0, "vetadas": 0, "atr0": 0, "excl_borda": 0,
+            "excl_hold": 0, "t5e_viradas": 0, "t5e_vetadas": 0,
+            "t5e_borda": 0, "t5e_atr0": 0, "t5e_stop_na_entrada": 0}
+
+
+CEL_SIMB = ("BASE_256", "BASE") + tuple(f"T1_{n}" for n in T1_NS) + \
+    ("T3", "T5s", "T5e")
+
+
+def trades_simbolo(cndl: list, sym: str, modo: str, cont: dict,
+                   janela=JANELA) -> dict:
+    """Trades de um simbolo nas celulas que dependem so dele. modo 'sandbox'
+    (borda 48, sem janela) ou 'novo' (janela de entrada, sem borda)."""
+    out = {c: [] for c in CEL_SIMB}
+    if not cndl:
+        return out
+    closes = [c["close"] for c in cndl]
+    incl, adx = inclinacoes(cndl, closes), _adx(cndl)
+    pos = {c["ts"]: i for i, c in enumerate(cndl)}
+    evs = entradas(cndl, PAR[0], PAR[1])
+    idx = [pos[ev["bar_ts"]] for ev in evs]
+    ult = len(cndl) - 1
+    gL, gS, st = gatilhos(cndl, closes)
+    for n_ev, ev in enumerate(evs):
+        i = idx[n_ev]
+        if modo == "novo" and not na_janela(ev["bar_ts"], janela):
+            continue
+        cont["inversoes"] += 1
+        if not passa(ev["direction"], incl[i], adx[i], PORTAO_LIMIAR,
+                     PORTAO_ADX_MIN):
+            cont["vetadas"] += 1
+            continue
+        m = medir_sem_borda(cndl, i, ev["direction"])
+        if m is None:
+            cont["atr0"] += 1
+            continue
+        ultimo = n_ev == len(evs) - 1
+        e_inv = None if ultimo else idx[n_ev + 1]
+        dist = (ult if ultimo else e_inv) - i
+        if modo == "sandbox":                     # regra do kis_saida.run
+            if len(m["fwd_bar"]) < BORDA:
+                cont["excl_borda"] += 1
+                continue
+            hold = ev["hold"]
+            if hold > len(m["fwd_bar"]):
+                cont["excl_hold"] += 1
+                continue
+            t256 = "fim" if ultimo and i + hold == ult else \
+                ("teto" if dist > EXT_CAP else "inversao")
+        else:                                     # regra do holdout_2026
+            fim = ultimo and ult - i <= EXT_CAP
+            hold = _hold_visivel(m, min(ev["hold"], ult - i) if fim
+                                 else ev["hold"], fim, cont)
+            if hold is None:
+                continue
+            t256 = "fim" if fim else ("teto" if dist > EXT_CAP else "inversao")
+        lg = ev["direction"] == "LONG"
+        sg = 1.0 if lg else -1.0
+        en, atr = m["entry"], m["atr"]
+        e_full = ult if ultimo else e_inv
+        t_full = "fim" if ultimo else "inversao"
+        add = lambda cel, sim, **kw: out[cel].append(            # noqa: E731
+            _trade(cel, sym, cndl, i, lg, en, atr, sim, **kw))
+        add("BASE_256", simula(cndl, i, i + hold, en, atr, sg, tipo_fim=t256))
+        add("BASE", simula(cndl, i, e_full, en, atr, sg, tipo_fim=t_full))
+        for n in T1_NS:
+            add(f"T1_{n}", simula(cndl, i, e_full, en, atr, sg, tempo_n=n,
+                                  tipo_fim=t_full))
+        add("T3", simula(cndl, i, e_full, en, atr, sg, parciais=T3_PARCIAIS,
+                         tipo_fim=t_full))
+        g = gS if lg else gL
+        sim = simula(cndl, i, e_full, en, atr, sg, gat=lambda j: g[j],
+                     tipo_fim=t_full)
+        x = sim[0][-1]
+        add("T5s", sim, falso_s=x[4] == "inversao" and (
+            e_inv is None or x[0] < e_inv))
+    out["T5e"] = trades_t5e(cndl, sym, modo, cont, closes, gL, gS, st, janela)
+    return out
+
+
+def viradas_t5e(cndl: list, gL: list, gS: list, ini: int = PAR[1]) -> list:
+    """Maquina de alvo dirigida pelos toques: [(t, +1/-1)]."""
+    alvo, out = 0, []
+    for t in range(ini, len(cndl)):
+        if alvo != 1 and gL[t] is not None and cndl[t]["high"] >= gL[t]:
+            out.append((t, 1))
+            alvo = 1
+        elif alvo != -1 and gS[t] is not None and cndl[t]["low"] <= gS[t]:
+            out.append((t, -1))
+            alvo = -1
+    return out
+
+
+def trades_t5e(cndl: list, sym: str, modo: str, cont: dict, closes: list,
+               gL: list, gS: list, st: list, janela=JANELA) -> list:
+    from backtest.excursion import _wilder_atr        # tardio, como no kis_tf
+    pL, pS, ok = limiares_portao(cndl, closes)
+    fl, ult, out = viradas_t5e(cndl, gL, gS), len(cndl) - 1, []
+    for k, (t, sd) in enumerate(fl):
+        c = cndl[t]
+        if modo == "novo" and not na_janela(c["ts"], janela):
+            continue
+        if modo == "sandbox" and ult - t < BORDA:
+            cont["t5e_borda"] += 1
+            continue
+        cont["t5e_viradas"] += 1
+        lim = pL[t] if sd > 0 else pS[t]
+        if not ok[t] or lim is None:
+            cont["t5e_vetadas"] += 1
+            continue
+        g_ent = max(gL[t], lim) if sd > 0 else min(gS[t], lim)
+        if (c["high"] < g_ent) if sd > 0 else (c["low"] > g_ent):
+            cont["t5e_vetadas"] += 1
+            continue
+        en = max(g_ent, c["open"]) if sd > 0 else min(g_ent, c["open"])
+        atr = _wilder_atr(cndl[max(0, t - CTX):t])
+        if atr <= 0:
+            cont["t5e_atr0"] += 1
+            continue
+        sg, lg = float(sd), sd > 0
+        falso_e = st[t] != ("VERDE" if lg else "VERM")
+        px_stop = en - sg * STOP_K * atr
+        if (c["low"] <= px_stop) if lg else (c["high"] >= px_stop):
+            cont["t5e_stop_na_entrada"] += 1
+            sim, falso_s = ([(t, -STOP_K, px_stop, 1.0, "stop")], 0.0,
+                            STOP_K), False
+        else:
+            nxt = fl[k + 1][0] if k + 1 < len(fl) else None
+            if nxt is None:
+                sim = simula(cndl, t, ult, en, atr, sg, tipo_fim="fim")
+            else:
+                gx = gS[nxt] if lg else gL[nxt]
+                sim = simula(cndl, t, nxt, en, atr, sg,
+                             gat=lambda j, n=nxt, g=gx: g if j == n else None)
+            x = sim[0][-1]
+            falso_s = (nxt is not None and x[4] == "inversao" and
+                       st[x[0]] != ("VERM" if lg else "VERDE"))
+        out.append(_trade("T5e", sym, cndl, t, lg, en, atr, sim,
+                          falso_e=falso_e, falso_s=falso_s))
+    return out
+
+
+# ------------------------------------------------- celulas de universo ------
+def filtro_t2(base: list, amp: dict) -> tuple:
+    """T2 = BASE com amplitude_fav >= T2_LIMIAR (kis_meta.junta). (lista,
+    n_na)."""
+    feats = [{} for _ in base]
+    junta([(t["ts"], t["sym"], t["long"]) for t in base], feats, amp, {})
+    out, na = [], 0
+    for t, f in zip(base, feats):
+        a = f["amplitude_fav"]
+        if a is None:
+            na += 1
+        elif a >= T2_LIMIAR:
+            out.append(dict(t, cel="T2"))
+    return out, na
+
+
+def teto_lado(base: list, k: int, ordem: dict, cel: str) -> list:
+    """T4: pula a entrada se ja ha k posicoes abertas no mesmo lado. Ordem por
+    ts e, no mesmo ts, pela ordem de SYMBOLS_KIS_3489. Aberta = aceita antes e
+    com barra da saida final > ts da nova entrada."""
+    abertas = {True: [], False: []}
+    out = []
+    for t in sorted(base, key=lambda t: (t["ts"], ordem.get(t["sym"], 1e9),
+                                         t["sym"])):
+        lado = [x for x in abertas[t["long"]] if x > t["ts"]]
+        abertas[t["long"]] = lado
+        if len(lado) >= k:
+            continue
+        lado.append(t["execs"][-1][0])
+        out.append(dict(t, cel=cel))
+    return out
+
+
+def periodo(t: dict, modo: str):
+    if modo == "novo":
+        return "NOVO"
+    return "H1" if _dentro(t["ts"], H1) else ("H2" if _dentro(t["ts"], H2)
+                                              else None)
+
+
+# ------------------------------------------------------------ numeros -------
+def resumo(tr: list) -> dict:
+    n = len(tr)
+    r10 = [t["ret10"] for t in tr]
+    r6 = [t["ret6"] for t in tr]
+    cum = pico = dd = 0.0
+    for r in r10:
+        cum += r
+        pico, dd = max(pico, cum), max(dd, max(pico, cum) - cum)
+    tri, mes = {}, {}
+    for t in tr:
+        tri[_quarter(t["ts"])] = tri.get(_quarter(t["ts"]), 0.0) + t["ret10"]
+        mm = _iso(t["ts"])[:7]
+        mes[mm] = mes.get(mm, 0.0) + t["ret10"]
+    g = [r for r in r10 if r > 0]
+    p = [r for r in r10 if r <= 0]
+    fim = Counter(t["execs"][-1][3] for t in tr)
+    mm = max(mes, key=mes.get) if mes else None
+    lados = {}
+    for nome, lado in (("L", True), ("S", False)):
+        s = [t["ret10"] for t in tr if t["long"] is lado]
+        lados[nome] = (len(s), sum(s), sum(s) / len(s) if s else 0.0)
+    return {
+        "n": n, "tot10": sum(r10), "tot6": sum(r6),
+        "bpt10": sum(r10) / n if n else 0.0, "bpt6": sum(r6) / n if n else 0.0,
+        "acerto": 100.0 * len(g) / n if n else 0.0,
+        "ganho": mean(g) if g else 0.0, "perda": mean(p) if p else 0.0,
+        "pico": pico, "dd": dd,
+        "tri_pos": sum(1 for v in tri.values() if v > 0), "tri_tot": len(tri),
+        "melhor_mes": mm, "sem_mes": sum(r10) - (mes[mm] if mm else 0.0),
+        "sem_top": concentracao(r10)[2], "n_top": concentracao(r10)[0],
+        "saidas": {k: 100.0 * fim[k] / n if n else 0.0 for k in TIPOS},
+        "p1": sum(1 for t in tr if "parcial1" in t["tipos"]),
+        "p2": sum(1 for t in tr if "parcial2" in t["tipos"]),
+        "corte": sum(1 for t in tr if t["corte"]),
+        "teto": fim["teto"], "fim": fim["fim"], "lados": lados,
+        "falso_e": sum(t["falso_e"] for t in tr),
+        "falso_s": sum(t["falso_s"] for t in tr),
+    }
+
+
+def placebo_t2(base: list, t2: list, sementes=SEMENTES) -> list:
+    """Total @10 de vetos ao acaso: por lado, a mesma quantidade que o T2."""
+    out = []
+    for s in sementes:
+        rng, tot = random.Random(s), 0.0
+        for lado in (True, False):
+            pop = [t for t in base if t["long"] is lado]
+            n_v = len(pop) - sum(1 for t in t2 if t["long"] is lado)
+            vet = set(rng.sample(range(len(pop)), n_v))
+            tot += sum(t["ret10"] for j, t in enumerate(pop) if j not in vet)
+        out.append(tot)
+    return out
+
+
+CAMPOS = ["celula", "periodo", "bar_ts_iso", "mes", "sym", "direcao", "hold",
+          "saida", "ret6", "ret10", "mfe_atr", "mae_atr"]
+
+
+def linha_csv(t: dict, per: str) -> dict:
+    iso = _iso(t["ts"])
+    return {"celula": t["cel"], "periodo": per, "bar_ts_iso": iso,
+            "mes": iso[:7], "sym": t["sym"],
+            "direcao": "LONG" if t["long"] else "SHORT", "hold": t["hold"],
+            "saida": t["tipos"], "ret6": f"{t['ret6']:.2f}",
+            "ret10": f"{t['ret10']:.2f}", "mfe_atr": f"{t['mfe']:.3f}",
+            "mae_atr": f"{t['mae']:.3f}"}
+
+
+def para_carteira(t: dict) -> dict:
+    return {"rotulo": f"{SETUP}/{t['cel']}", "sym": t["sym"],
+            "direcao": "LONG" if t["long"] else "SHORT",
+            "ts_entrada": t["ts"], "preco_entrada": t["entry"],
+            "saidas": [(ts, px, f) for ts, px, f, _tp in t["execs"]]}
+
+
+# ------------------------------------------------------------ coleta --------
+def coleta(conn, symbols: list, tf: str, teto_ms: int, end_ms: int,
+           conferir: bool = True) -> dict:
+    """Uma leitura por simbolo (ate end_ms); sandbox = prefixo ts < teto."""
+    from backtest.candle_store import read_candles
+    from backtest.holdout_2026 import novo_cont as nc_h, trades_kis
+    tr = {m: {c: [] for c in CEL_SIMB} for m in ("sandbox", "novo")}
+    cont = {m: novo_cont() for m in ("sandbox", "novo")}
+    cam = {"sandbox": {}, "novo": {}}
+    amp, ref_novo, sem, rss = {}, {}, [], _rss_mib()
+    for sym in symbols:
+        cndl = read_candles(conn, sym, tf, start_ms=None, end_ms=end_ms - 1)
+        if not cndl:
+            sem.append(sym)
+            continue
+        sb = [c for c in cndl if c["ts"] < teto_ms]
+        for modo, cv in (("sandbox", sb), ("novo", cndl)):
+            for cel, lst in trades_simbolo(cv, sym, modo, cont[modo]).items():
+                tr[modo][cel].extend(lst)
+        if conferir:
+            for t in trades_kis(cndl, sym, nc_h()):
+                if t["setup"] == SETUP:
+                    ref_novo[(t["ts"], sym)] = t["ret6"]
+        a = series_barra(cndl)["amp"]
+        for c, up in zip(cndl, a):
+            if up is not None:
+                x = amp.setdefault(c["ts"], [0, 0])
+                x[0] += 1 if up else 0
+                x[1] += 1
+        cam["sandbox"][sym] = cart.caminho(sb, _ms(H1[0]))
+        cam["novo"][sym] = cart.caminho(cndl, JANELA[0])
+        del cndl, sb, a
+        rss = _rss_mib()
+        if rss > RSS_CEILING_MIB:
+            raise MemoryError(f"RSS {rss:.0f} MiB > teto {RSS_CEILING_MIB:.0f} "
+                              f"apos {sym}; PARANDO.")
+    return {"tr": tr, "cont": cont, "cam": cam, "amp": amp,
+            "ref_novo": ref_novo, "sem": sem, "rss": rss}
+
+
+def completa(tr: dict, amp: dict, ordem: dict) -> dict:
+    """Celulas de universo (T2, T4) sobre a BASE (sem teto) de cada modo."""
+    info = {}
+    for modo, cels in tr.items():
+        base = cels["BASE"]
+        cels["T2"], info[modo] = filtro_t2(base, amp)
+        for k in T4_KS:
+            cels[f"T4_{k}"] = teto_lado(base, k, ordem, f"T4_{k}")
+    return info
+
+
+def compara(meus: dict, ref: dict) -> tuple:
+    """(iguais, max |dif|, so_ref, so_meu) entre {chave: ret6}."""
+    comuns = set(meus) & set(ref)
+    dif = max((abs(meus[k] - ref[k]) for k in comuns), default=0.0)
+    return (sum(1 for k in comuns if meus[k] == ref[k]), dif,
+            len(set(ref) - set(meus)), len(set(meus) - set(ref)))
+
+
+# ------------------------------------------------------------ log -----------
+def _fmt_cel(cel: str, r: dict) -> str:
+    sd = " ".join(f"{k[:4]} {v:.0f}" for k, v in r["saidas"].items() if v)
+    return (f"  {cel:>8} | {r['n']:>5} | {r['tot10']:>+9.0f} {r['bpt10']:>+7.1f}"
+            f" | {r['tot6']:>+9.0f} {r['bpt6']:>+7.1f} | {r['acerto']:>5.1f} | "
+            f"{r['ganho']:>+7.0f} {r['perda']:>+7.0f} | {r['pico']:>+8.0f} "
+            f"{r['dd']:>7.0f} | {r['tri_pos']:>2}/{r['tri_tot']:<2} | "
+            f"{r['sem_mes']:>+9.0f} ({r['melhor_mes']}) | {r['sem_top']:>+9.0f}"
+            f" | L {r['lados']['L'][0]:>4} {r['lados']['L'][1]:>+8.0f} "
+            f"S {r['lados']['S'][0]:>4} {r['lados']['S'][1]:>+8.0f} | "
+            f"teto256 {r['corte'] if cel != 'BASE_256' else r['teto']:>3} | "
+            f"{sd}")
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="KIS 34/89 E1-3: refinamentos "
+                                 "e carteira (sandbox)")
+    ap.add_argument("--tf", default="4h")
+    ap.add_argument("--end", default=END_ISO,
+                    help='exclusivo, UTC; default "%(default)s"')
+    ap.add_argument("--store", default=str(ROOT / "backtest" / "candles_v9.db"))
+    ap.add_argument("--symbols", nargs="+", default=None,
+                    help="default: SYMBOLS_KIS_3489 (65)")
+    ap.add_argument("--out", default=None, help="CSV; log ao lado (.log)")
+    ap.add_argument("--carteira-celulas", nargs="+", default=list(CELULAS))
+    ap.add_argument("--sem-conferencia", action="store_true")
+    ap.add_argument("--sem-guarda-relogio", action="store_true")
+    args = ap.parse_args(argv)
+    if args.tf != "4h":
+        raise SystemExit("[kis_refino] so 4h")
+    ruins = set(args.carteira_celulas) - set(CELULAS)
+    if ruins:
+        raise SystemExit(f"[kis_refino] celulas desconhecidas: {sorted(ruins)}")
+    teto_ms, end_ms = _ms(TETO_ISO), _ms(args.end)
+    if end_ms <= JANELA[0]:
+        raise SystemExit(f"[kis_refino] --end {args.end} nao passa do inicio "
+                         "do periodo novo. ABORTADO.")
+    if not args.sem_guarda_relogio:
+        _guarda_relogio()
+    from v10.registro import SYMBOLS_KIS_3489
+    symbols = args.symbols or list(SYMBOLS_KIS_3489)
+    ordem = {s: k for k, s in enumerate(SYMBOLS_KIS_3489)}
+    stamp = f"{datetime.now(timezone.utc):%Y%m%d_%H%M}"
+    out = Path(args.out) if args.out else ROOT / "logs" / f"kis_refino_{stamp}.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    log = _Log(out.with_suffix(".log"))
+    t0 = time.monotonic()
+    log(f"[kis_refino] {SETUP} (KIS {PAR[0]}/{PAR[1]}, conf 2, portao "
+        f"{PORTAO_LIMIAR}/ADX {PORTAO_ADX_MIN}, stop {STOP_K:g} ATR14) | tf "
+        f"{args.tf} | universo {len(symbols)} | sandbox H1 {H1[0]}..{H1[1]}, "
+        f"H2 {H2[0]}..{H2[1]} (velas < {TETO_ISO}) | NOVO entradas "
+        f"{_iso(JANELA[0])}..{_iso(JANELA[1])} (velas < {args.end}) | custo "
+        f"10 e 6 bps/trade | parametros: T1 N={T1_NS} progresso "
+        f"{T1_PROGRESSO:g} ATR; T2 {T2_LIMIAR:g}%; T3 {T3_PARCIAIS}; T4 "
+        f"K={T4_KS}; TETO_HOLD {TETO_HOLD} so na BASE_256")
+    conn = conecta_com_teto(args.store, end_ms)
+    try:
+        mx = conn.execute("SELECT MAX(ts) FROM candles").fetchone()[0]
+        if mx is not None and mx >= end_ms:
+            raise SystemExit("[kis_refino] view deixou passar candle >= --end")
+        A = coleta(conn, symbols, args.tf, teto_ms, end_ms,
+                   conferir=not args.sem_conferencia)
+    finally:
+        conn.close()
+    tr = A["tr"]
+    t2info = completa(tr, A["amp"], ordem)
+    log(f"  maior ts visivel {_iso(mx) if mx else '-'} | sem candle: "
+        f"{' '.join(A['sem']) or 'nenhum'}")
+    for modo, c in A["cont"].items():
+        log(f"  {modo}: inversoes {c['inversoes']} | vetadas {c['vetadas']} | "
+            f"atr0 {c['atr0']} | excl_borda {c['excl_borda']} | excl_hold "
+            f"{c['excl_hold']} | T5e: viradas {c['t5e_viradas']} vetadas "
+            f"{c['t5e_vetadas']} borda {c['t5e_borda']} atr0 {c['t5e_atr0']} "
+            f"stop na barra de entrada {c['t5e_stop_na_entrada']} | T2 "
+            f"amplitude NA {t2info[modo]}")
+
+    # ---- conferencias ---------------------------------------------------------
+    log("\n===== CONFERENCIAS =====")
+    if args.sem_conferencia:
+        log("  pulada (--sem-conferencia)")
+    else:
+        from backtest import kis_saida as ks
+        ct = conecta_com_teto(args.store, teto_ms)
+        try:
+            ref = ks.run(ct, [s for s in symbols if s not in A["sem"]],
+                         args.tf, None, teto_ms - 1,
+                         pares=(PAR,))["por_par"][PAR]
+        finally:
+            ct.close()
+        k3 = ks.NOMES.index("E1-3")
+        r = compara({(t["ts"], t["sym"]): t["ret6"]
+                     for t in tr["sandbox"]["BASE_256"]},
+                    {(t[0], t[1]): t[3][k3] for t in ref})
+        log(f"  sandbox BASE_256 x kis_saida E1-3: iguais {r[0]} de "
+            f"{len(ref)} | max|dif| {r[1]:.2e} bps | so no kis_saida {r[2]} | "
+            f"so aqui {r[3]}")
+        r = compara({(t["ts"], t["sym"]): t["ret6"]
+                     for t in tr["novo"]["BASE_256"]}, A["ref_novo"])
+        log(f"  NOVO BASE_256 x holdout_2026 KIS_E1-3: iguais {r[0]} de "
+            f"{len(A['ref_novo'])} | max|dif| {r[1]:.2e} bps | so no holdout "
+            f"{r[2]} | so aqui {r[3]}")
+        sem_teto = {(t["ts"], t["sym"]): t["ret6"] for t in tr["novo"]["BASE"]}
+        dif = [k for k, v in A["ref_novo"].items() if sem_teto.get(k) != v]
+        log(f"  NOVO BASE (sem teto) x holdout: diferem {len(dif)} trades "
+            "(esperado: so os que o teto de 256 cortou ou que ficaram abertos "
+            "alem dele)")
+
+    # ---- por periodo ------------------------------------------------------------
+    por = {(cel, p): [] for cel in CELULAS for p in PERIODOS}
+    for modo, cels in tr.items():
+        for cel, lst in cels.items():
+            for t in lst:
+                p = periodo(t, modo)
+                if p:
+                    por[(cel, p)].append(t)
+    for v in por.values():
+        v.sort(key=lambda t: (t["ts"], ordem.get(t["sym"], 1e9), t["sym"]))
+    res = {k: resumo(v) for k, v in por.items()}
+    cab = (f"  {'celula':>8} | {'n':>5} | {'tot@10':>9} {'bpt':>7} | "
+           f"{'tot@6':>9} {'bpt':>7} | {'acer%':>5} | {'ganho':>7} {'perda':>7}"
+           f" | {'pico':>8} {'dd':>7} | tri   | sem melhor mes      | "
+           f"{'sem 2%':>9} | LONG n tot@10 SHORT n tot@10 | teto | saidas %")
+    for p in PERIODOS:
+        log(f"\n===== {p} — por celula (bps somados por trade; curva @10 na "
+            "ordem de entrada) =====")
+        log(cab)
+        for cel in CELULAS:
+            log(_fmt_cel(cel, res[(cel, p)]))
+        x = res[("T3", p)]
+        log(f"  T3: trades com parcial1 {x['p1']} | com parcial2 {x['p2']}")
+    log("\n===== DIFERENCA CONTRA A BASE (sem teto), @10: total | bps/trade "
+        "=====")
+    for p in PERIODOS:
+        b = res[("BASE", p)]
+        for cel in CELULAS:
+            if cel == "BASE":
+                continue
+            r = res[(cel, p)]
+            ls = []
+            for lado in ("L", "S"):
+                nb, tb, pb = b["lados"][lado]
+                nr, trr, pr = r["lados"][lado]
+                ls.append(f"{lado} {trr - tb:>+8.0f} | {pr - pb:>+7.1f}")
+            log(f"  {p:>4} {cel:>8}: todos {r['tot10'] - b['tot10']:>+8.0f} | "
+                f"{r['bpt10'] - b['bpt10']:>+7.1f} || " + " || ".join(ls))
+    log("\n===== T2 — placebo (20 sementes; veta ao acaso a mesma quantidade "
+        "por lado; so informativo) =====")
+    for p in PERIODOS:
+        b, t2 = por[("BASE", p)], por[("T2", p)]
+        pl = placebo_t2(b, t2)
+        tot = res[("T2", p)]["tot10"]
+        log(f"  {p}: T2 @10 {tot:+.0f} (n {len(t2)} de {len(b)}) | placebo "
+            f"media {mean(pl):+.0f} min {min(pl):+.0f} max {max(pl):+.0f} | "
+            f"placebos abaixo do T2: {sum(1 for x in pl if x < tot)}/{len(pl)}")
+    log("\n===== T5 — toques falsos (o toque aconteceu, o fechamento nao "
+        "confirmaria) =====")
+    for p in PERIODOS:
+        for cel in ("T5s", "T5e"):
+            for nome, lado in (("LONG", True), ("SHORT", False)):
+                sub = [t for t in por[(cel, p)] if t["long"] is lado]
+                fe = sum(t["falso_e"] for t in sub)
+                fs = sum(t["falso_s"] for t in sub)
+                log(f"  {p:>4} {cel} {nome:>5}: trades {len(sub):>5} | "
+                    f"entradas falsas {fe:>4} | saidas falsas {fs:>4}")
+
+    with out.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=CAMPOS)
+        w.writeheader()
+        n_csv = 0
+        for cel in CELULAS:
+            for p in PERIODOS:
+                for t in por[(cel, p)]:
+                    w.writerow(linha_csv(t, p))
+                    n_csv += 1
+    log(f"\n  CSV de trades: {out} ({n_csv} linhas)")
+
+    # ---- carteira (uma celula por vez, uma banca por celula e periodo) --------
+    log(f"\n===== CARTEIRA — banca {cart.BANCA_INICIAL:,.0f} USD por celula e "
+        f"periodo, {cart.NOCIONAL:.0f} USD de nocional por trade, "
+        f"{cart.CUSTO_BPS:g} bps por perna, sem funding =====")
+    for cel in args.carteira_celulas:
+        for p in PERIODOS:
+            cam = A["cam"]["novo" if p == "NOVO" else "sandbox"]
+            rc = cart.roda([para_carteira(t) for t in por[(cel, p)]], cam)
+            arq = out.parent / f"carteira_{SETUP}_{cel}_{p}_{stamp}.csv"
+            cart.escreve_diario(arq, rc["diario"])
+            log(f"  {cel} {p}: {arq}")
+            for s in cart.linhas_log(rc):
+                log(s)
+            del rc
+    log(f"\n  RSS de pico {max(A['rss'], _rss_mib()):.0f} MiB (teto "
+        f"{RSS_CEILING_MIB:.0f}) | {time.monotonic() - t0:.0f} s")
+    log("caveat: so medicao, sem veredito. Custo por trade @10 = @6 - 4 bps; "
+        "T3 paga o mesmo custo por trade (pernas proporcionais). BASE_256 = "
+        "conferencia (teto de 256 barras); demais celulas sem teto, trade "
+        "aberto no fim do dado marcado no ultimo fechamento. Sandbox com "
+        "exclusao de borda de 48 barras (kis_saida); NOVO sem. Stop e alvo na "
+        "mesma barra: stop primeiro. T5: limiares de preco com valores de t-1; "
+        "T5e usa ATR14/ADX13 de t-1 no portao e no stop (aproximacao) e checa "
+        "o stop na propria barra de entrada de forma conservadora. Curva e "
+        "rebaixamento da tabela sobre trades ordenados por entrada; carteira "
+        "marca a mercado a cada 4h, sem funding, nocional fixo de 300 USD, "
+        "uma banca isolada por celula e periodo; movimento adverso da "
+        "carteira nao ve a barra de entrada (entrada dentro da barra no T5e "
+        "fica subestimada).")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
