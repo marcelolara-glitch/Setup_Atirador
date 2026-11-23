@@ -36,6 +36,22 @@
 # barra inteira; senao (stop/ordem dentro da barra) conta so ate o preco de
 # saida. A barra de entrada nao conta (entrada no fechamento; para entrada
 # dentro da barra isso subestima — caveat do chamador).
+#
+# AJUSTES DE 23/11/2026 (briefing da grade KIS 34/89; valem daqui em diante):
+# (1) rebaixamento em DUAS medidas separadas: o maior em % (com o pico e o vale
+#     DESSA medida) e o maior em USD (idem) — antes o % era o do momento do
+#     maior em USD e escondia o pior %; mais a maior sequencia de dias (CSV
+#     diario) abaixo do pico. (2) um unico CSV diario por rodada
+#     (`DiarioUnico`), com `celula, periodo` na frente; as bancas continuam
+#     isoladas, so o arquivo e um. (3) liquidacao com margem isolada (so
+#     medida, `liquidacao`): margem = nocional / L; liquida quando o movimento
+#     contra, dentro da barra, atinge 1/L - MMR antes da saida final (mesmas
+#     barras do movimento adverso); parcial com ts ANTERIOR a barra da
+#     liquidacao ja saiu da conta (na mesma barra: liquidacao primeiro, como
+#     stop antes de alvo). Trade liquidado: perde a margem da parte aberta,
+#     mais o custo da entrada e o da perna liquidada (5 bps sobre o nocional
+#     no preco de liquidacao), mais o resultado das parciais ja executadas.
+#     Nocional fixo -> efeito no resultado final = soma por trade, exata.
 from __future__ import annotations
 
 import csv
@@ -50,6 +66,7 @@ NOCIONAL = 300.0
 CUSTO_BPS = 5.0
 BAR_MS = 14_400_000
 HORA_FECHO_DIA = 20             # barra das 20:00 UTC fecha o dia
+MMR = 0.01                      # manutencao (fracao); o Marcelo confirma a OKX
 CAMPOS_DIA = ["data", "banca_usd", "realizado_dia_usd", "nao_realizado_usd",
               "rebaixamento_usd", "rebaixamento_pct", "n_abertas", "n_long",
               "n_short", "nocional_long_usd", "nocional_short_usd",
@@ -207,15 +224,33 @@ def diario_de(marcas: list, banca: float) -> list:
     return out
 
 
-def _dd(serie: list) -> tuple:
-    """(dd_usd, dd_pct, ts_pico, ts_vale) da serie [(ts, banca)]."""
-    pico, t_pico, best = None, None, (0.0, 0.0, None, None)
+def _dd(serie: list) -> dict:
+    """Maior rebaixamento da serie [(ts, banca)] em DUAS medidas separadas:
+    {usd, usd_pico, usd_vale, pct, pct_pico, pct_vale}. Cada medida tem o seu
+    proprio pico e vale (o maior em % pode cair em outra data que o maior em
+    USD)."""
+    pico, t_pico = None, None
+    out = {"usd": 0.0, "usd_pico": None, "usd_vale": None,
+           "pct": 0.0, "pct_pico": None, "pct_vale": None}
     for ts, b in serie:
         if pico is None or b > pico:
             pico, t_pico = b, ts
-        if pico - b > best[0]:
-            best = (pico - b, 100.0 * (pico - b) / pico, t_pico, ts)
-    return best
+        if pico - b > out["usd"]:
+            out.update(usd=pico - b, usd_pico=t_pico, usd_vale=ts)
+        pct = 100.0 * (pico - b) / pico if pico else 0.0
+        if pct > out["pct"]:
+            out.update(pct=pct, pct_pico=t_pico, pct_vale=ts)
+    return out
+
+
+def dias_abaixo_pico(diario: list) -> int:
+    """Maior sequencia de dias seguidos do CSV diario com banca abaixo do pico
+    dos fechamentos diarios."""
+    mx = cur = 0
+    for d in diario:
+        cur = cur + 1 if d["rebaixamento_usd"] > 1e-9 else 0
+        mx = max(mx, cur)
+    return mx
 
 
 def metricas(marcas: list, diario: list, banca: float) -> dict:
@@ -231,11 +266,10 @@ def metricas(marcas: list, diario: list, banca: float) -> dict:
 
     def mx_md(xs):
         return (max(xs), median(xs)) if xs else (0, 0)
-    return {
+    out = {
         "banca_final": fim, "retorno_pct": 100.0 * (fim - banca) / banca,
-        "n_marcas": len(marcas), "dd4_usd": dd4[0], "dd4_pct": dd4[1],
-        "dd4_pico": dd4[2], "dd4_vale": dd4[3], "ddd_usd": ddd[0],
-        "ddd_pct": ddd[1], "ddd_pico": ddd[2], "ddd_vale": ddd[3],
+        "n_marcas": len(marcas),
+        "dias_abaixo_pico_max": dias_abaixo_pico(diario),
         "pior_dia": pior[0], "pior_dia_usd": pior[1],
         "pos_long": mx_md([m[4] for m in marcas]),
         "pos_short": mx_md([m[5] for m in marcas]),
@@ -244,16 +278,82 @@ def metricas(marcas: list, diario: list, banca: float) -> dict:
         "x_short": mx_md([m[7] / m[1] for m in marcas if m[1]]),
         "x_total": mx_md([(m[6] + m[7]) / m[1] for m in marcas if m[1]]),
     }
+    for pre, d in (("dd4", dd4), ("ddd", ddd)):
+        out.update({f"{pre}_{k}": v for k, v in d.items()})
+    return out
 
 
-def escreve_diario(path: Path, diario: list) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=CAMPOS_DIA)
-        w.writeheader()
+class DiarioUnico:
+    """UM CSV diario por rodada: `celula, periodo` + CAMPOS_DIA. Cada `anexa`
+    escreve o diario de UMA banca ja calculada (isolada); nada e somado entre
+    bancas. Uso: `with DiarioUnico(path) as d: d.anexa(cel, per, diario)`."""
+    CAMPOS = ["celula", "periodo"] + CAMPOS_DIA
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.fh = self.path.open("w", newline="")
+        self.w = csv.DictWriter(self.fh, fieldnames=self.CAMPOS)
+        self.w.writeheader()
+        self.n = 0
+
+    def anexa(self, celula: str, periodo: str, diario: list) -> None:
         for d in diario:
-            w.writerow({k: (f"{v:.4f}" if isinstance(v, float) else v)
-                        for k, v in d.items()})
+            row = {k: (f"{v:.4f}" if isinstance(v, float) else v)
+                   for k, v in d.items()}
+            self.w.writerow(dict(row, celula=celula, periodo=periodo))
+            self.n += 1
+        self.fh.flush()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_a):
+        self.fh.close()
+
+
+def resultado_usd(t: dict, nocional: float = NOCIONAL,
+                  custo_bps: float = CUSTO_BPS) -> float:
+    """Resultado realizado do trade em USD, com custos (mesma conta do
+    `roda`)."""
+    custo, e = custo_bps / 1e4, t["preco_entrada"]
+    sg, q = (1.0 if t["direcao"] == "LONG" else -1.0), nocional / e
+    return -nocional * custo + sum(q * f * (sg * (p - e) - p * custo)
+                                   for _ts, p, f in t["saidas"])
+
+
+def liquidacao(t: dict, cam: tuple, alav: float, mmr: float = MMR,
+               nocional: float = NOCIONAL,
+               custo_bps: float = CUSTO_BPS) -> tuple:
+    """(liquidado, resultado_real_usd, resultado_com_liquidacao_usd) com margem
+    isolada e alavancagem `alav` (regra no cabecalho). Sem liquidacao os dois
+    resultados sao iguais."""
+    lim = 1.0 / alav - mmr
+    if lim <= 0:
+        raise ValueError(f"alavancagem {alav} com MMR {mmr}: limiar <= 0")
+    real = resultado_usd(t, nocional, custo_bps)
+    ts, hi, lo, cl = cam
+    sg = 1.0 if t["direcao"] == "LONG" else -1.0
+    e = t["preco_entrada"]
+    fim_ts, fim_px = sorted(t["saidas"], key=lambda x: x[0])[-1][:2]
+    liq_ts = None
+    for k in range(bisect_right(ts, t["ts_entrada"]), bisect_right(ts, fim_ts)):
+        ext = lo[k] if sg > 0 else hi[k]
+        if ts[k] == fim_ts and fim_px != cl[k]:
+            ext = fim_px
+        if sg * (e - ext) / e >= lim:
+            liq_ts = ts[k]
+            break
+    if liq_ts is None:
+        return False, real, real
+    custo, q = custo_bps / 1e4, nocional / e
+    feitas = [(p, f) for x_ts, p, f in t["saidas"] if x_ts < liq_ts]
+    resto = 1.0 - sum(f for _p, f in feitas)
+    px_liq = e * (1.0 - sg * lim)
+    liq = (-nocional * custo
+           + sum(q * f * (sg * (p - e) - p * custo) for p, f in feitas)
+           - nocional / alav * resto - q * resto * px_liq * custo)
+    return True, real, liq
 
 
 def linhas_log(res: dict) -> list:
@@ -262,16 +362,19 @@ def linhas_log(res: dict) -> list:
     if not m.get("n_marcas"):
         return ["    sem trades"]
     f = lambda ts: _iso(ts) if isinstance(ts, int) else (ts or "-")  # noqa
+
+    def dd(pre, nome):
+        return (f"    rebaixamento ({nome}): maior em % {m[pre + '_pct']:.2f}% "
+                f"pico {f(m[pre + '_pct_pico'])} vale {f(m[pre + '_pct_vale'])}"
+                f" | maior em USD {m[pre + '_usd']:,.2f} pico "
+                f"{f(m[pre + '_usd_pico'])} vale {f(m[pre + '_usd_vale'])}")
     return [
         f"    banca final {m['banca_final']:,.2f} USD | retorno "
         f"{m['retorno_pct']:+.2f}% | marcas de 4h {m['n_marcas']}",
-        f"    rebaixamento (marcas 4h): {m['dd4_usd']:,.2f} USD "
-        f"({m['dd4_pct']:.2f}%) pico {f(m['dd4_pico'])} vale "
-        f"{f(m['dd4_vale'])}",
-        f"    rebaixamento (fechamentos diarios): {m['ddd_usd']:,.2f} USD "
-        f"({m['ddd_pct']:.2f}%) pico {f(m['ddd_pico'])} vale "
-        f"{f(m['ddd_vale'])} | pior dia {f(m['pior_dia'])} "
-        f"{m['pior_dia_usd']:+,.2f} USD",
+        dd("dd4", "marcas 4h"),
+        dd("ddd", "fechamentos diarios") +
+        f" | dias seguidos abaixo do pico {m['dias_abaixo_pico_max']} | pior "
+        f"dia {f(m['pior_dia'])} {m['pior_dia_usd']:+,.2f} USD",
         f"    exposicao (max / mediana): posicoes LONG {m['pos_long'][0]} / "
         f"{m['pos_long'][1]:.0f}, SHORT {m['pos_short'][0]} / "
         f"{m['pos_short'][1]:.0f}, total {m['pos_total'][0]} / "

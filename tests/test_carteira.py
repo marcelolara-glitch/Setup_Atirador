@@ -1,5 +1,7 @@
 # tests/test_carteira.py — carteira de referencia (backtest/carteira.py).
-# Briefing v3 de 22/11/2026, secao 5. Numeros esperados calculados a mao.
+# Briefing v3 de 22/11/2026, secao 5, e ajustes da grade de 23/11/2026
+# (rebaixamento em duas medidas, liquidacao, CSV diario unico). Numeros
+# esperados calculados a mao.
 import pytest
 
 from backtest import carteira as cart
@@ -68,7 +70,8 @@ def test_banca_diaria_rebaixamento_exposicao_a_mao():
     m = r["metricas"]
     assert m["banca_final"] == pytest.approx(fim)
     assert m["dd4_usd"] == pytest.approx(pico - fim)
-    assert m["dd4_pico"] == D1 + 12 * H and m["dd4_vale"] == D2 + 8 * H
+    assert m["dd4_usd_pico"] == D1 + 12 * H and m["dd4_usd_vale"] == D2 + 8 * H
+    assert m["dd4_pct"] == pytest.approx(100 * (pico - fim) / pico)
     assert m["ddd_usd"] == pytest.approx(pico - fim)
     assert m["pos_total"][0] == 2 and m["pos_long"][0] == 1
     assert m["x_total"][0] == pytest.approx(600.0 / 9_999.70)
@@ -129,3 +132,91 @@ def test_fracoes_que_nao_somam_um_sao_erro():
     tr[1]["saidas"] = [(D1, 45.0, 0.5)]
     with pytest.raises(ValueError):
         cart.roda(tr, _caminhos())
+
+
+# ---- ajustes de 23/11/2026 --------------------------------------------------
+def test_maior_rebaixamento_em_pct_e_em_usd_em_datas_diferentes():
+    # 10000 -> 8000 (-20%, 2000 USD) -> 20000 -> 17500 (-12,5%, 2500 USD)
+    serie = [(1, 10_000.0), (2, 8_000.0), (3, 20_000.0), (4, 17_500.0)]
+    d = cart._dd(serie)
+    assert d["pct"] == pytest.approx(20.0)
+    assert (d["pct_pico"], d["pct_vale"]) == (1, 2)
+    assert d["usd"] == pytest.approx(2_500.0)
+    assert (d["usd_pico"], d["usd_vale"]) == (3, 4)
+
+
+def test_dias_seguidos_abaixo_do_pico():
+    di = [{"rebaixamento_usd": x} for x in (0, 5, 3, 0, 1, 2, 4, 0)]
+    assert cart.dias_abaixo_pico(di) == 3
+
+
+def _liq_trade(saidas, direcao="LONG"):
+    return {"rotulo": "S/X", "sym": "A", "direcao": direcao,
+            "ts_entrada": D0, "preco_entrada": 100.0, "saidas": saidas}
+
+
+def _liq_cam():
+    # entrada no close de D0 (100); barra 1 vai a 112 (high); barra 2 desce a
+    # 88 (low: -12%); stop executado na barra 3 em 85
+    v = [{"ts": D0, "high": 100.0, "low": 100.0, "close": 100.0},
+         {"ts": D0 + 4 * H, "high": 112.0, "low": 99.0, "close": 106.0},
+         {"ts": D0 + 8 * H, "high": 100.0, "low": 88.0, "close": 90.0},
+         {"ts": D0 + 12 * H, "high": 90.0, "low": 84.0, "close": 84.0}]
+    return cart.caminho(v)
+
+
+def test_liquidacao_l10_perde_a_margem_l3_nao_liquida():
+    t = _liq_trade([(D0 + 12 * H, 85.0, 1.0)])
+    cam = _liq_cam()
+    real = -0.15 + 3 * (-15.0 - 85.0 * 5e-4)
+    liq, r, x = cart.liquidacao(t, cam, 10)       # limiar 1/10 - 1% = 9%
+    assert liq and r == pytest.approx(real)
+    assert x == pytest.approx(-0.15 - 30.0 - 3 * 91.0 * 5e-4)   # 30 + custos
+    liq, r, x = cart.liquidacao(t, cam, 3)        # limiar 32,3%: nao chega
+    assert not liq and x == r == pytest.approx(real)
+
+
+def test_parcial_antes_da_liquidacao_reduz_a_perda():
+    cam = _liq_cam()
+    t = _liq_trade([(D0 + 4 * H, 110.0, 0.5), (D0 + 12 * H, 85.0, 0.5)])
+    liq, _r, x = cart.liquidacao(t, cam, 10)
+    parcial = 3 * 0.5 * (10.0 - 110.0 * 5e-4)
+    assert liq
+    assert x == pytest.approx(-0.15 + parcial - 15.0 - 3 * 0.5 * 91 * 5e-4)
+    sem, = [cart.liquidacao(_liq_trade([(D0 + 12 * H, 85.0, 1.0)]), cam,
+                            10)[2]]
+    assert x > sem
+    # parcial na MESMA barra da liquidacao nao conta (liquidacao primeiro)
+    t2 = _liq_trade([(D0 + 8 * H, 101.0, 0.5), (D0 + 12 * H, 85.0, 0.5)])
+    assert cart.liquidacao(t2, cam, 10)[2] == pytest.approx(sem)
+
+
+def test_liquidacao_short_e_saida_antes_do_toque():
+    cam = _liq_cam()
+    # SHORT: high 112 na barra 1 = +12% contra -> liquida com L=10
+    t = _liq_trade([(D0 + 12 * H, 85.0, 1.0)], "SHORT")
+    assert cart.liquidacao(t, cam, 10)[0]
+    # LONG que sai dentro da barra 2 em 95 (antes da minima): nao liquida
+    t = _liq_trade([(D0 + 8 * H, 95.0, 1.0)])
+    assert not cart.liquidacao(t, cam, 10)[0]
+
+
+def test_duas_celulas_no_mesmo_csv_diario_nao_se_tocam(tmp_path):
+    import csv
+    cam = _caminhos()
+    a = cart.roda(_trades("S/X")[:1], cam)
+    b = cart.roda([dict(t, rotulo="S/Y") for t in _trades()[1:]], cam)
+    a_so = cart.roda(_trades("S/X")[:1], cam)
+    arq = tmp_path / "carteira_S_20261123_0000.csv"
+    with cart.DiarioUnico(arq) as d:
+        d.anexa("X", "H1", a["diario"])
+        d.anexa("Y", "H1", b["diario"])
+    rows = list(csv.DictReader(arq.open()))
+    assert list(rows[0])[:2] == ["celula", "periodo"]
+    xs = [r for r in rows if r["celula"] == "X"]
+    ys = [r for r in rows if r["celula"] == "Y"]
+    assert len(xs) == len(a_so["diario"]) and len(ys) == len(b["diario"])
+    for r, dd in zip(xs, a_so["diario"]):
+        assert float(r["banca_usd"]) == pytest.approx(dd["banca_usd"], abs=1e-4)
+    for r, dd in zip(ys, b["diario"]):
+        assert float(r["banca_usd"]) == pytest.approx(dd["banca_usd"], abs=1e-4)

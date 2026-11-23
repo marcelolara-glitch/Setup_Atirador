@@ -234,20 +234,19 @@ CEL_SIMB = ("BASE_256", "BASE") + tuple(f"T1_{n}" for n in T1_NS) + \
     ("T3", "T5s", "T5e")
 
 
-def trades_simbolo(cndl: list, sym: str, modo: str, cont: dict,
-                   janela=JANELA) -> dict:
-    """Trades de um simbolo nas celulas que dependem so dele. modo 'sandbox'
-    (borda 48, sem janela) ou 'novo' (janela de entrada, sem borda)."""
-    out = {c: [] for c in CEL_SIMB}
-    if not cndl:
-        return out
-    closes = [c["close"] for c in cndl]
-    incl, adx = inclinacoes(cndl, closes), _adx(cndl)
+def eventos(cndl: list, modo: str, cont: dict, janela=JANELA,
+            incl=None, adx=None):
+    """Entradas aceitas pelo portao, com o fim de cada trade, nas regras do
+    kis_saida.run (sandbox: borda 48) e do holdout_2026 (novo: janela, sem
+    borda). Gera dicts {i, lg, sg, en, atr, e_inv, e_full, t_full, hold,
+    t256}. Fonte unica das entradas do kis_refino e do kis_grade."""
+    if incl is None:
+        closes = [c["close"] for c in cndl]
+        incl, adx = inclinacoes(cndl, closes), _adx(cndl)
     pos = {c["ts"]: i for i, c in enumerate(cndl)}
     evs = entradas(cndl, PAR[0], PAR[1])
     idx = [pos[ev["bar_ts"]] for ev in evs]
     ult = len(cndl) - 1
-    gL, gS, st = gatilhos(cndl, closes)
     for n_ev, ev in enumerate(evs):
         i = idx[n_ev]
         if modo == "novo" and not na_janela(ev["bar_ts"], janela):
@@ -282,13 +281,30 @@ def trades_simbolo(cndl: list, sym: str, modo: str, cont: dict,
                 continue
             t256 = "fim" if fim else ("teto" if dist > EXT_CAP else "inversao")
         lg = ev["direction"] == "LONG"
-        sg = 1.0 if lg else -1.0
-        en, atr = m["entry"], m["atr"]
-        e_full = ult if ultimo else e_inv
-        t_full = "fim" if ultimo else "inversao"
+        yield {"i": i, "lg": lg, "sg": 1.0 if lg else -1.0,
+               "en": m["entry"], "atr": m["atr"], "e_inv": e_inv,
+               "e_full": ult if ultimo else e_inv,
+               "t_full": "fim" if ultimo else "inversao",
+               "hold": hold, "t256": t256}
+
+
+def trades_simbolo(cndl: list, sym: str, modo: str, cont: dict,
+                   janela=JANELA) -> dict:
+    """Trades de um simbolo nas celulas que dependem so dele. modo 'sandbox'
+    (borda 48, sem janela) ou 'novo' (janela de entrada, sem borda)."""
+    out = {c: [] for c in CEL_SIMB}
+    if not cndl:
+        return out
+    closes = [c["close"] for c in cndl]
+    incl, adx = inclinacoes(cndl, closes), _adx(cndl)
+    gL, gS, st = gatilhos(cndl, closes)
+    for ev in eventos(cndl, modo, cont, janela, incl, adx):
+        i, lg, sg, en, atr = ev["i"], ev["lg"], ev["sg"], ev["en"], ev["atr"]
+        e_inv, e_full, t_full = ev["e_inv"], ev["e_full"], ev["t_full"]
         add = lambda cel, sim, **kw: out[cel].append(            # noqa: E731
             _trade(cel, sym, cndl, i, lg, en, atr, sim, **kw))
-        add("BASE_256", simula(cndl, i, i + hold, en, atr, sg, tipo_fim=t256))
+        add("BASE_256", simula(cndl, i, i + ev["hold"], en, atr, sg,
+                               tipo_fim=ev["t256"]))
         add("BASE", simula(cndl, i, e_full, en, atr, sg, tipo_fim=t_full))
         for n in T1_NS:
             add(f"T1_{n}", simula(cndl, i, e_full, en, atr, sg, tempo_n=n,
@@ -722,16 +738,18 @@ def main(argv=None) -> int:
     log(f"\n===== CARTEIRA — banca {cart.BANCA_INICIAL:,.0f} USD por celula e "
         f"periodo, {cart.NOCIONAL:.0f} USD de nocional por trade, "
         f"{cart.CUSTO_BPS:g} bps por perna, sem funding =====")
-    for cel in args.carteira_celulas:
-        for p in PERIODOS:
-            cam = A["cam"]["novo" if p == "NOVO" else "sandbox"]
-            rc = cart.roda([para_carteira(t) for t in por[(cel, p)]], cam)
-            arq = out.parent / f"carteira_{SETUP}_{cel}_{p}_{stamp}.csv"
-            cart.escreve_diario(arq, rc["diario"])
-            log(f"  {cel} {p}: {arq}")
-            for s in cart.linhas_log(rc):
-                log(s)
-            del rc
+    arq = out.parent / f"carteira_{SETUP}_{stamp}.csv"
+    with cart.DiarioUnico(arq) as dia:
+        for cel in args.carteira_celulas:
+            for p in PERIODOS:
+                cam = A["cam"]["novo" if p == "NOVO" else "sandbox"]
+                rc = cart.roda([para_carteira(t) for t in por[(cel, p)]], cam)
+                dia.anexa(cel, p, rc["diario"])
+                log(f"  {cel} {p}:")
+                for s in cart.linhas_log(rc):
+                    log(s)
+                del rc
+    log(f"  CSV diario unico da carteira: {arq} ({dia.n} linhas)")
     log(f"\n  RSS de pico {max(A['rss'], _rss_mib()):.0f} MiB (teto "
         f"{RSS_CEILING_MIB:.0f}) | {time.monotonic() - t0:.0f} s")
     log("caveat: so medicao, sem veredito. Custo por trade @10 = @6 - 4 bps; "
