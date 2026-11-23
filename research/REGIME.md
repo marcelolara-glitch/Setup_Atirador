@@ -31,7 +31,7 @@ promoção tem toda.
 - 1h/15m: janela única, sem duas metades, sem promoção até haver histórico.
 
 ## Camada 3 — Promoção ao forward (v10)
-- Portão de entrada (regime 20/08): positivo nas duas metades, maioria dos trimestres,
+- Portão de entrada (regime 20/08, emenda 23/11): positivo nas duas metades,
   n ≥ 30, drawdown tolerável.
 - Aqui entra tudo: PR revisado `sandbox → main`, registry, pré-registro de critérios
   operacionais, Telegram, "um eixo por vez".
@@ -53,3 +53,4 @@ promoção tem toda.
 Alterar esta seção e o texto acima no mesmo commit; registrar uma linha no ledger
 apontando o commit. Nunca reescrever o histórico de emendas.
 - 2026-09-12 — criação. Consolida o regime de 20/08 (camada 3) e abre a camada 2.
+- 2026-11-23 — camada 3: retirado "maioria dos trimestres" do portão de entrada (decisão do Marcelo).
