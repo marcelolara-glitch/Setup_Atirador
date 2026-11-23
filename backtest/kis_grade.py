@@ -14,11 +14,11 @@
 # stop e alvo na mesma barra: stop primeiro); custo 10 e 6 bps por trade com
 # pernas proporcionais (`kis_refino._trade`).
 #
-# GRADE (84 celulas): stop k em {2, 3, 4} x parciais {sem; 3/6; 4/8; 6/12} com
-# fracoes {50/25; 33/33} (so com parciais) x teto de duracao {sem; 128; 256;
-# 384} barras. Teto T: o trade ainda aberto sai no FECHAMENTO da barra i+T,
-# tipo "teto" (o `simula` termina em e = min(fim, i+T)). Fracoes 33/33 deixam
-# 34% para stop/inversao/teto/fim.
+# GRADE DEFAULT (84 celulas): stop k em {2, 3, 4} x parciais {sem; 3/6; 4/8;
+# 6/12} com fracoes {50/25; 33/33} (so com parciais) x teto de duracao {sem;
+# 128; 256; 384} barras. Teto T: o trade ainda aberto sai no FECHAMENTO da
+# barra i+T, tipo "teto" (o `simula` termina em e = min(fim, i+T)). Fracoes
+# 33/33 deixam 34% para stop/inversao/teto/fim.
 #
 # REFERENCIAS (fora da grade): REF_BASE = KIS_E1-3 com inversao no fechamento,
 # stop 3, sem teto, calculada AQUI pelo motor da grade (= BASE do kis_refino);
@@ -42,7 +42,15 @@
 # celulas em sequencia, uma por vez, trades da celula descartados ao fim dela;
 # teto de RSS de 250 MiB que interrompe; guarda de horario do kis_saida.
 #
+# EIXOS PARAMETRIZAVEIS (briefing de 23/11/2026, v1 da sensibilidade do
+# stop): --ks, --parciais (0 = sem), --fracoes, --tetos; defaults = a grade
+# acima (sem argumentos a rodada de 23/11 se reproduz). As duas referencias
+# rodam sempre; a conferencia k3_p0_t0 x T5s tambem: se k3_p0_t0 nao estiver
+# na grade pedida, ela e calculada so para conferir e nao vai aos CSVs.
+# Eixos invalidos (parcial decrescente, fracoes > 100%) abortam antes do store.
+#
 # Uso (VM): python -m backtest.kis_grade --store <candles_v9.db>
+#   [--ks 2.5 3 3.5] [--parciais 3-6 6-12] [--fracoes 50-25 33-33] [--tetos 0]
 from __future__ import annotations
 
 import argparse
@@ -69,10 +77,11 @@ from backtest.kis_trail import RSS_CEILING_MIB, _rss_mib             # noqa: E40
 
 # ----------------------------------------------------------- parametros -----
 SETUP = "KIS_GRADE"
-STOPS = (2, 3, 4)
-PARCIAIS = ((3.0, 6.0), (4.0, 8.0), (6.0, 12.0))
+STOPS = (2.0, 3.0, 4.0)
+PARCIAIS = (None, (3.0, 6.0), (4.0, 8.0), (6.0, 12.0))   # None = sem
 FRACOES = ((0.50, 0.25), (0.33, 0.33))
 TETOS = (0, 128, 256, 384)                  # 0 = sem teto
+CONF_T5s = "k3_p0_t0"                       # celula conferida contra o T5s
 ALAVS = (3, 5, 10)
 PERIODOS = kr.PERIODOS
 REFS = ("REF_BASE", "REF_T5s")
@@ -82,22 +91,81 @@ def _n(x: float) -> str:
     return f"{x:g}"
 
 
-def celulas() -> list:
-    """Grade + referencias. Cada celula: {nome, k, parc, frac, teto, toque,
-    ref}. parc = niveis em ATR ou None; frac = fracoes ou None."""
+def _par(txt: str, oque: str) -> tuple:
+    a, sep, b = txt.partition("-")
+    try:
+        x, y = float(a), float(b)
+    except ValueError:
+        x = y = math.nan
+    if not sep or not (math.isfinite(x) and math.isfinite(y)):
+        raise argparse.ArgumentTypeError(f"{oque} '{txt}': formato A-B")
+    return x, y
+
+
+def arg_k(txt: str) -> float:
+    try:
+        k = float(txt)
+    except ValueError:
+        k = math.nan
+    if not (math.isfinite(k) and k > 0):
+        raise argparse.ArgumentTypeError(f"stop k '{txt}': numero > 0")
+    return k
+
+
+def arg_parcial(txt: str):
+    """'0' = sem parciais; 'A-B' com 0 < A < B (em ATR)."""
+    if txt.strip() == "0":
+        return None
+    a, b = _par(txt, "parcial")
+    if not 0 < a < b:
+        raise argparse.ArgumentTypeError(f"parcial '{txt}': exige 0 < A < B")
+    return a, b
+
+
+def arg_fracao(txt: str) -> tuple:
+    """'A-B' em % da posicao; A, B > 0 e A + B <= 100."""
+    a, b = _par(txt, "fracao")
+    if not (a > 0 and b > 0 and a + b <= 100):
+        raise argparse.ArgumentTypeError(f"fracao '{txt}': exige A, B > 0 e "
+                                         "A + B <= 100")
+    return round(a / 100, 6), round(b / 100, 6)
+
+
+def arg_teto(txt: str) -> int:
+    try:
+        t = int(txt)
+    except ValueError:
+        t = -1
+    if t < 0:
+        raise argparse.ArgumentTypeError(f"teto '{txt}': inteiro >= 0")
+    return t
+
+
+def _cel(k: float, p, f, t: int) -> dict:
+    pn = (f"p{_n(p[0])}-{_n(p[1])}_f{round(f[0] * 100)}-"
+          f"{round(f[1] * 100)}" if p else "p0")
+    return {"nome": f"k{_n(k)}_{pn}_t{t}", "k": float(k), "parc": p,
+            "frac": f if p else None, "teto": t, "toque": True, "ref": None}
+
+
+def celulas(ks=STOPS, parciais=PARCIAIS, fracoes=FRACOES,
+            tetos=TETOS) -> list:
+    """Referencias + grade. Cada celula: {nome, k, parc, frac, teto, toque,
+    ref}. parc = niveis em ATR ou None; frac = fracoes ou None. Ordem: k,
+    depois parciais na ordem dada (cada uma com todas as fracoes), depois
+    teto. Duplicatas de eixo sao descartadas (primeira ocorrencia)."""
     out = [{"nome": "REF_BASE", "k": 3.0, "parc": None, "frac": None,
             "teto": 0, "toque": False, "ref": "BASE"},
            {"nome": "REF_T5s", "k": 3.0, "parc": None, "frac": None,
             "teto": 0, "toque": True, "ref": "T5s"}]
-    combos = [(None, None)] + [(p, f) for p in PARCIAIS for f in FRACOES]
-    for k in STOPS:
+    combos = []
+    for p in dict.fromkeys(parciais):
+        combos += [(None, None)] if p is None else \
+            [(p, f) for f in dict.fromkeys(fracoes)]
+    for k in dict.fromkeys(float(x) for x in ks):
         for p, f in combos:
-            for t in TETOS:
-                pn = (f"p{_n(p[0])}-{_n(p[1])}_f{round(f[0] * 100)}-"
-                      f"{round(f[1] * 100)}" if p else "p0")
-                out.append({"nome": f"k{k}_{pn}_t{t}", "k": float(k),
-                            "parc": p, "frac": f, "teto": t, "toque": True,
-                            "ref": None})
+            for t in dict.fromkeys(tetos):
+                out.append(_cel(k, p, f, t))
     return out
 
 
@@ -352,7 +420,7 @@ def linha_trade(t: dict, per: str, cel: dict) -> dict:
 
 
 # ------------------------------------------------------------ main ----------
-def main(argv=None) -> int:
+def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="KIS 34/89: grade de "
                                  "sensibilidade das saidas (sandbox)")
     ap.add_argument("--tf", default="4h")
@@ -363,15 +431,32 @@ def main(argv=None) -> int:
                     help="default: SYMBOLS_KIS_3489 (65)")
     ap.add_argument("--mmr", type=float, default=cart.MMR,
                     help="manutencao, fracao; default %(default)s")
+    ap.add_argument("--ks", nargs="+", type=arg_k, default=list(STOPS),
+                    help="stop k em ATR14; default 2 3 4")
+    ap.add_argument("--parciais", nargs="+", type=arg_parcial,
+                    default=list(PARCIAIS),
+                    help="A-B em ATR, 0 = sem; default 0 3-6 4-8 6-12")
+    ap.add_argument("--fracoes", nargs="+", type=arg_fracao,
+                    default=list(FRACOES),
+                    help="A-B em %% da posicao; default 50-25 33-33")
+    ap.add_argument("--tetos", nargs="+", type=arg_teto, default=list(TETOS),
+                    help="barras, 0 = sem; default 0 128 256 384")
     ap.add_argument("--celulas", nargs="+", default=None,
-                    help="subconjunto (default: as 86)")
+                    help="subconjunto (default: todas as da grade)")
     ap.add_argument("--logs", default=str(ROOT / "logs"))
     ap.add_argument("--sem-conferencia", action="store_true")
     ap.add_argument("--sem-guarda-relogio", action="store_true")
-    args = ap.parse_args(argv)
+    return ap
+
+
+def main(argv=None) -> int:
+    args = parser().parse_args(argv)          # eixos validados aqui
     if args.tf != "4h":
         raise SystemExit("[kis_grade] so 4h")
-    todas = celulas()
+    eixos = dict(ks=args.ks, parciais=args.parciais, fracoes=args.fracoes,
+                 tetos=args.tetos)
+    todas = celulas(**eixos)
+    n_grade = len(todas) - len(REFS)
     if args.celulas:
         ruins = set(args.celulas) - {c["nome"] for c in todas}
         if ruins:
@@ -403,8 +488,14 @@ def main(argv=None) -> int:
         f"sandbox H1 {H1[0]}..{H1[1]}, H2 {H2[0]}..{H2[1]} (velas < "
         f"{TETO_ISO}, borda {kr.BORDA}) | NOVO entradas {_iso(JANELA[0])}.."
         f"{_iso(JANELA[1])} (velas < {args.end}) | custo 10 e 6 bps/trade")
-    log(f"  grade: stop k {STOPS} x parciais {PARCIAIS} (fracoes {FRACOES}) "
-        f"ou sem x teto {TETOS} (0 = sem) = {len(celulas()) - 2} celulas + "
+    e_k = " ".join(_n(k) for k in args.ks)
+    e_p = " ".join("0" if p is None else f"{_n(p[0])}-{_n(p[1])}"
+                   for p in args.parciais)
+    e_f = " ".join(f"{round(a * 100)}-{round(b * 100)}"
+                   for a, b in args.fracoes)
+    log(f"  grade: --ks {e_k} --parciais {e_p} --fracoes {e_f} --tetos "
+        f"{' '.join(map(str, args.tetos))} (fracoes so com parciais; 0 = sem)"
+        f" = {n_grade} celulas + "
         f"{len(REFS)} referencias | rodando {len(todas)} | carteira "
         f"{cart.BANCA_INICIAL:,.0f} USD por celula e periodo, "
         f"{cart.NOCIONAL:.0f} USD/trade, {cart.CUSTO_BPS:g} bps/perna | "
@@ -427,6 +518,18 @@ def main(argv=None) -> int:
             f"{c['excl_hold']}")
 
     conf, refs_log, rss = [], [], A["rss"]
+
+    def _confere(nome: str, por: dict) -> None:
+        alvo = "BASE" if nome == "REF_BASE" else "T5s"
+        for p in PERIODOS:
+            modo = "novo" if p == "NOVO" else "sandbox"
+            ref = [t for t in A["ref"][alvo][modo]
+                   if kr.periodo(t, modo) == p]
+            conf.append((nome, alvo, p, confere(por[p], ref)))
+
+    if not args.sem_conferencia and CONF_T5s not in {c["nome"] for c in todas}:
+        _confere(CONF_T5s, por_periodo(_cel(3.0, None, None, 0), A, ordem))
+        gc.collect()
     with p_tr.open("w", newline="") as f_tr, \
             p_rs.open("w", newline="") as f_rs, cart.DiarioUnico(p_dia) as dia:
         w_tr = csv.DictWriter(f_tr, fieldnames=CAMPOS_TRADES)
@@ -438,13 +541,8 @@ def main(argv=None) -> int:
             tc = time.monotonic()
             por = por_periodo(cel, A, ordem)
             if not args.sem_conferencia and cel["nome"] in ("REF_BASE",
-                                                            "k3_p0_t0"):
-                alvo = "BASE" if cel["nome"] == "REF_BASE" else "T5s"
-                for p in PERIODOS:
-                    modo = "novo" if p == "NOVO" else "sandbox"
-                    ref = [t for t in A["ref"][alvo][modo]
-                           if kr.periodo(t, modo) == p]
-                    conf.append((cel["nome"], alvo, p, confere(por[p], ref)))
+                                                            CONF_T5s):
+                _confere(cel["nome"], por)
             for p in PERIODOS:
                 cam = A["cam"]["novo" if p == "NOVO" else "sandbox"]
                 tr = por[p]
@@ -506,9 +604,9 @@ def main(argv=None) -> int:
         "um com o seu pico e vale); dias abaixo do pico nos fechamentos "
         "diarios. Liquidacao so medida: margem isolada, nocional fixo, MMR "
         f"{args.mmr:g}, barras do movimento adverso (sem a barra de entrada),"
-        " parcial na mesma barra da liquidacao nao conta. 84 celulas lidas "
-        "juntas = comparacoes multiplas: a melhor celula de um periodo tende "
-        "a regredir no outro.")
+        " parcial na mesma barra da liquidacao nao conta. "
+        f"{n_grade} celulas lidas juntas = comparacoes multiplas: a melhor "
+        "celula de um periodo tende a regredir no outro.")
     return 0
 
 

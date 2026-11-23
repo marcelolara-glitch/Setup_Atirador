@@ -194,3 +194,89 @@ def test_linha_de_resumo_tem_todas_as_colunas_e_liquidacao_soma():
     # distancia do stop: k x ATR / entrada
     d = sorted(4.0 * t["atr"] / t["entry"] * 100 for t in tr)
     assert float(row["stop_dist_max"]) == pytest.approx(d[-1], abs=1e-4)
+
+
+# ---- 6. eixos por linha de comando (briefing v1 da sensibilidade do stop) ---
+def _cels_args(argv):
+    a = g.parser().parse_args(argv)
+    return g.celulas(ks=a.ks, parciais=a.parciais, fracoes=a.fracoes,
+                     tetos=a.tetos)
+
+
+def test_sem_argumentos_a_grade_e_a_de_23_11():
+    cs = _cels_args([])
+    assert cs == g.celulas()
+    nomes = [c["nome"] for c in cs]
+    esperado = ["REF_BASE", "REF_T5s"]
+    for k in (2, 3, 4):
+        for pn in ("p0", "p3-6_f50-25", "p3-6_f33-33", "p4-8_f50-25",
+                   "p4-8_f33-33", "p6-12_f50-25", "p6-12_f33-33"):
+            for t in (0, 128, 256, 384):
+                esperado.append(f"k{k}_{pn}_t{t}")
+    assert nomes == esperado and len(nomes) == 86
+
+
+def test_rodada_pedida_tem_12_celulas_com_k_decimal():
+    cs = _cels_args(["--ks", "2.5", "3", "3.5", "--parciais", "3-6", "6-12",
+                     "--fracoes", "50-25", "33-33", "--tetos", "0"])
+    nomes = [c["nome"] for c in cs]
+    assert len(nomes) == 14 and nomes[:2] == ["REF_BASE", "REF_T5s"]
+    assert "k2.5_p6-12_f33-33_t0" in nomes and "k3.5_p3-6_f50-25_t0" in nomes
+    k3 = [c for c in cs if c["nome"].startswith("k3_")]
+    assert [c["nome"] for c in k3] == [
+        "k3_p3-6_f50-25_t0", "k3_p3-6_f33-33_t0", "k3_p6-12_f50-25_t0",
+        "k3_p6-12_f33-33_t0"]
+    assert all(c == _cel(c["nome"]) for c in k3)   # = as celulas de 23/11
+
+
+def test_ks_2_5_poe_o_stop_a_2_5_atr_da_barra_do_sinal():
+    cel = next(c for c in _cels_args(["--ks", "2.5"])
+               if c["nome"] == "k2.5_p0_t0")
+    assert cel["k"] == 2.5
+    # sintetico: adverso de 2,6 ATR sem gap -> stop exato em 100 - 2,5
+    cn = _serie([(100, 100.5, 97.4, 98), (98, 99, 97.2, 98.5)])
+    nada = [None] * len(cn)
+    ex, _, _ = g.simula_celula(cel, cn, _ev(2), nada, nada)
+    assert ex == [(1, -2.5, 97.5, 1.0, "stop")]
+    # mesmo caminho com k 3 nao para (o adverso nao chega a 3 ATR)
+    ex3, _, _ = g.simula_celula(_cel("k3_p0_t0"), cn, _ev(2), nada, nada)
+    assert ex3[-1][4] == "inversao"
+    # serie aleatoria: todo stop fica a 2,5 x ATR14 do sinal (ou na abertura)
+    v = g.Velas(_cn())
+    gL, gS, _ = kr.gatilhos(_cn())
+    evs = list(kr.eventos(_cn(), "novo", kr.novo_cont(),
+                          janela=(T0, T0 + 10 ** 13)))
+    n = 0
+    for ev in evs:
+        ex, _, _ = g.simula_celula(cel, v, ev, g._garr(gL), g._garr(gS))
+        idx, r, px, _, tipo = ex[-1]
+        if tipo != "stop":
+            continue
+        n += 1
+        nivel = ev["en"] - ev["sg"] * 2.5 * ev["atr"]
+        if r == -2.5:
+            assert px == pytest.approx(nivel)
+        else:                                       # gap: executa na abertura
+            assert px == v[idx]["open"] and r < -2.5
+    assert n > 10
+
+
+@pytest.mark.parametrize("argv", [["--parciais", "8-4"],
+                                  ["--parciais", "3"],
+                                  ["--fracoes", "60-50"],
+                                  ["--fracoes", "0-25"],
+                                  ["--ks", "0"], ["--ks", "x"],
+                                  ["--tetos", "-1"]])
+def test_eixo_invalido_aborta_antes_de_ler_o_store(argv, monkeypatch):
+    def proibido(*a, **k):
+        raise AssertionError("leu o store")
+    monkeypatch.setattr(g, "conecta_com_teto", proibido)
+    monkeypatch.setattr(g, "_guarda_relogio", proibido)
+    with pytest.raises(SystemExit) as e:
+        g.main(argv + ["--store", "/nao/existe.db", "--logs", "/nao/existe"])
+    assert e.value.code == 2
+
+
+def test_fracao_ate_100_aceita():
+    a = g.parser().parse_args(["--fracoes", "50-50", "33-33"])
+    assert a.fracoes == [(0.5, 0.5), (0.33, 0.33)]
