@@ -53,6 +53,17 @@
 # contra o kis_refino ligada em todo tf. Em 4h nada muda (gabarito de bytes em
 # tests/test_sem_travas_de_estudo.py).
 #
+# ESCALA DOS INDICADORES (24/11/2026): `--escala-indicadores F` (default 1 =
+# tudo como antes, gabarito de bytes em 4h e 1h). F > 1 multiplica os
+# comprimentos dos indicadores e do sinal (`kis_refino.indicadores`): EMA 34/89
+# -> 34F/89F, EMA do portao 21F, lookback da inclinacao 5F, ADX 13F (minimo 11
+# igual), confirmacao 2F, ATR 14F. ATR efetivo = r x ATR(14F) em stop,
+# parciais, portao e unidades de R/MFE/MAE, com r = mediana no universo de
+# ATR14 de 4h / ATR(14F) do tf na mesma data (fechamento da barra de 4h), so
+# com velas de H1 (`mede_r`). Limiar do portao 0,02 / F por barra. Duracoes
+# (borda, caminho/hold, tetos) seguem `escala` do tf, sem mudar. Conferencia
+# contra o kis_refino ligada: `trades_simbolo` recebe a mesma escala.
+#
 # EIXOS PARAMETRIZAVEIS (briefing de 23/11/2026, v1 da sensibilidade do
 # stop): --ks, --parciais (0 = sem), --fracoes, --tetos; defaults = a grade
 # acima (sem argumentos a rodada de 23/11 se reproduz). As duas referencias
@@ -74,6 +85,7 @@ from array import array
 from bisect import bisect_left
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -141,6 +153,16 @@ def arg_fracao(txt: str) -> tuple:
         raise argparse.ArgumentTypeError(f"fracao '{txt}': exige A, B > 0 e "
                                          "A + B <= 100")
     return round(a / 100, 6), round(b / 100, 6)
+
+
+def arg_escala(txt: str) -> int:
+    try:
+        f = int(txt)
+    except ValueError:
+        f = 0
+    if f < 1:
+        raise argparse.ArgumentTypeError(f"escala '{txt}': inteiro >= 1")
+    return f
 
 
 def arg_teto(txt: str) -> int:
@@ -293,7 +315,8 @@ def coleta(conn, symbols: list, tf: str, teto_ms: int, end_ms: int,
             continue
         n_sb = bisect_left([c["ts"] for c in cndl], teto_ms)
         v = Velas(cndl)
-        gL, gS, _st = kr.gatilhos(cndl)
+        x = kr._ind(esc)
+        gL, gS, _st = kr.gatilhos(cndl, None, *x["ema"], x["conf"])
         gL, gS = _garr(gL), _garr(gS)
         d = {"v": v, "n_sb": n_sb}
         for modo, cv in (("sandbox", cndl[:n_sb]), ("novo", cndl)):
@@ -318,6 +341,49 @@ def coleta(conn, symbols: list, tf: str, teto_ms: int, end_ms: int,
            "novo": {s: d["v"].caminho(JANELA[0]) for s, d in dados.items()}}
     return {"dados": dados, "cont": cont, "sem": sem, "ref": ref, "cam": cam,
             "rss": rss}
+
+
+def mede_r(conn, symbols: list, tf: str, ind: int,
+           ini_iso: str = H1[0], fim_iso: str = H2[0]) -> dict:
+    """r = mediana, no universo, de ATR14 das barras de 4h / ATR(14 x ind) das
+    barras do tf, na MESMA data: barra de 4h com ts em [ini, fim) contra a
+    barra do tf que fecha junto com ela (ts + 4h - bar_ms). Os dois ATR por
+    `excursion._wilder_atr` (a conta do sinal). So velas < fim (H1). Simbolo
+    sem 4h ou sem o tf fica fora (listado)."""
+    from backtest.candle_store import read_candles
+    from backtest.excursion import _wilder_atr
+    from backtest.kis_saida import BAR_4H_MS
+    bar_ms = kr.escala(tf)["bar_ms"]
+    n_tf, ini, fim = kr.ATR_LEN * ind, _ms(ini_iso), _ms(fim_iso)
+    rs, fora = array("d"), []
+    for sym in symbols:
+        c4 = read_candles(conn, sym, "4h", start_ms=None, end_ms=fim - 1)
+        ct = read_candles(conn, sym, tf, start_ms=None,
+                          end_ms=fim - 1)
+        if not c4 or not ct:
+            fora.append(sym)
+            continue
+        pos = {c["ts"]: j for j, c in enumerate(ct)}
+        n0 = len(rs)
+        for k in range(kr.ATR_LEN, len(c4)):
+            ts = c4[k]["ts"]
+            j = pos.get(ts + BAR_4H_MS - bar_ms)
+            if ts < ini or j is None or j < n_tf:
+                continue
+            a4 = _wilder_atr(c4[k - kr.ATR_LEN:k + 1], kr.ATR_LEN)
+            at = _wilder_atr(ct[j - n_tf:j + 1], n_tf)
+            if a4 > 0 and at > 0:
+                rs.append(a4 / at)
+        if len(rs) == n0:
+            fora.append(sym)
+        del c4, ct, pos
+    if not rs:
+        raise SystemExit("[kis_grade] r: nenhuma razao ATR 4h / tf em H1 "
+                         "(faltam velas de 4h ou do tf). ABORTADO.")
+    q = sorted(rs)
+    return {"r": median(q), "p25": cart.percentil(q, 25),
+            "p75": cart.percentil(q, 75), "n": len(q), "fora": fora,
+            "n_sym": len(symbols) - len(fora)}
 
 
 def por_periodo(cel: dict, A: dict, ordem: dict) -> dict:
@@ -470,6 +536,9 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--tetos", nargs="+", type=arg_teto, default=None,
                     help="barras DO TF, 0 = sem; default 0 128 256 384 em 4h "
                          "(a mesma duracao no tf: 1h 0 512 1024 1536)")
+    ap.add_argument("--escala-indicadores", type=arg_escala, default=1,
+                    metavar="F", help="multiplica os comprimentos dos "
+                    "indicadores e do sinal por F (inteiro >= 1); default 1")
     ap.add_argument("--celulas", nargs="+", default=None,
                     help="subconjunto (default: todas as da grade)")
     ap.add_argument("--logs", default=str(ROOT / "logs"))
@@ -483,6 +552,7 @@ def main(argv=None) -> int:
     args = parser().parse_args(argv)          # eixos validados aqui
     define_teto_rss(args.teto_rss)
     esc = kr.escala(args.tf)
+    F = args.escala_indicadores
     if args.tetos is None:
         args.tetos = tetos_do_tf(esc)
     eixos = dict(ks=args.ks, parciais=args.parciais, fracoes=args.fracoes,
@@ -514,9 +584,22 @@ def main(argv=None) -> int:
     p_dia = logs / f"carteira_{SETUP}_{stamp}.csv"
     log = _Log(p_tr.with_suffix(".log"))
     t0 = time.monotonic()
-    log(f"[kis_grade] KIS 34/89 E1 (conf 2, portao {kr.PORTAO_LIMIAR}/ADX "
-        f"{kr.PORTAO_ADX_MIN}/EMA{kr.EMA_REF}) | saida na inversao sem esperar "
-        f"o fechamento (T5s) | tf {args.tf} | universo {len(symbols)} | "
+    conn = conecta_com_teto(args.store, end_ms)
+    mr = None
+    if F != 1:
+        try:
+            mr = mede_r(conn, symbols, args.tf, F)
+        except BaseException:
+            conn.close()
+            raise
+        esc = kr.escala(args.tf, F, mr["r"])
+    x = kr._ind(esc)
+    log(f"[kis_grade] KIS {x['ema'][0]}/{x['ema'][1]} E1 (conf {x['conf']}, "
+        f"portao {x['limiar']:g}/ADX {kr.PORTAO_ADX_MIN}/EMA{x['ema_ref']}) | "
+        "saida na inversao sem esperar "
+        f"o fechamento (T5s) | tf {args.tf} | "
+        + (f"escala indicadores x{F} | r = {mr['r']:.4f} | " if mr else "") +
+        f"universo {len(symbols)} | "
         f"sandbox H1 {H1[0]}..{H1[1]}, H2 {H2[0]}..{H2[1]} (velas < "
         f"{TETO_ISO}, borda {esc['borda']}) | NOVO entradas "
         f"{_iso(JANELA[0])}.."
@@ -533,18 +616,38 @@ def main(argv=None) -> int:
         f"{cart.BANCA_INICIAL:,.0f} USD por celula e periodo, "
         f"{cart.NOCIONAL:.0f} USD/trade, {cart.CUSTO_BPS:g} bps/perna | "
         f"liquidacao L {ALAVS}, MMR {args.mmr:g}")
+    if mr:
+        log(f"  escala indicadores x{F}: EMA {kr.PAR[0]}/{kr.PAR[1]} -> "
+            f"{x['ema'][0]}/{x['ema'][1]}, EMA do portao {kr.EMA_REF} -> "
+            f"{x['ema_ref']}, inclinacao em {kr.INCL_LOOKBACK} -> {x['lb']} "
+            f"barras, ADX {kr.ADX_LEN} -> {x['adx']} (minimo "
+            f"{kr.PORTAO_ADX_MIN} igual), confirmacao {kr.EXT_CONF} -> "
+            f"{x['conf']}, ATR {kr.ATR_LEN} -> {x['atr']}; limiar do portao "
+            f"{kr.PORTAO_LIMIAR} -> {x['limiar']:g} por barra. ATR efetivo = r "
+            f"x ATR{x['atr']} do tf em stop, parciais, portao e R/MFE/MAE.")
+        log(f"  r = mediana de ATR14(4h) / ATR{x['atr']}({args.tf}) na mesma "
+            f"data, velas de H1 (4h com ts em [{H1[0]}, {H2[0]})): r = "
+            f"{mr['r']:.4f} (p25 {mr['p25']:.4f}, p75 {mr['p75']:.4f}) | "
+            f"{mr['n']} razoes de {mr['n_sym']} simbolos | fora (sem 4h ou "
+            f"sem {args.tf}): {' '.join(mr['fora']) or 'nenhum'}")
+        log(f"  warm-up: EMA{x['ema'][1]} definida apos {x['ema'][1]} barras "
+            "do simbolo; moeda sem historico suficiente entra quando tiver. "
+            "Conferencia contra o kis_refino ligada (`trades_simbolo` com a "
+            "mesma escala).")
     if esc["fator"] != 1:
         log(f"  tf {args.tf}: mesma duracao das regras de 4h em barras de "
             f"{args.tf} (x{esc['fator']}): borda {kr.BORDA} -> {esc['borda']},"
             f" caminho/hold {kr.EXT_CAP} -> {esc['cap']}, tetos default "
             f"{' '.join(map(str, TETOS))} -> "
             f"{' '.join(map(str, tetos_do_tf(esc)))} (eixo --tetos em barras "
-            f"do tf). EMA 34/89, ATR14, ADX13, confirmacao 2 e portao 0.02 "
-            f"em barras de {args.tf}; stop e parciais em ATR14 do tf. "
-            f"Conferencia contra o kis_refino ligada (o mesmo `eventos` e "
-            f"`trades_simbolo` com a mesma escala). Fechamento diario da "
+            f"do tf). "
+            + ("" if mr else
+               f"EMA 34/89, ATR14, ADX13, confirmacao 2 e portao 0.02 "
+               f"em barras de {args.tf}; stop e parciais em ATR14 do tf. "
+               f"Conferencia contra o kis_refino ligada (o mesmo `eventos` e "
+               f"`trades_simbolo` com a mesma escala). ") +
+            f"Fechamento diario da "
             f"carteira: barra das {24 - esc['bar_ms'] // 3_600_000}:00 UTC.")
-    conn = conecta_com_teto(args.store, end_ms)
     try:
         mx = conn.execute("SELECT MAX(ts) FROM candles").fetchone()[0]
         if mx is not None and mx >= end_ms:
@@ -642,7 +745,10 @@ def main(argv=None) -> int:
         "de t-1; toque falso conta como saida), exceto REF_BASE (no "
         "fechamento). Stop k x ATR14 da barra do sinal em min(stop, "
         "abertura); parciais limite; stop e alvo na mesma barra: stop "
-        "primeiro; teto sai no fechamento da barra i+T. Custo por trade @10 "
+        "primeiro; teto sai no fechamento da barra i+T. "
+        + (f"Escala x{F}: 'ATR14' e 'k x ATR' acima = r x ATR{x['atr']} do tf "
+           f"(r = {mr['r']:.4f}). " if mr else "") +
+        "Custo por trade @10 "
         "= @6 - 4 bps, pernas proporcionais. Sandbox com exclusao de borda "
         f"de {esc['borda']} barras; NOVO sem, trade aberto no fim marcado no "
         "ultimo fechamento. Rebaixamento do resumo nas marcas de "

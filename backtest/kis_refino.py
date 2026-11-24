@@ -61,6 +61,14 @@
 # (`escala`); os nomes das celulas levam o numero em barras do tf (em 1h:
 # BASE_1024, T1_24/48/96). Conferencias contra kis_saida/holdout_2026 so em 4h.
 #
+# ESCALA DOS INDICADORES (24/11/2026): `escala(tf, ind, r)` / `indicadores`
+# multiplicam por `ind` os comprimentos (EMA 34/89, EMA21 e lookback 5 do
+# portao, ADX13, confirmacao 2, ATR14) e usam ATR efetivo = r x ATR(14 ind);
+# limiar do portao 0,02 / ind. Honrado por `eventos`, `gatilhos` (confirmacao
+# generica), `trades_simbolo` e `trades_t5e`. So o kis_grade expoe na linha de
+# comando (--escala-indicadores); o main daqui e as celulas de universo
+# (T2/T4) seguem em x1. ind = 1, r = 1: caminhos de sempre, byte-identicos.
+#
 # Uso (VM): python -m backtest.kis_refino --store <candles_v9.db>
 from __future__ import annotations
 
@@ -81,13 +89,14 @@ from backtest import carteira as cart                                # noqa: E40
 from backtest.aio_graduado import _Log                               # noqa: E402
 from backtest.holdout_2026 import (END_ISO, JANELA, _hold_visivel,   # noqa: E402
                                    medir_sem_borda, na_janela)
-from backtest.keepitsimple import EXT_CAP, _adx, _ema, states        # noqa: E402
+from backtest.keepitsimple import (ADX_LEN, EXT_CAP, EXT_CONF,      # noqa: E402
+                                   _adx, _ema, states)
 from backtest.kis_horizonte import (PORTAO_ADX_MIN, PORTAO_LIMIAR,   # noqa: E402
                                     entradas)
 from backtest.kis_knn import SEMENTES                                # noqa: E402
 from backtest.kis_meta import junta, series_barra                    # noqa: E402
-from backtest.kis_regime import (INCL_LOOKBACK, _atr_series,         # noqa: E402
-                                 inclinacoes, passa)
+from backtest.kis_regime import (ATR_LEN, INCL_LOOKBACK,            # noqa: E402
+                                 _atr_series, inclinacoes, passa)
 from backtest.kis_saida import (BAR_4H_MS, COST_FWD_BPS, H1, H2,   # noqa: E402
                                 TETO_ISO, _guarda_relogio, _iso, _ms,
                                 conecta_com_teto)
@@ -117,7 +126,7 @@ TIPOS = ("stop", "inversao", "tempo", "parcial1", "parcial2", "teto", "fim")
 
 
 # ------------------------------------------------- escala do tempo grafico --
-def escala(tf: str) -> dict:
+def escala(tf: str, ind: int = 1, r: float = 1.0) -> dict:
     """Duracoes definidas em barras de 4h convertidas para o tf, MESMA
     duracao no tempo (decisao do Marcelo, 23/11/2026). Indicadores, portao,
     confirmacao e ATR seguem em BARRAS do tf (KIS em 1h = o mesmo setup em
@@ -132,8 +141,54 @@ def escala(tf: str) -> dict:
     if bar is None or BAR_4H_MS % bar:
         raise ValueError(f"tf '{tf}': use um de {sorted(_BAR_MS)}")
     f = BAR_4H_MS // bar
+    if not (isinstance(ind, int) and ind >= 1 and r > 0):
+        raise ValueError(f"escala de indicadores {ind!r} / r {r!r}: inteiro "
+                         ">= 1 e r > 0")
     return {"tf": tf, "bar_ms": bar, "fator": f, "borda": BORDA * f,
-            "cap": EXT_CAP * f, "t1_ns": tuple(n * f for n in T1_NS)}
+            "cap": EXT_CAP * f, "t1_ns": tuple(n * f for n in T1_NS),
+            **indicadores(ind, r)}
+
+
+def indicadores(ind: int = 1, r: float = 1.0) -> dict:
+    """Comprimentos dos indicadores e do sinal x `ind` (24/11/2026,
+    `--escala-indicadores F`): EMA 34/89 -> 34F/89F (estados e gatilhos), EMA
+    do portao 21 -> 21F, lookback da inclinacao 5 -> 5F, ADX 13 -> 13F (minimo
+    11 inalterado), confirmacao 2 -> 2F, ATR 14 -> 14F. ATR efetivo = r x
+    ATR(14F) (r = mediana de ATR14 de 4h / ATR(14F) do tf, medida fora daqui)
+    em tudo que usa ATR: stop, parciais, portao, unidades de R/MFE/MAE. Limiar
+    do portao e por barra: 0,02 / F. ind = 1 e r = 1: os valores de sempre."""
+    return {"ind": ind, "r": r, "ema": (PAR[0] * ind, PAR[1] * ind),
+            "ema_ref": EMA_REF * ind, "lb": INCL_LOOKBACK * ind,
+            "adx": ADX_LEN * ind, "conf": EXT_CONF * ind,
+            "atr": ATR_LEN * ind,
+            "limiar": PORTAO_LIMIAR if ind == 1 else PORTAO_LIMIAR / ind}
+
+
+def _ind(esc: dict) -> dict:
+    """Indicadores de `esc`; dict de escala sem as chaves (antigo) = x1."""
+    return esc if "ind" in esc else indicadores()
+
+
+def incl_adx(cndl: list, closes: list, esc: dict) -> tuple:
+    """(inclinacao, ADX) do portao na escala de `esc`. x1: as chamadas de
+    sempre (byte-identico). xF: inclinacao da EMA(21F) em 5F barras sobre o
+    ATR efetivo r x ATR(14F); ADX(13F)."""
+    x = _ind(esc)
+    if x["ind"] == 1 and x["r"] == 1.0:
+        return inclinacoes(cndl, closes), _adx(cndl)
+    incl = inclinacoes(cndl, closes, x["atr"], x["ema_ref"], x["lb"])
+    if x["r"] != 1.0:
+        incl = [None if v is None else v / x["r"] for v in incl]
+    return incl, _adx(cndl, x["adx"])
+
+
+def atr_ef(cndl: list, esc: dict) -> float:
+    """ATR efetivo da ULTIMA vela de `cndl` (fatia ate a barra): r x
+    ATR(14F) de `excursion._wilder_atr`; 0.0 se nao houver velas."""
+    from backtest.excursion import _wilder_atr        # tardio, como no kis_tf
+    x = _ind(esc)
+    a = _wilder_atr(cndl, x["atr"])
+    return a * x["r"] if x["r"] != 1.0 else a
 
 
 def nomes_celulas(esc: dict = None) -> tuple:
@@ -153,22 +208,26 @@ def nomes_simb(esc: dict = None) -> tuple:
 
 # ------------------------------------------------------- limiares (T5) ------
 def gatilhos(cndl: list, closes: list = None, fast: int = PAR[0],
-             slow: int = PAR[1]) -> tuple:
+             slow: int = PAR[1], conf: int = EXT_CONF) -> tuple:
     """(gL, gS, st). gL[t] = preco acima do qual o fechamento de t poe o estado
     em VERDE, definido so se a barra t-1 FECHOU em VERDE (a confirmacao de 2
     se completaria em t); gS[t] idem VERM. So usa EMAs de t-1:
       close > EMA34_t        <=> p > EMA34_{t-1}
       EMA34_t > EMA89_t      <=> p > [(1-b)EMA89_{t-1} - (1-a)EMA34_{t-1}]/(a-b)
-    gL = max dos dois; gS = min (VERM: p < os dois)."""
+    gL = max dos dois; gS = min (VERM: p < os dois). Confirmacao `conf`
+    generica: gL[t] definido se o estado VERDE ja dura >= conf-1 barras
+    FECHADAS ate t-1 (conf 2: st[t-1] == VERDE, a regra de sempre)."""
     closes = closes if closes is not None else [c["close"] for c in cndl]
     ef, es, st = _ema(closes, fast), _ema(closes, slow), states(closes, fast,
                                                                 slow)
     a, b = 2.0 / (fast + 1.0), 2.0 / (slow + 1.0)
     n = len(closes)
     gL, gS = [None] * n, [None] * n
+    run = 0                                  # barras no estado st[t-1]
     for t in range(1, n):
+        run = run + 1 if t > 1 and st[t - 1] == st[t - 2] else 1
         f, s = ef[t - 1], es[t - 1]
-        if f is None or s is None:
+        if f is None or s is None or run < conf - 1:
             continue
         l2 = ((1.0 - b) * s - (1.0 - a) * f) / (a - b)
         if st[t - 1] == "VERDE":
@@ -180,17 +239,22 @@ def gatilhos(cndl: list, closes: list = None, fast: int = PAR[0],
 
 def limiares_portao(cndl: list, closes: list = None, ref: int = EMA_REF,
                     lb: int = INCL_LOOKBACK, limiar: float = PORTAO_LIMIAR,
-                    adx_min: float = PORTAO_ADX_MIN) -> tuple:
+                    adx_min: float = PORTAO_ADX_MIN, atr_len: int = ATR_LEN,
+                    adx_len: int = ADX_LEN, r: float = 1.0) -> tuple:
     """(pL, pS, ok_adx). Inclinacao da EMA21 com a recursao: LONG passa se
     p >= pL[t], SHORT se p <= pS[t], com ATR14 de t-1 no denominador e
-    ok_adx[t] = ADX13[t-1] >= adx_min (aproximacao documentada)."""
+    ok_adx[t] = ADX13[t-1] >= adx_min (aproximacao documentada). Com
+    indicadores escalados: ATR(atr_len) x r, ADX(adx_len)."""
     closes = closes if closes is not None else [c["close"] for c in cndl]
-    e, atr, adx = _ema(closes, ref), _atr_series(cndl), _adx(cndl)
+    e, atr, adx = (_ema(closes, ref), _atr_series(cndl, atr_len),
+                   _adx(cndl, adx_len))
     c = 2.0 / (ref + 1.0)
     n = len(closes)
     pL, pS, ok = [None] * n, [None] * n, [False] * n
     for t in range(lb + 1, n):
         a, e1, e5 = atr[t - 1], e[t - 1], e[t - lb]
+        if a is not None and r != 1.0:
+            a *= r
         if a is None or a <= 0 or e1 is None or e5 is None:
             continue
         base = e5 - (1.0 - c) * e1
@@ -286,12 +350,11 @@ def eventos(cndl: list, modo: str, cont: dict, janela=JANELA,
     `hold` = barras ate a proxima inversao, piso 1 e teto esc["cap"] (em 4h
     = o `hold` do `kis_horizonte.entradas`, mesma conta)."""
     esc = esc or escala("4h")
-    cap, borda = esc["cap"], esc["borda"]
+    cap, borda, x = esc["cap"], esc["borda"], _ind(esc)
     if incl is None:
-        closes = [c["close"] for c in cndl]
-        incl, adx = inclinacoes(cndl, closes), _adx(cndl)
+        incl, adx = incl_adx(cndl, [c["close"] for c in cndl], esc)
     pos = {c["ts"]: i for i, c in enumerate(cndl)}
-    evs = entradas(cndl, PAR[0], PAR[1])
+    evs = entradas(cndl, x["ema"][0], x["ema"][1], x["conf"])
     idx = [pos[ev["bar_ts"]] for ev in evs]
     ult = len(cndl) - 1
     for n_ev, ev in enumerate(evs):
@@ -299,12 +362,12 @@ def eventos(cndl: list, modo: str, cont: dict, janela=JANELA,
         if modo == "novo" and not na_janela(ev["bar_ts"], janela):
             continue
         cont["inversoes"] += 1
-        if not passa(ev["direction"], incl[i], adx[i], PORTAO_LIMIAR,
+        if not passa(ev["direction"], incl[i], adx[i], x["limiar"],
                      PORTAO_ADX_MIN):
             cont["vetadas"] += 1
             continue
         m = medir_sem_borda(cndl, i, ev["direction"], bar_ms=esc["bar_ms"],
-                            cap=cap)
+                            cap=cap, periodo_atr=x["atr"], mult_atr=x["r"])
         if m is None:
             cont["atr0"] += 1
             continue
@@ -348,8 +411,9 @@ def trades_simbolo(cndl: list, sym: str, modo: str, cont: dict,
     if not cndl:
         return out
     closes = [c["close"] for c in cndl]
-    incl, adx = inclinacoes(cndl, closes), _adx(cndl)
-    gL, gS, st = gatilhos(cndl, closes)
+    x = _ind(esc)
+    incl, adx = incl_adx(cndl, closes, esc)
+    gL, gS, st = gatilhos(cndl, closes, *x["ema"], x["conf"])
     for ev in eventos(cndl, modo, cont, janela, incl, adx, esc):
         i, lg, sg, en, atr = ev["i"], ev["lg"], ev["sg"], ev["en"], ev["atr"]
         e_inv, e_full, t_full = ev["e_inv"], ev["e_full"], ev["t_full"]
@@ -393,8 +457,17 @@ def trades_t5e(cndl: list, sym: str, modo: str, cont: dict, closes: list,
                esc: dict = None) -> list:
     from backtest.excursion import _wilder_atr        # tardio, como no kis_tf
     esc = esc or escala("4h")
-    pL, pS, ok = limiares_portao(cndl, closes)
-    fl, ult, out = viradas_t5e(cndl, gL, gS), len(cndl) - 1, []
+    xi = _ind(esc)
+    um = xi["ind"] == 1 and xi["r"] == 1.0
+    if um:
+        pL, pS, ok = limiares_portao(cndl, closes)
+        fl = viradas_t5e(cndl, gL, gS)
+    else:
+        pL, pS, ok = limiares_portao(cndl, closes, xi["ema_ref"], xi["lb"],
+                                     xi["limiar"], PORTAO_ADX_MIN, xi["atr"],
+                                     xi["adx"], xi["r"])
+        fl = viradas_t5e(cndl, gL, gS, xi["ema"][1])
+    ult, out = len(cndl) - 1, []
     for k, (t, sd) in enumerate(fl):
         c = cndl[t]
         if modo == "novo" and not na_janela(c["ts"], janela):
@@ -412,7 +485,8 @@ def trades_t5e(cndl: list, sym: str, modo: str, cont: dict, closes: list,
             cont["t5e_vetadas"] += 1
             continue
         en = max(g_ent, c["open"]) if sd > 0 else min(g_ent, c["open"])
-        atr = _wilder_atr(cndl[max(0, t - CTX):t])
+        atr = (_wilder_atr(cndl[max(0, t - CTX):t]) if um
+               else atr_ef(cndl[max(0, t - xi["atr"] - 1):t], esc))
         if atr <= 0:
             cont["t5e_atr0"] += 1
             continue

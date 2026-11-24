@@ -81,12 +81,18 @@ def na_janela(ts: int, janela=JANELA) -> bool:
 
 # ------------------------------------------------------------ medicao -------
 def medir_sem_borda(cndl: list, i: int, direction: str,
-                    bar_ms: int = BAR_4H_MS, cap: int = EXT_CAP):
+                    bar_ms: int = BAR_4H_MS, cap: int = EXT_CAP,
+                    periodo_atr: int = 14, mult_atr: float = 1.0):
     """`kis_tf.medir` SEM a exclusao de borda: caminho da barra i+1 ate a
-    ultima visivel (teto `cap`). None so se ATR14 <= 0. fwd_bar pode ser []."""
+    ultima visivel (teto `cap`). None so se ATR <= 0. fwd_bar pode ser [].
+    `periodo_atr`/`mult_atr` (24/11/2026, `kis_refino.escala` com indicadores
+    escalados): ATR = mult x ATR(periodo) com contexto de max(CTX, periodo+1)
+    velas; o default (14, 1.0) e a conta de sempre."""
     from backtest.excursion import _wilder_atr      # tardio, como no kis_tf
-    ctx = cndl[max(0, i - CTX + 1):i + 1]
-    entry, atr = ctx[-1]["close"], _wilder_atr(ctx)
+    ctx = cndl[max(0, i - max(CTX, periodo_atr + 1) + 1):i + 1]
+    entry, atr = ctx[-1]["close"], _wilder_atr(ctx, periodo_atr)
+    if mult_atr != 1.0:
+        atr *= mult_atr
     if atr <= 0:
         return None
     t0, lim = cndl[i]["ts"], cndl[i]["ts"] + cap * bar_ms
