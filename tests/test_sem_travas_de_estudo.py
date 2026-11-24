@@ -8,6 +8,7 @@
 #   - validacao de entrada (tf desconhecido, store inexistente).
 # Mais: KIS em 1h na mesma duracao das regras de 4h (`kis_refino.escala`) e o
 # gabarito de byte-identidade do kis_grade em 4h contra o codigo de 8ec3423.
+# Secao 8: --end antes do NOVO aceito (kis_grade, kis_refino, holdout_2026).
 import hashlib
 import random
 import re
@@ -332,3 +333,92 @@ def test_caminho_sem_copia_da_a_mesma_carteira():
     a = cart.roda(ct, {"X": mv}, bar_ms=H)
     b = cart.roda(ct, {"X": cp}, bar_ms=H)
     assert a["metricas"] == b["metricas"] and a["diario"] == b["diario"]
+
+
+# ---- 8. --end antes do NOVO (23/11/2026): aceito, periodo vazio no log --------
+# Cada periodo e cortado em --end; o que fica vazio aparece como
+# `vazio (--end <data>)`, sem linha no resumo e sem carteira, sem erro.
+ENDS_CEDO = {"2026-08-26": ("H1", "H2"), "2025-08-26": ("H1",)}
+
+
+def _periodos_csv(path, col="periodo"):
+    import csv
+    with open(path) as fh:
+        return {r[col] for r in csv.DictReader(fh)}
+
+
+@pytest.mark.parametrize("end", sorted(ENDS_CEDO))
+def test_kis_grade_end_antes_do_novo_entrega_so_os_periodos_do_corte(
+        end, db, tmp_path):
+    esperado = set(ENDS_CEDO[end])
+    assert g.main(["--end", end, "--store", db, "--symbols", *SYMS,
+                   "--logs", str(tmp_path), "--sem-guarda-relogio",
+                   "--celulas", "REF_BASE", "REF_T5s", "k3_p0_t0"]) == 0
+    log = next(tmp_path.glob("kis_grade_2*.log")).read_text()
+    for p in ("H1", "H2", "NOVO"):
+        assert (f"  {p}: vazio (--end {end})" in log) is (p not in esperado)
+    rs = next(tmp_path.glob("kis_grade_resumo_*.csv"))
+    assert _periodos_csv(rs) == esperado
+    assert rs.read_text().count("\n") == 1 + 3 * len(esperado)
+    assert _periodos_csv(next(tmp_path.glob("carteira_*.csv"))) == esperado
+    assert _maior_ts(log) < end
+    conf = re.findall(r"^\s+(\w+) REF_\w+ x \w+ do kis_refino: iguais (\d+) de "
+                      r"(\d+)", log, re.M)
+    assert {p for p, _a, _b in conf} == esperado
+    assert all(a == b for _p, a, b in conf)
+
+
+@pytest.mark.parametrize("end", sorted(ENDS_CEDO))
+def test_kis_refino_end_antes_do_novo_entrega_so_os_periodos_do_corte(
+        end, db, tmp_path):
+    esperado = set(ENDS_CEDO[end])
+    out = tmp_path / "r.csv"
+    assert kr.main(["--end", end, "--store", db, "--symbols", *SYMS,
+                    "--out", str(out), "--sem-guarda-relogio",
+                    "--carteira-celulas", "BASE", "T3"]) == 0
+    log = out.with_suffix(".log").read_text()
+    for p in ("H1", "H2", "NOVO"):
+        assert (f"  {p}: vazio (--end {end})" in log) is (p not in esperado)
+        assert (f"===== {p} — por celula" in log) is (p in esperado)
+        assert (f"  BASE {p}:" in log) is (p in esperado)      # carteira
+    assert _periodos_csv(out) <= esperado
+    assert _periodos_csv(tmp_path.glob("carteira_*.csv").__next__()) == \
+        esperado
+    assert "NOVO BASE_256 x holdout" not in log
+    m = re.search(r"sandbox BASE_256 x kis_saida E1-3: iguais (\d+) de (\d+) "
+                  r"\| max\|dif\| 0\.00e\+00 bps \| so no kis_saida 0 \| so "
+                  r"aqui 0", log)
+    assert m and m.group(1) == m.group(2) and int(m.group(1)) > 0
+    assert _maior_ts(log) < end
+
+
+@pytest.mark.parametrize("end", sorted(ENDS_CEDO))
+def test_holdout_end_antes_do_novo_roda_vazio(end, db, tmp_path):
+    from backtest import holdout_2026 as ho
+    out = tmp_path / "h.csv"
+    assert ho.main(["--end", end, "--store", db, "--symbols", *SYMS,
+                    "--out", str(out), "--sem-guarda-relogio"]) == 0
+    log = out.with_suffix(".log").read_text()
+    assert f"  NOVO: vazio (--end {end})" in log
+    assert "RESULTADO POR SETUP" not in log and "PASSIVO" not in log
+    assert out.read_text().count("\n") == 1                 # so o cabecalho
+    assert _maior_ts(log) < end
+
+
+@pytest.mark.parametrize("end", sorted(ENDS_CEDO))
+@pytest.mark.parametrize("nome", ["holdout_2026", "kis_refino", "kis_grade"])
+def test_end_antes_do_novo_detector_de_vazamento_dispara(nome, end, db,
+                                                         tmp_path,
+                                                         monkeypatch):
+    import importlib
+    mod = importlib.import_module(f"backtest.{nome}")
+
+    def sem_view(store, teto_ms):              # MUTACAO: tabela crua
+        return connect(store)
+    monkeypatch.setattr(ks, "conecta_com_teto", sem_view)
+    monkeypatch.setattr(mod, "conecta_com_teto", sem_view)
+    out = (["--logs", str(tmp_path)] if nome == "kis_grade"
+           else ["--out", str(tmp_path / "o.csv")])
+    with pytest.raises(SystemExit, match="view deixou passar candle"):
+        mod.main(["--end", end, "--store", db, "--symbols", *SYMS,
+                  "--sem-guarda-relogio", *out])

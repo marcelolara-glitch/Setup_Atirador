@@ -31,6 +31,8 @@
 # 2026-08-31 16:00 a 2026-11-14 12:00 (holdout_2026.JANELA), velas < --end,
 # sem exclusao de borda, aberto no fim marcado no fechamento da ultima barra.
 # Uma leitura por simbolo (ate --end); o sandbox usa o prefixo ts < teto.
+# Qualquer --end e aceito (23/11/2026): cada periodo e cortado em --end; o que
+# fica vazio sai no log como `vazio (--end <data>)`, sem resumo nem carteira.
 #
 # TETO DE HOLD: `TETO_HOLD` = 256 so na celula BASE_256 (conferencia). Todas as
 # outras celulas sem teto: o trade vai ate a proxima inversao (vetada ou nao)
@@ -547,6 +549,20 @@ def teto_lado(base: list, k: int, ordem: dict, cel: str) -> list:
     return out
 
 
+def periodos_ativos(end_ms: int) -> tuple:
+    """Periodos com alguma entrada possivel antes de --end (23/11/2026: --end
+    livre; regra de estudo nao trava simulacao). Periodo cujo inicio nao e
+    anterior a --end fica vazio: sem linha no resumo e sem carteira."""
+    ini = {"H1": _ms(H1[0]), "H2": _ms(H2[0]), "NOVO": JANELA[0]}
+    return tuple(p for p in PERIODOS if ini[p] < end_ms)
+
+
+def log_vazios(log, ativos: tuple, end_iso: str) -> None:
+    for p in PERIODOS:
+        if p not in ativos:
+            log(f"  {p}: vazio (--end {end_iso})")
+
+
 def periodo(t: dict, modo: str):
     if modo == "novo":
         return "NOVO"
@@ -743,9 +759,7 @@ def main(argv=None) -> int:
     if ruins:
         raise SystemExit(f"[kis_refino] celulas desconhecidas: {sorted(ruins)}")
     teto_ms, end_ms = _ms(TETO_ISO), _ms(args.end)
-    if end_ms <= JANELA[0]:
-        raise SystemExit(f"[kis_refino] --end {args.end} nao passa do inicio "
-                         "do periodo novo. ABORTADO.")
+    ativos = periodos_ativos(end_ms)
     if not args.sem_guarda_relogio:
         _guarda_relogio()
     from v10.registro import SYMBOLS_KIS_3489
@@ -770,6 +784,7 @@ def main(argv=None) -> int:
             f"{esc['borda']}, teto do caminho/hold {EXT_CAP} -> {esc['cap']} "
             f"(BASE_256 -> {base_cap}), T1 {T1_NS} -> {esc['t1_ns']}. "
             f"Indicadores, portao e confirmacao em barras de {args.tf}.")
+    log_vazios(log, ativos, args.end)
     conn = conecta_com_teto(args.store, end_ms)
     try:
         mx = conn.execute("SELECT MAX(ts) FROM candles").fetchone()[0]
@@ -803,10 +818,11 @@ def main(argv=None) -> int:
             f"conversao de duracao. Em 4h continua ligada.")
     else:
         from backtest import kis_saida as ks
-        ct = conecta_com_teto(args.store, teto_ms)
+        corte = min(teto_ms, end_ms)        # sandbox = velas < teto e < --end
+        ct = conecta_com_teto(args.store, corte)
         try:
             ref = ks.run(ct, [s for s in symbols if s not in A["sem"]],
-                         args.tf, None, teto_ms - 1,
+                         args.tf, None, corte - 1,
                          pares=(PAR,))["por_par"][PAR]
         finally:
             ct.close()
@@ -817,6 +833,7 @@ def main(argv=None) -> int:
         log(f"  sandbox BASE_256 x kis_saida E1-3: iguais {r[0]} de "
             f"{len(ref)} | max|dif| {r[1]:.2e} bps | so no kis_saida {r[2]} | "
             f"so aqui {r[3]}")
+    if conferir and "NOVO" in ativos:
         r = compara({(t["ts"], t["sym"]): t["ret6"]
                      for t in tr["novo"][base_cap]}, A["ref_novo"])
         log(f"  NOVO BASE_256 x holdout_2026 KIS_E1-3: iguais {r[0]} de "
@@ -843,7 +860,7 @@ def main(argv=None) -> int:
            f"{'tot@6':>9} {'bpt':>7} | {'acer%':>5} | {'ganho':>7} {'perda':>7}"
            f" | {'pico':>8} {'dd':>7} | tri   | sem melhor mes      | "
            f"{'sem 2%':>9} | LONG n tot@10 SHORT n tot@10 | teto | saidas %")
-    for p in PERIODOS:
+    for p in ativos:
         log(f"\n===== {p} — por celula (bps somados por trade; curva @10 na "
             "ordem de entrada) =====")
         log(cab)
@@ -853,7 +870,7 @@ def main(argv=None) -> int:
         log(f"  T3: trades com parcial1 {x['p1']} | com parcial2 {x['p2']}")
     log("\n===== DIFERENCA CONTRA A BASE (sem teto), @10: total | bps/trade "
         "=====")
-    for p in PERIODOS:
+    for p in ativos:
         b = res[("BASE", p)]
         for cel in nomes_cel:
             if cel == "BASE":
@@ -868,7 +885,7 @@ def main(argv=None) -> int:
                 f"{r['bpt10'] - b['bpt10']:>+7.1f} || " + " || ".join(ls))
     log("\n===== T2 — placebo (20 sementes; veta ao acaso a mesma quantidade "
         "por lado; so informativo) =====")
-    for p in PERIODOS:
+    for p in ativos:
         b, t2 = por[("BASE", p)], por[("T2", p)]
         pl = placebo_t2(b, t2)
         tot = res[("T2", p)]["tot10"]
@@ -877,7 +894,7 @@ def main(argv=None) -> int:
             f"placebos abaixo do T2: {sum(1 for x in pl if x < tot)}/{len(pl)}")
     log("\n===== T5 — toques falsos (o toque aconteceu, o fechamento nao "
         "confirmaria) =====")
-    for p in PERIODOS:
+    for p in ativos:
         for cel in ("T5s", "T5e"):
             for nome, lado in (("LONG", True), ("SHORT", False)):
                 sub = [t for t in por[(cel, p)] if t["long"] is lado]
@@ -891,7 +908,7 @@ def main(argv=None) -> int:
         w.writeheader()
         n_csv = 0
         for cel in nomes_cel:
-            for p in PERIODOS:
+            for p in ativos:
                 for t in por[(cel, p)]:
                     w.writerow(linha_csv(t, p))
                     n_csv += 1
@@ -904,7 +921,7 @@ def main(argv=None) -> int:
     arq = out.parent / f"carteira_{SETUP}_{stamp}.csv"
     with cart.DiarioUnico(arq) as dia:
         for cel in args.carteira_celulas:
-            for p in PERIODOS:
+            for p in ativos:
                 cam = A["cam"]["novo" if p == "NOVO" else "sandbox"]
                 rc = cart.roda([para_carteira(t) for t in por[(cel, p)]], cam,
                                bar_ms=esc["bar_ms"])

@@ -27,7 +27,8 @@
 # PERIODO: so trades com barra de ENTRADA de 2026-08-31 16:00 a 2026-11-14
 # 12:00 UTC, inclusive nas duas pontas. Posicao aberta antes nao conta.
 # AQUECIMENTO: passada continua desde o primeiro candle do store.
-# FIM: `--end` (exclusivo, default 2026-11-14 16:00 UTC) vira TEMP VIEW via
+# FIM: `--end` (exclusivo, default 2026-11-14 16:00 UTC; qualquer valor e
+# aceito, 23/11/2026: antes do inicio = `NOVO: vazio` no log) vira TEMP VIEW via
 # `kis_saida.conecta_com_teto`. Trade ainda aberto na ultima barra visivel e
 # marcado no fechamento dela (`marcado_fim` = 1), com o stop valendo ate la; se
 # o stop dispara antes, sai no stop (`marcado_fim` = 0). Entrada na propria
@@ -413,9 +414,7 @@ def main(argv=None) -> int:
             f"desta rodada nao comparam com os de 4h.")
         print(aviso_tf, flush=True)
     teto_ms = _ms(args.end)
-    if teto_ms <= JANELA[0]:
-        raise SystemExit(f"[holdout_2026] --end {args.end} nao passa do inicio "
-                         f"do periodo ({INI_ISO}). ABORTADO.")
+    vazio = teto_ms <= JANELA[0]          # 23/11/2026: --end livre
     if not args.sem_guarda_relogio:
         _guarda_relogio()
     from v10.registro import SYMBOLS_KIS_3489
@@ -442,8 +441,10 @@ def main(argv=None) -> int:
             f"{STOP_K:g} x ATR14)")
         if aviso_tf:
             log(aviso_tf)
+        if vazio:
+            log(f"  NOVO: vazio (--end {args.end})")
         # ---- 2. conferencias (cobertura ANTES de medir) ---------------------
-        esp = (teto_ms - JANELA[0]) // BAR_4H_MS
+        esp = max(0, (teto_ms - JANELA[0]) // BAR_4H_MS)
         cob = cobertura(conn, symbols, args.tf, JANELA[0], teto_ms)
         falta = {s: n for s, n in cob.items() if n != esp}
         log(f"\n===== CONFERENCIAS =====\n  cobertura (SQL, velas {args.tf} "
@@ -472,10 +473,11 @@ def main(argv=None) -> int:
             f"marcados no fim {r['marcados']} | entrada na ultima barra (hold "
             f"0) {r['hold0']} | truncados em {EXT_CAP} barras "
             f"{r['truncados']}")
-    # ---- 3 a 5 ----------------------------------------------------------------
-    _secao_resultado(log, por)
-    _secao_decomposicao(log, por)
-    _secao_passivo(log, A["passivo"], len(symbols))
+    # ---- 3 a 5 (periodo vazio: sem resumo) -----------------------------------
+    if not vazio:
+        _secao_resultado(log, por)
+        _secao_decomposicao(log, por)
+        _secao_passivo(log, A["passivo"], len(symbols))
 
     with out.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=CAMPOS)

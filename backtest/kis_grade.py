@@ -30,7 +30,8 @@
 # contra kis_saida e holdout_2026).
 #
 # PERIODOS: os do kis_refino (H1, H2 no sandbox com velas < 2026-08-26 e
-# exclusao de borda de 48 barras; NOVO de 31/08 a --end).
+# exclusao de borda de 48 barras; NOVO de 31/08 a --end). Qualquer --end e
+# aceito (23/11/2026): periodo vazio no corte = `vazio` no log, sem resumo.
 #
 # CARTEIRA: `backtest.carteira`, uma banca isolada de 10.000 USD por celula e
 # periodo, 300 USD por trade; um unico CSV diario por rodada; rebaixamento do
@@ -568,9 +569,7 @@ def main(argv=None) -> int:
     if args.sem_conferencia:
         todas = [c for c in todas if c["nome"] != "REF_T5s"]
     teto_ms, end_ms = _ms(TETO_ISO), _ms(args.end)
-    if end_ms <= JANELA[0]:
-        raise SystemExit(f"[kis_grade] --end {args.end} nao passa do inicio "
-                         "do periodo novo. ABORTADO.")
+    ativos = kr.periodos_ativos(end_ms)
     if not args.sem_guarda_relogio:
         _guarda_relogio()
     from v10.registro import SYMBOLS_KIS_3489
@@ -648,6 +647,7 @@ def main(argv=None) -> int:
                f"`trades_simbolo` com a mesma escala). ") +
             f"Fechamento diario da "
             f"carteira: barra das {24 - esc['bar_ms'] // 3_600_000}:00 UTC.")
+    kr.log_vazios(log, ativos, args.end)
     try:
         mx = conn.execute("SELECT MAX(ts) FROM candles").fetchone()[0]
         if mx is not None and mx >= end_ms:
@@ -668,7 +668,7 @@ def main(argv=None) -> int:
 
     def _confere(nome: str, por: dict) -> None:
         alvo = "BASE" if nome == "REF_BASE" else "T5s"
-        for p in PERIODOS:
+        for p in ativos:
             modo = "novo" if p == "NOVO" else "sandbox"
             ref = [t for t in A["ref"][alvo][modo]
                    if kr.periodo(t, modo) == p]
@@ -690,7 +690,7 @@ def main(argv=None) -> int:
             if not args.sem_conferencia and cel["nome"] in ("REF_BASE",
                                                             CONF_T5s):
                 _confere(cel["nome"], por)
-            for p in PERIODOS:
+            for p in ativos:
                 cam = A["cam"]["novo" if p == "NOVO" else "sandbox"]
                 tr = por[p]
                 rc = cart.roda([kr.para_carteira(t) for t in tr], cam,
@@ -736,7 +736,7 @@ def main(argv=None) -> int:
             f"{r['acerto']:.1f}% | banca {m['banca_final']:,.2f} USD | dd "
             f"{m.get('dd4_pct', 0):.2f}% / {m.get('dd4_usd', 0):,.2f} USD")
     log(f"\n  CSV de trades: {p_tr} ({n_tr} linhas)")
-    log(f"  CSV de resumo: {p_rs} ({len(todas) * len(PERIODOS)} linhas)")
+    log(f"  CSV de resumo: {p_rs} ({len(todas) * len(ativos)} linhas)")
     log(f"  CSV diario unico da carteira: {p_dia} ({dia.n} linhas)")
     log(f"  RSS de pico {max(rss, _rss_mib()):.0f} MiB (teto "
         f"{teto_rss():.0f}) | {time.monotonic() - t0:.0f} s")
