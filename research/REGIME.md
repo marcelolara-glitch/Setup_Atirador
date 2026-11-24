@@ -29,7 +29,7 @@ Regras de estudo são do Marcelo e circunstanciais: ele as cria e as suspende qu
   1. Decompor antes de ler o agregado: direção, símbolo, episódio.
   2. Uma linha em `research/scratch.md` por tarde (não por rodada). Claude Code pode
      escrever nele. O ledger continua só do Marcelo.
-  3. Rodada = comando único com log. Não disparar no minuto 16 de barra 4h (scan do cron).
+  3. Rodada = comando único com log.
 
 ## Camada 3 — Promoção ao forward (v10)
 - Portão de entrada (regime 20/08, emenda 23/11): positivo nas duas metades,
@@ -56,3 +56,4 @@ apontando o commit. Nunca reescrever o histórico de emendas.
 - 2026-09-12 — criação. Consolida o regime de 20/08 (camada 3) e abre a camada 2.
 - 2026-11-23 — camada 3: retirado "maioria dos trimestres" do portão de entrada (decisão do Marcelo).
 - 2026-11-23 — retirada a regra de janela única do 1h/15m; regras de estudo não travam simulações (decisão do Marcelo).
+- 2026-11-23 — camada 2: retirada a regra do minuto 16 (crons desligados; instrumentos só avisam) (decisão do Marcelo).
