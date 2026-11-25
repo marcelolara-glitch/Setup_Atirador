@@ -298,7 +298,10 @@ def test_espacamento_e_por_direcao_nao_por_simbolo(tmp_path):
     conn = connect(tmp_path / "j.db")
     cfg = {"s_atr": 1.5, "t_atr": 6.0, "h_bars": 4, "bar_ms": BAR,
            "espacamento_barras": 4}
+    # Barra 3 fura o stop da LONG (98.5): ela fecha ANTES da SHORT, senao a
+    # guarda de `_abrir` (camada 0) barraria a SHORT por outro motivo.
     serie = [_b(i * BAR) for i in range(5)]
+    serie[3] = _b(3 * BAR, l=98.0)
     rodar(_spec(detector=_sempre("LONG"), exit_params=cfg), conn,
           agora_ms=3 * BAR, velas_fn=_fonte({"BTCUSDT": serie[:3]}), log=QUIET)
     rodar(_spec(detector=_sempre("SHORT"), exit_params=cfg), conn,
