@@ -37,10 +37,12 @@ from backtest.kis_regime import alvos, avaliar, passa
 from shadow.donchian_a import (ATR_PERIOD, BAR_MS, CTX_BARS, H_BARS, N, S_ATR,
                                T_ATR, donchian_signal, wilder_atr)
 from shadow.donchian_a import SYMBOLS as SYMBOLS_DONCHIAN
+from v10.kis_final import detector_kis_final
 from v10.spec import SetupSpec
 
-__all__ = ["ATIVOS", "DONCHIAN_A_4H", "KIS_3489_60T_4H", "KIS_REGIME_4H",
-           "PARAMS_DONCHIAN_A", "PARAMS_KIS_3489", "PARAMS_KIS_REGIME",
+__all__ = ["ATIVOS", "DONCHIAN_A_4H", "KIS_3489_60T_4H", "KIS_3489_FINAL_4H",
+           "KIS_REGIME_4H", "PARAMS_DONCHIAN_A", "PARAMS_KIS_3489",
+           "PARAMS_KIS_FINAL", "PARAMS_KIS_REGIME",
            "REGISTRO", "SYMBOLS_KIS", "SYMBOLS_KIS_3489",
            "detector_donchian_a", "detector_kis_3489", "detector_kis_regime"]
 
@@ -298,8 +300,44 @@ DONCHIAN_A_4H = SetupSpec(
            "trocar a instância no meio da janela reinicia o relógio do zero."),
 )
 
+
+# --- KIS 34/89 FINAL (camada 3, paper) ---------------------------------------
+# O candidato do sandbox de 23-25/11/2026: célula `k3_p3-6_f50-25_t0` do
+# `backtest/kis_grade.py` (branch `sandbox`, 9bb1f68). Mesma entrada da ficha
+# 60T (E1: inversão + portão), saída diferente — stop 3 ATR, parciais limite de
+# 50% em +3 ATR e 25% em +6 ATR, resto na inversão por toque (T5s), sem teto.
+# Motor portado em `v10/kis_final.py`. NÃO substitui a 60T: hash próprio.
+PARAMS_KIS_FINAL = {"ema_fast": 34, "ema_slow": 89, "confirmacao": 2,
+                    "incl_ema_slow": 21, "incl_lookback": 5, "limiar": 0.02,
+                    "adx_min": 11, "adx_len": 13, "atr_len": 14}
+
+KIS_3489_FINAL_4H = SetupSpec(
+    setup_id="kis_3489_final_4h",
+    detector=detector_kis_final,
+    tf=TF,
+    cadencia_barras=1,
+    symbols=list(SYMBOLS_KIS_3489),
+    warmup_barras=MIN_BARS_KIS_3489,
+    exit_model="kis_final",
+    # janela_barras: EMA89/ADX13 convergidas — sem ela o gatilho de uma barra
+    # dependeria de onde a janela começa. alav/mmr: liquidação SÓ medida
+    # (margem isolada, nocional fixo de mao_usdt); paper, nada é enviado.
+    exit_params={"stop_k": 3, "parciais": [[3, 0.5], [6, 0.25]],
+                 "gatilho": "toque", "janela_barras": 1000, "mao_usdt": 450,
+                 "banca_usdt": 10000, "alav": 5, "mmr": 0.01},
+    detector_params=dict(PARAMS_KIS_FINAL),
+    custo_bps_por_perna=TAKER_BPS,
+    mode="shadow",
+    executar=False,                       # liga no briefing 4
+    estado_ciclo="proposto",
+    aviso=("candidato do sandbox de 23-25/11/2026 (kis_grade, célula "
+           "k3_p3-6_f50-25_t0). A janela do forward é por CONTAGEM de trades, "
+           "não por data (decisão do Marcelo)."),
+)
+
 REGISTRO = {s.setup_id: s
-            for s in (KIS_REGIME_4H, KIS_3489_60T_4H, DONCHIAN_A_4H)}
+            for s in (KIS_REGIME_4H, KIS_3489_60T_4H, DONCHIAN_A_4H,
+                      KIS_3489_FINAL_4H)}
 
 # O que o cron de fato roda. Derivado do REGISTRO, nunca uma segunda lista
 # escrita à mão: uma ficha nova entra aqui pelo próprio campo `executar`, e não

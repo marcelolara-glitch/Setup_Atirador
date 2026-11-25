@@ -63,7 +63,8 @@ def test_os_tres_config_hash_seguem_identicos(capsys):
         for sid, h in obtido.items():
             marca = "OK" if HASHES.get(sid) == h else "MUDOU"
             print(f"    {sid:<20} {h}  ({marca})")
-    assert obtido == HASHES
+    # a kis_3489_final_4h (briefing 2, 25/11) entra sem mexer nas três
+    assert {k: obtido[k] for k in HASHES} == HASHES
 
 
 def test_executar_nao_entra_no_dicionario_hasheado():
@@ -81,6 +82,8 @@ def test_virar_executar_nos_dois_sentidos_nao_move_hash(capsys):
     with capsys.disabled():
         print("\n  hash com executar=False / executar=True:")
     for sid, spec in REGISTRO.items():
+        if sid not in HASHES:          # a final tem teste proprio
+            continue
         desligada = replace(spec, executar=False).config_hash
         ligada = replace(spec, executar=True).config_hash
         with capsys.disabled():
@@ -114,7 +117,8 @@ def test_ativos_e_derivado_do_registro_pelo_proprio_executar():
 
 
 def test_o_registro_segue_com_as_tres_fichas():
-    assert set(REGISTRO) == {"kis_regime_4h", "kis_3489_60t_4h", "donchian_a_4h"}
+    assert set(REGISTRO) == {"kis_regime_4h", "kis_3489_60t_4h", "donchian_a_4h",
+                             "kis_3489_final_4h"}        # final: briefing 2
 
 
 def test_donchian_continua_desligado_e_kis_regime_intocada():

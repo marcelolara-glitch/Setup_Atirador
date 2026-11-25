@@ -106,7 +106,8 @@ def test_o_registro_tem_as_tres_fichas_e_a_nova_executa():
     # num PR proprio de uma linha. O hash NAO se mexeu na virada — `executar`
     # esta em `FORA_DO_HASH` —, entao a serie de `trades_v10` e a mesma; a prova
     # esta em `tests/test_v10_liga_kis_3489.py`.
-    assert set(REGISTRO) == {"kis_regime_4h", "kis_3489_60t_4h", "donchian_a_4h"}
+    assert set(REGISTRO) == {"kis_regime_4h", "kis_3489_60t_4h", "donchian_a_4h",
+                             "kis_3489_final_4h"}        # final: briefing 2
     assert KIS_3489_60T_4H.executar is True
     assert [s.setup_id for s in reg.ATIVOS] == ["kis_regime_4h", "kis_3489_60t_4h"]
 

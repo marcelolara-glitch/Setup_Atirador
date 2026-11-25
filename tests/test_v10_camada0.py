@@ -101,11 +101,15 @@ def test_janela_barras_define_o_pedido(tmp_path, extra, esperado):
 
 
 def test_hashes_do_registro_nao_mudam():
-    assert {k: s.config_hash for k, s in REGISTRO.items()} == {
-        "kis_regime_4h": "e63ec120e131", "kis_3489_60t_4h": "82488baa3086",
-        "donchian_a_4h": "250170cc8dc0"}
-    assert not any("janela_barras" in (s.exit_params or {})
-                   for s in REGISTRO.values())
+    # Briefing 2 (25/11) acrescentou a kis_3489_final_4h; as três de antes
+    # seguem com o hash e sem `janela_barras` (a nova declara a dela).
+    antigas = {"kis_regime_4h": "e63ec120e131",
+               "kis_3489_60t_4h": "82488baa3086",
+               "donchian_a_4h": "250170cc8dc0"}
+    assert set(REGISTRO) == set(antigas) | {"kis_3489_final_4h"}
+    assert {k: REGISTRO[k].config_hash for k in antigas} == antigas
+    assert not any("janela_barras" in (REGISTRO[k].exit_params or {})
+                   for k in antigas)
 
 
 # --- 3. determinismo ---------------------------------------------------------------

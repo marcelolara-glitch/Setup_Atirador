@@ -173,7 +173,8 @@ def test_short_r_multiple_tem_o_sinal_invertido():
 # --- registro dos adaptadores ------------------------------------------------
 def test_bracket_simples_esta_no_registro():
     assert adaptador("bracket_simples") is BracketSimples
-    assert set(ADAPTADORES) == {"bracket_multi", "reverse", "bracket_simples"}
+    assert set(ADAPTADORES) == {"bracket_multi", "reverse", "bracket_simples",
+                                "kis_final"}
 
 
 def test_os_tres_adaptadores_tem_a_mesma_interface():

@@ -250,7 +250,7 @@ def test_donchian_a_esta_desligado_no_registro():
                               KIS_REGIME_4H, REGISTRO)
     assert DONCHIAN_A_4H.executar is False and KIS_REGIME_4H.executar is True
     assert set(REGISTRO) == {"kis_regime_4h", "kis_3489_60t_4h",
-                             "donchian_a_4h"}                   # nao sumiu
+                             "donchian_a_4h", "kis_3489_final_4h"}  # nao sumiu
     assert DONCHIAN_A_4H not in ATIVOS
     assert ATIVOS == [KIS_REGIME_4H, KIS_3489_60T_4H]
 
