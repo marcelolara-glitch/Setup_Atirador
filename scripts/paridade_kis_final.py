@@ -124,7 +124,9 @@ def trades_v10(conn, spec, bar: int) -> dict:
         ent = int(r["entry_ts"])
         parc = "+".join(p["nome"] for p in s.get("parciais", []))
         if r["status"] == "OPEN":
-            fim, pnl = "fim", s.get("pnl_corrente_pct")
+            # Aberto na ÚLTIMA barra nunca passou por `avaliar`: sem marca.
+            # O sandbox marca no próprio close da entrada (hold 0, bruto 0).
+            fim, pnl = "fim", s.get("pnl_corrente_pct") or 0.0
             hold = (int(s.get("ultimo_ts_ms") or ent) - ent) // bar
         else:
             fim, pnl = FINAL[s["motivo"]], r["pnl_pct"]
