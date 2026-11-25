@@ -56,6 +56,13 @@ class Velas(list):
 TENTATIVAS = 3
 ESPERA_BASE_S = 1.0
 
+# Teto de `limit` do endpoint recente (OKX /market/candles e Bitget). Pedido
+# maior pagina para trás no histórico OKX, :data:`PAGINA_HIST` por chamada (cap
+# do /history-candles, o mesmo de `backtest/backfill_okx.py`).
+TETO_RECENTE = 300
+OKX_HISTORY_URL = "https://www.okx.com/api/v5/market/history-candles"
+PAGINA_HIST = 100
+
 
 class FalhaDeColeta(RuntimeError):
     """As tentativas acabaram sem resposta das corretoras para um símbolo."""
@@ -81,6 +88,71 @@ def _coletar(symbol: str, tf: str, limite: int) -> tuple[list[dict], str | None]
     return asyncio.run(_buscar())
 
 
+def _com_retry(fn, symbol: str, tf: str):
+    """Roda `fn` (uma tentativa de rede -> ``(candles, venue)``) até ter venue.
+    Esgotou :data:`TENTATIVAS`: :class:`FalhaDeColeta` — nunca ``[]``."""
+    motivo = "as duas corretoras falharam"
+    for tentativa in range(1, max(int(TENTATIVAS), 1) + 1):
+        try:
+            candles, venue = fn()
+        except Exception as e:                     # exceção crua da rede
+            candles, venue, motivo = None, None, f"{type(e).__name__}: {e}"
+        if venue is not None:
+            return candles, venue
+        if tentativa < max(int(TENTATIVAS), 1):
+            time.sleep(ESPERA_BASE_S * 2 ** (tentativa - 1))
+    raise FalhaDeColeta(f"{symbol} {tf}: sem coleta apos "
+                        f"{max(int(TENTATIVAS), 1)} tentativa(s) — {motivo}")
+
+
+def _coletar_antes(symbol: str, tf: str, after_ms: int) -> tuple[list[dict], str | None]:
+    """UMA página do histórico OKX com ``ts < after_ms``. -> ``(crescente, venue)``;
+    `venue` ``None`` = caiu; lista vazia com venue = o histórico acabou.
+    Costura de teste, como :func:`_coletar`."""
+    import asyncio
+
+    import aiohttp
+    from exchanges import api_get_async
+
+    inst = f"{symbol.replace('USDT', '')}-USDT-SWAP"
+    url = (f"{OKX_HISTORY_URL}?instId={inst}&bar={tf}&limit={PAGINA_HIST}"
+           f"&after={int(after_ms)}")
+
+    async def _buscar():
+        async with aiohttp.ClientSession() as session:
+            return await api_get_async(session, url)
+
+    data = asyncio.run(_buscar())
+    if not data or "data" not in data:
+        return [], None
+    out = [{"ts": int(c[0]), "open": float(c[1]), "high": float(c[2]),
+            "low": float(c[3]), "close": float(c[4]), "volume": float(c[5])}
+           for c in data["data"] if len(c) <= 8 or c[8] != "0"]
+    out.reverse()                                  # OKX: decrescente
+    return out, VENUE_PRIMARIA
+
+
+def _paginar(symbol: str, tf: str, n: int, ate, candles: list) -> list:
+    """Estende `candles` para trás até sobrarem `n` com ``ts <= ate``. Dedup por
+    ts; para quando o histórico acaba ou o cursor não anda (nunca laço eterno)."""
+    por_ts = {int(c["ts"]): c for c in candles}
+
+    def _uteis():
+        return sum(1 for t in por_ts if ate is None or t <= int(ate))
+
+    for _ in range(n // max(PAGINA_HIST, 1) + 10):
+        if _uteis() >= n:
+            break
+        cursor = min(por_ts)
+        pagina, _v = _com_retry(lambda: _coletar_antes(symbol, tf, cursor),
+                                symbol, tf)
+        novos = [c for c in (pagina or []) if int(c["ts"]) < cursor]
+        if not novos:
+            break
+        por_ts.update((int(c["ts"]), c) for c in novos)
+    return [por_ts[t] for t in sorted(por_ts)]
+
+
 def velas(symbol: str, tf: str, n: int, ate=None) -> list[dict]:
     """`n` velas de `symbol` no timeframe `tf`, crescentes (antiga -> recente).
 
@@ -104,27 +176,25 @@ def velas(symbol: str, tf: str, n: int, ate=None) -> list[dict]:
     filtra DENTRO dela. Pedir um `ate` mais antigo que a janela devolve menos
     de `n` velas (ou nenhuma) — não devolve dado errado, devolve menos. Passado
     fundo é trabalho da versão de store, que ainda não existe.
+
+    JANELA LONGA (n > :data:`TETO_RECENTE`): a 1ª página sai do caminho de
+    sempre (endpoint recente, com fallback); as anteriores, do histórico da OKX
+    (:data:`OKX_HISTORY_URL`, :data:`PAGINA_HIST` por página, cursor `after`),
+    o mesmo padrão de `backtest/backfill_okx.py`. Só pagina se a 1ª página veio
+    da PRIMÁRIA: emendar Bitget com OKX daria uma série de duas réguas, então
+    nesse caso levanta :class:`FalhaDeColeta` em vez de devolver menos.
     """
     # Com `ate`, parte da janela vai ser descartada — pede folga para ainda
     # sobrar `n`. Teto de 300 é o limite prático de limit das duas exchanges.
-    limite = min(300, max(int(n), 1) * 2) if ate is not None else max(int(n), 1)
-
-    candles = None
-    motivo = "as duas corretoras falharam"
-    for tentativa in range(1, max(int(TENTATIVAS), 1) + 1):
-        try:
-            candles, venue = _coletar(symbol, tf, limite)
-        except Exception as e:                     # exceção crua da rede
-            candles, venue, motivo = None, None, f"{type(e).__name__}: {e}"
-        if venue is not None:
-            break
-        if tentativa < max(int(TENTATIVAS), 1):
-            time.sleep(ESPERA_BASE_S * 2 ** (tentativa - 1))
-    else:
-        raise FalhaDeColeta(f"{symbol} {tf}: sem coleta apos "
-                            f"{max(int(TENTATIVAS), 1)} tentativa(s) — {motivo}")
-
+    n = max(int(n), 1)
+    limite = min(TETO_RECENTE, n * 2) if ate is not None else min(TETO_RECENTE, n)
+    candles, venue = _com_retry(lambda: _coletar(symbol, tf, limite), symbol, tf)
     candles = list(candles or [])
+    if n > TETO_RECENTE and candles:
+        if venue != VENUE_PRIMARIA:
+            raise FalhaDeColeta(f"{symbol} {tf}: janela de {n} exige historico "
+                                f"da primaria, 1a pagina veio de {venue}")
+        candles = _paginar(symbol, tf, n, ate, candles)
     if ate is not None:
         candles = [c for c in candles if int(c["ts"]) <= int(ate)]
     candles.sort(key=lambda c: int(c["ts"]))

@@ -129,8 +129,16 @@ def _atualizar(spec, adap, conn, symbol, velas, agora_ms) -> int:
     return fechadas
 
 
-def _abrir(spec, adap, conn, symbol, velas, bar_ms) -> int:
-    """Avalia o detector na última barra fechada e grava a entrada. -> 0 ou 1."""
+def _abrir(spec, adap, conn, symbol, velas, bar_ms, guarda=None, log=None) -> int:
+    """Avalia o detector na última barra fechada e grava a entrada. -> 0 ou 1.
+
+    GUARDA: com posição OPEN do mesmo setup/config/símbolo, não abre — qualquer
+    direção. A aberta já passou por :func:`_atualizar` nesta run; chegar aqui
+    com ela viva é defeito (o caso XLMUSDT: duas SHORT simultâneas), não sinal.
+    O símbolo vai para `guarda` (lista do resultado de :func:`rodar`). A guarda
+    age DEPOIS do detector: posição aberta sem sinal novo é o estado normal do
+    `reverse` entre inversões, e contá-la poria o universo inteiro na lista.
+    """
     bar = velas[-1]
     bar_ts = int(bar["ts"])
     cadencia = max(int(spec.cadencia_barras or 1), 1)
@@ -141,6 +149,17 @@ def _abrir(spec, adap, conn, symbol, velas, bar_ms) -> int:
         return 0
     direction = _campo(sinal, "direction")
     if direction not in tuple(spec.direcoes):
+        return 0
+    aberta = conn.execute(
+        f"SELECT id, direction FROM {TABELA} WHERE setup_id=? AND config_hash=? "
+        "AND symbol=? AND status='OPEN' LIMIT 1",
+        (spec.setup_id, spec.config_hash, symbol)).fetchone()
+    if aberta is not None:
+        (log or logging.getLogger("v10.runner")).warning(
+            f"  [{spec.setup_id}/{symbol}] GUARDA: pedida {direction}, mas "
+            f"{aberta['id']} ({aberta['direction']}) segue OPEN; nao abre")
+        if guarda is not None:
+            guarda.append(symbol)
         return 0
     esp = int((spec.exit_params or {}).get("espacamento_barras", 0))
     if esp:
@@ -180,7 +199,7 @@ def rodar(spec, conn, agora_ms, velas_fn=None, log=None) -> dict:
 
     Retorno:
         ``{"setup_id", "config_hash", "ok", "falhas", "abertos", "fechados",
-        "falha_symbols", "venue_alt"}``. Nunca levanta por causa de um símbolo.
+        "falha_symbols", "venue_alt", "guarda"}``. Nunca levanta por causa de um símbolo.
 
     `falha_symbols` é o registro NOMEADO do que não resolveu — coleta que
     esgotou as tentativas (:class:`v10.data.FalhaDeColeta`) ou barras de menos.
@@ -198,12 +217,16 @@ def rodar(spec, conn, agora_ms, velas_fn=None, log=None) -> dict:
     adap = adaptador(spec.exit_model)
     bar_ms = _bar_ms(spec.tf)
     warmup = int(spec.warmup_barras)
-    n = max(warmup + FOLGA_BARRAS, 2)
+    # `janela_barras` (exit_params, opcional): janela que faz EMA longa
+    # convergir — sem ela, o valor de uma barra depende de onde a janela começa,
+    # e a mesma barra muda de alvo entre a run da entrada e a da saída.
+    janela = int((spec.exit_params or {}).get("janela_barras", 0))
+    n = max(warmup + FOLGA_BARRAS, janela, 2)
     anotar = getattr(spec.detector, "anotar", None)
     det_params = getattr(spec, "detector_params", None) or {}
     r = {"setup_id": spec.setup_id, "config_hash": spec.config_hash,
          "ok": 0, "falhas": 0, "abertos": 0, "fechados": 0, "falha_symbols": [],
-         "venue_alt": []}
+         "venue_alt": [], "guarda": []}
     for symbol in spec.symbols:
         try:
             brutas = velas_fn(symbol, spec.tf, n)
@@ -222,14 +245,16 @@ def rodar(spec, conn, agora_ms, velas_fn=None, log=None) -> dict:
             if anotar is not None:
                 velas = _chamar(anotar, velas, det_params)
             r["fechados"] += _atualizar(spec, adap, conn, symbol, velas, agora_ms)
-            r["abertos"] += _abrir(spec, adap, conn, symbol, velas, bar_ms)
+            r["abertos"] += _abrir(spec, adap, conn, symbol, velas, bar_ms,
+                                   guarda=r["guarda"], log=log)
             r["ok"] += 1
         except Exception as e:
             r["falhas"] += 1
             r["falha_symbols"].append(symbol)
             log.warning(f"  [{spec.setup_id}/{symbol}] falha: {type(e).__name__}: {e}")
     log.info(f"[v10] {spec.setup_id} ok={r['ok']} falhas={r['falhas']} "
-             f"abertos={r['abertos']} fechados={r['fechados']}")
+             f"abertos={r['abertos']} fechados={r['fechados']} "
+             f"guarda={len(r['guarda'])}")
     return r
 
 
