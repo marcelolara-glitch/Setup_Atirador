@@ -124,7 +124,8 @@ CELULAS = (("BASE_256", "BASE") + tuple(f"T1_{n}" for n in T1_NS) +
            ("T2", "T3") + tuple(f"T4_{k}" for k in T4_KS) + ("T5s", "T5e"))
 PERIODOS = ("H1", "H2", "NOVO")
 DELTA_10 = COST_FWD_BPS - COST_BPS
-TIPOS = ("stop", "inversao", "tempo", "parcial1", "parcial2", "teto", "fim")
+TIPOS = ("stop", "inversao", "tempo", "parcial1", "parcial2", "teto", "fim",
+         "escada1", "escada2", "escada3")
 
 
 # ------------------------------------------------- escala do tempo grafico --
@@ -277,17 +278,36 @@ def _barra(c: dict, entry: float, atr: float, sg: float) -> tuple:
         sg * (c["close"] - entry) / atr
 
 
+def nivel_p3(parciais) -> float:
+    """P3 da escada = P2 + (P2 - P1), em ATR."""
+    (a, _fa, _na), (b, _fb, _nb) = parciais
+    return b + (b - a)
+
+
+def degraus_escada(parciais) -> tuple:
+    """Escada de stop (briefing de 24/11/2026): ((bit de parcial ou None,
+    gatilho em ATR, novo stop em ATR, tipo)). Degrau 1: P1 executada -> stop
+    na entrada; 2: P2 executada -> stop em P1; 3: toque em P3 -> stop em P2."""
+    (a, _fa, _na), (b, _fb, _nb) = parciais
+    return ((0, a, 0.0, "escada1"), (1, b, a, "escada2"),
+            (None, nivel_p3(parciais), b, "escada3"))
+
+
 def simula(cndl: list, i: int, e: int, entry: float, atr: float, sg: float,
            k: float = STOP_K, tempo_n: int = None, parciais=(), gat=None,
-           tipo_fim: str = "inversao") -> tuple:
+           tipo_fim: str = "inversao", escada: bool = False) -> tuple:
     """Barras i+1..e. Devolve ([(idx, r_atr, preco, fracao, tipo)], mfe, mae).
-    gat(idx) -> preco do gatilho de saida (T5) ou None."""
+    gat(idx) -> preco do gatilho de saida (T5) ou None. `escada` (so com 2
+    parciais): o stop sobe a partir da barra SEGUINTE a cada degrau de
+    `degraus_escada`, so sobe; saida pelo stop movido tem o tipo do degrau."""
     execs, resto, pegos, mfe, mae = [], 1.0, 0, 0.0, 0.0
     px_stop = entry - sg * k * atr
+    s_nivel, s_tipo = -k, "stop"
+    degraus = degraus_escada(parciais) if escada and parciais else ()
     for idx in range(i + 1, e + 1):
         c = cndl[idx]
         fav, adv, op, cl = _barra(c, entry, atr, sg)
-        nivel, px_n, tipo = -k, px_stop, "stop"
+        nivel, px_n, tipo = s_nivel, px_stop, s_tipo
         g = gat(idx) if gat is not None else None
         if g is not None:
             gl = sg * (g - entry) / atr
@@ -304,6 +324,11 @@ def simula(cndl: list, i: int, e: int, entry: float, atr: float, sg: float,
                 execs.append((idx, r, px, fr, nome))
                 resto -= fr
                 pegos |= 1 << n
+        for bit, gat_lvl, novo, nome in degraus:      # vale da proxima barra
+            feito = pegos >> bit & 1 if bit is not None else fav >= gat_lvl
+            if feito and novo > s_nivel:
+                s_nivel, s_tipo = novo, nome
+                px_stop = entry + sg * novo * atr
         mfe, mae = max(mfe, fav), max(mae, adv)
         if (tempo_n and idx < e and idx - i == tempo_n
                 and mfe < T1_PROGRESSO):

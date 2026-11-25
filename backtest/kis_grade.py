@@ -72,8 +72,20 @@
 # na grade pedida, ela e calculada so para conferir e nao vai aos CSVs.
 # Eixos invalidos (parcial decrescente, fracoes > 100%) abortam antes do store.
 #
+# ESCADA DE STOP (briefing de 24/11/2026): `--escada 0 1` (default 0 = tudo
+# como antes, gabaritos de bytes em 4h e 1h). Com escada = 1, so em celulas
+# com parciais (sufixo `_e1` no nome; sem parciais a variante nao e gerada):
+# a partir da barra SEGUINTE a execucao de P1 o stop vai para a entrada
+# exata; apos P2, para P1; apos o toque intrabarra em P3 = P2 + (P2 - P1),
+# para P2; depois nao sobe mais; so sobe. Motor: `kr.simula(escada=True)`.
+# Saida pelo stop movido: tipo escada1 / escada2 / escada3 no CSV de trades.
+# No resumo, SO quando a rodada tem escada 1, colunas pct_escada1..3 e
+# n_toque_p3 (trades cujo MFE chegou a P3 antes da saida; em toda celula com
+# parciais, e0 ou e1). Sem escada 1 o cabecalho do resumo fica o de antes.
+#
 # Uso (VM): python -m backtest.kis_grade --store <candles_v9.db>
 #   [--ks 2.5 3 3.5] [--parciais 3-6 6-12] [--fracoes 50-25 33-33] [--tetos 0]
+#   [--escada 0 1]
 from __future__ import annotations
 
 import argparse
@@ -106,6 +118,7 @@ STOPS = (2.0, 3.0, 4.0)
 PARCIAIS = (None, (3.0, 6.0), (4.0, 8.0), (6.0, 12.0))   # None = sem
 FRACOES = ((0.50, 0.25), (0.33, 0.33))
 TETOS = (0, 128, 256, 384)                  # 0 = sem teto
+ESCADAS = (0,)                              # 0 = sem escada, 1 = com
 CONF_T5s = "k3_p0_t0"                       # celula conferida contra o T5s
 ALAVS = (3, 5, 10)
 PERIODOS = kr.PERIODOS
@@ -176,11 +189,19 @@ def arg_teto(txt: str) -> int:
     return t
 
 
-def _cel(k: float, p, f, t: int) -> dict:
+def arg_escada(txt: str) -> int:
+    if txt.strip() not in ("0", "1"):
+        raise argparse.ArgumentTypeError(f"escada '{txt}': 0 ou 1")
+    return int(txt)
+
+
+def _cel(k: float, p, f, t: int, e: int = 0) -> dict:
     pn = (f"p{_n(p[0])}-{_n(p[1])}_f{round(f[0] * 100)}-"
           f"{round(f[1] * 100)}" if p else "p0")
-    return {"nome": f"k{_n(k)}_{pn}_t{t}", "k": float(k), "parc": p,
-            "frac": f if p else None, "teto": t, "toque": True, "ref": None}
+    e = 1 if e and p else 0
+    return {"nome": f"k{_n(k)}_{pn}_t{t}" + ("_e1" if e else ""),
+            "k": float(k), "parc": p, "frac": f if p else None, "teto": t,
+            "toque": True, "ref": None, "escada": e}
 
 
 def tetos_do_tf(esc: dict) -> list:
@@ -190,17 +211,18 @@ def tetos_do_tf(esc: dict) -> list:
 
 
 def celulas(ks=STOPS, parciais=PARCIAIS, fracoes=FRACOES,
-            tetos=None) -> list:
+            tetos=None, escadas=ESCADAS) -> list:
     """Referencias + grade. Cada celula: {nome, k, parc, frac, teto, toque,
     ref}. parc = niveis em ATR ou None; frac = fracoes ou None; teto em
     barras do tf (None = TETOS, os de 4h). Ordem: k, depois parciais na ordem
-    dada (cada uma com todas as fracoes), depois teto. Duplicatas de eixo sao
-    descartadas (primeira ocorrencia)."""
+    dada (cada uma com todas as fracoes), depois teto, depois escada (so em
+    celula com parciais). Duplicatas de eixo sao descartadas (primeira
+    ocorrencia)."""
     tetos = TETOS if tetos is None else tetos
     out = [{"nome": "REF_BASE", "k": 3.0, "parc": None, "frac": None,
-            "teto": 0, "toque": False, "ref": "BASE"},
+            "teto": 0, "toque": False, "ref": "BASE", "escada": 0},
            {"nome": "REF_T5s", "k": 3.0, "parc": None, "frac": None,
-            "teto": 0, "toque": True, "ref": "T5s"}]
+            "teto": 0, "toque": True, "ref": "T5s", "escada": 0}]
     combos = []
     for p in dict.fromkeys(parciais):
         combos += [(None, None)] if p is None else \
@@ -208,7 +230,8 @@ def celulas(ks=STOPS, parciais=PARCIAIS, fracoes=FRACOES,
     for k in dict.fromkeys(float(x) for x in ks):
         for p, f in combos:
             for t in dict.fromkeys(tetos):
-                out.append(_cel(k, p, f, t))
+                for e in dict.fromkeys(escadas if p else (0,)):
+                    out.append(_cel(k, p, f, t, e))
     return out
 
 
@@ -279,7 +302,8 @@ def simula_celula(cel: dict, v, ev: dict, gL, gS) -> tuple:
             x = g[j]
             return None if x is None or x != x else x
     return kr.simula(v, i, e, ev["en"], ev["atr"], ev["sg"], k=cel["k"],
-                     parciais=niveis(cel), gat=gat, tipo_fim=tipo)
+                     parciais=niveis(cel), gat=gat, tipo_fim=tipo,
+                     **({"escada": True} if cel["escada"] else {}))
 
 
 def trades_celula(cel: dict, v, evs: list, gL, gS, sym: str) -> list:
@@ -446,6 +470,16 @@ CAMPOS_RESUMO = (
      "stop_dist_p50", "stop_dist_p90", "stop_dist_p99", "stop_dist_max",
      "adv_p50", "adv_p90", "adv_p99", "adv_max"] +
     [f"liq{L}_{x}" for L in ALAVS for x in ("n", "usd")])
+CAMPOS_ESCADA = ["pct_escada1", "pct_escada2", "pct_escada3", "n_toque_p3"]
+
+
+def campos_resumo(com_escada: bool) -> list:
+    """Cabecalho do resumo; colunas da escada (apos pct_fim) so na rodada
+    com --escada 1 (sem ela, o cabecalho de antes, byte a byte)."""
+    if not com_escada:
+        return CAMPOS_RESUMO
+    j = CAMPOS_RESUMO.index("pct_fim") + 1
+    return CAMPOS_RESUMO[:j] + CAMPOS_ESCADA + CAMPOS_RESUMO[j:]
 
 
 def _f(x, nd=2):
@@ -461,7 +495,7 @@ def _ts(x):
 
 
 def linha_resumo(cel: dict, per: str, tr: list, rc: dict, cam: dict,
-                 mmr: float) -> dict:
+                 mmr: float, campos: list = CAMPOS_RESUMO) -> dict:
     row = {"celula": cel["nome"], "periodo": per, **_desc(cel), "n": len(tr)}
     if tr:
         r = kr.resumo(tr)
@@ -477,7 +511,12 @@ def linha_resumo(cel: dict, per: str, tr: list, rc: dict, cam: dict,
             "pct_inversao": sd["inversao"],
             "pct_parcial1": 100.0 * r["p1"] / len(tr),
             "pct_parcial2": 100.0 * r["p2"] / len(tr),
-            "pct_teto": sd["teto"], "pct_fim": sd["fim"]})
+            "pct_teto": sd["teto"], "pct_fim": sd["fim"],
+            "pct_escada1": sd["escada1"], "pct_escada2": sd["escada2"],
+            "pct_escada3": sd["escada3"]})
+        if cel["parc"]:
+            p3 = kr.nivel_p3(niveis(cel))
+            row["n_toque_p3"] = sum(1 for t in tr if t["mfe"] >= p3)
     m = rc["metricas"]
     row.update({"banca_final": m["banca_final"],
                 "retorno_pct": m["retorno_pct"]})
@@ -506,7 +545,7 @@ def linha_resumo(cel: dict, per: str, tr: list, rc: dict, cam: dict,
                 usd += x - real
         row[f"liq{L}_n"], row[f"liq{L}_usd"] = n, float(usd)
     return {k: _f(row.get(k), 4 if k.startswith(("stop_dist", "adv")) else 2)
-            for k in CAMPOS_RESUMO}
+            for k in campos}
 
 
 def linha_trade(t: dict, per: str, cel: dict) -> dict:
@@ -537,6 +576,10 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--tetos", nargs="+", type=arg_teto, default=None,
                     help="barras DO TF, 0 = sem; default 0 128 256 384 em 4h "
                          "(a mesma duracao no tf: 1h 0 512 1024 1536)")
+    ap.add_argument("--escada", nargs="+", type=arg_escada,
+                    default=list(ESCADAS), help="escada de stop apos as "
+                    "parciais: 0 = sem, 1 = com (so celulas com parciais, "
+                    "sufixo _e1); default 0")
     ap.add_argument("--escala-indicadores", type=arg_escala, default=1,
                     metavar="F", help="multiplica os comprimentos dos "
                     "indicadores e do sinal por F (inteiro >= 1); default 1")
@@ -557,7 +600,9 @@ def main(argv=None) -> int:
     if args.tetos is None:
         args.tetos = tetos_do_tf(esc)
     eixos = dict(ks=args.ks, parciais=args.parciais, fracoes=args.fracoes,
-                 tetos=args.tetos)
+                 tetos=args.tetos, escadas=args.escada)
+    com_escada = 1 in args.escada
+    campos = campos_resumo(com_escada)
     todas = celulas(**eixos)
     n_grade = len(todas) - len(REFS)
     if args.celulas:
@@ -609,7 +654,10 @@ def main(argv=None) -> int:
     e_f = " ".join(f"{round(a * 100)}-{round(b * 100)}"
                    for a, b in args.fracoes)
     log(f"  grade: --ks {e_k} --parciais {e_p} --fracoes {e_f} --tetos "
-        f"{' '.join(map(str, args.tetos))} (fracoes so com parciais; 0 = sem)"
+        f"{' '.join(map(str, args.tetos))}"
+        + (f" --escada {' '.join(map(str, dict.fromkeys(args.escada)))}"
+           if com_escada else "") +
+        " (fracoes so com parciais; 0 = sem)"
         f" = {n_grade} celulas + "
         f"{len(REFS)} referencias | rodando {len(todas)} | carteira "
         f"{cart.BANCA_INICIAL:,.0f} USD por celula e periodo, "
@@ -680,7 +728,7 @@ def main(argv=None) -> int:
     with p_tr.open("w", newline="") as f_tr, \
             p_rs.open("w", newline="") as f_rs, cart.DiarioUnico(p_dia) as dia:
         w_tr = csv.DictWriter(f_tr, fieldnames=CAMPOS_TRADES)
-        w_rs = csv.DictWriter(f_rs, fieldnames=CAMPOS_RESUMO)
+        w_rs = csv.DictWriter(f_rs, fieldnames=campos)
         w_tr.writeheader()
         w_rs.writeheader()
         n_tr = 0
@@ -696,7 +744,8 @@ def main(argv=None) -> int:
                 rc = cart.roda([kr.para_carteira(t) for t in tr], cam,
                                bar_ms=esc["bar_ms"])
                 dia.anexa(cel["nome"], p, rc["diario"])
-                w_rs.writerow(linha_resumo(cel, p, tr, rc, cam, args.mmr))
+                w_rs.writerow(linha_resumo(cel, p, tr, rc, cam, args.mmr,
+                                           campos))
                 for t in tr:
                     w_tr.writerow(linha_trade(t, p, cel))
                     n_tr += 1
@@ -746,6 +795,10 @@ def main(argv=None) -> int:
         "fechamento). Stop k x ATR14 da barra do sinal em min(stop, "
         "abertura); parciais limite; stop e alvo na mesma barra: stop "
         "primeiro; teto sai no fechamento da barra i+T. "
+        + ("Escada (_e1): stop -> entrada apos P1, -> P1 apos P2, -> P2 apos "
+           "o toque em P3 = P2 + (P2 - P1), sempre da barra seguinte, so "
+           "sobe; n_toque_p3 = MFE >= P3 antes da saida. " if com_escada
+           else "")
         + (f"Escala x{F}: 'ATR14' e 'k x ATR' acima = r x ATR{x['atr']} do tf "
            f"(r = {mr['r']:.4f}). " if mr else "") +
         "Custo por trade @10 "
