@@ -260,6 +260,15 @@ def rodar(spec, conn, agora_ms, velas_fn=None, log=None) -> dict:
             r["falhas"] += 1
             r["falha_symbols"].append(symbol)
             log.warning(f"  [{spec.setup_id}/{symbol}] falha: {type(e).__name__}: {e}")
+    # Série da carteira (só fichas com banca): base do rebaixamento do delta.
+    # Falha aqui é de leitura, não de trade — warning e segue.
+    if "banca_usdt" in (spec.exit_params or {}):
+        try:
+            from v10.relatorio import gravar_carteira   # lazy: relatorio importa runner
+            gravar_carteira(conn, spec, agora_ms)
+        except Exception as e:
+            log.warning(f"  [{spec.setup_id}] carteira_v10 nao gravada: "
+                        f"{type(e).__name__}: {e}")
     log.info(f"[v10] {spec.setup_id} ok={r['ok']} falhas={r['falhas']} "
              f"abertos={r['abertos']} fechados={r['fechados']} "
              f"guarda={len(r['guarda'])}")
@@ -301,8 +310,8 @@ def main(argv=None) -> int:
     reportar. O relógio é lido UMA vez e passado adiante — duas leituras de
     ``now()`` na mesma run poderiam cair em barras diferentes.
 
-    ``--sem-envio`` roda e não manda nada (útil para a primeira execução na VM,
-    quando se quer ver o log antes de acordar o Telegram).
+    ``--sem-envio`` roda e imprime o delta no LOG em vez de enviar (a marca da
+    janela não avança) — para ver a mensagem antes de acordar o Telegram.
 
     ``--setup <setup_id>`` roda UMA ficha do REGISTRO ignorando o `executar`
     dela — é o teste de carga da coleta antes de ligar um setup de verdade.
@@ -357,17 +366,21 @@ def main(argv=None) -> int:
                                      log=log)
     finally:
         conn.close()
-    if not args.sem_envio:
-        from v10.relatorio import run_delta
-        # A coleta desta run vai junto: o delta é lido como "o que aconteceu",
-        # e um símbolo que não resolveu não pode passar por um que nada viu.
-        coleta = {r["setup_id"]: r["falha_symbols"] for r in resultados
-                  if r.get("falha_symbols")}
-        # Idem para a corretora: um símbolo servido pelo fallback nao pode
-        # passar por um símbolo servido pela primária.
-        venue = {r["setup_id"]: r["venue_alt"] for r in resultados
-                 if r.get("venue_alt")}
-        run_delta(now=agora, log=log, coleta=coleta, venue=venue)
+    from v10.relatorio import run_delta
+    # A coleta desta run vai junto: o delta é lido como "o que aconteceu",
+    # e um símbolo que não resolveu não pode passar por um que nada viu. Lista
+    # VAZIA entra (é "coleta completa"); só o setup que não rodou fica de fora.
+    rodaram = [r for r in resultados if "falha_symbols" in r]
+    coleta = {r["setup_id"]: r["falha_symbols"] for r in rodaram}
+    # Idem para a corretora: um símbolo servido pelo fallback nao pode
+    # passar por um símbolo servido pela primária.
+    venue = {r["setup_id"]: r["venue_alt"] for r in rodaram if r.get("venue_alt")}
+    guarda = {r["setup_id"]: r["guarda"] for r in rodaram}
+    # O delta é das fichas que RODARAM nesta invocação: no cron, as de
+    # `executar=True` (o mesmo que ATIVOS); com --setup, só a ficha pedida.
+    specs = [REGISTRO[r["setup_id"]] for r in rodaram if r["setup_id"] in REGISTRO]
+    run_delta(now=agora, log=log, coleta=coleta, venue=venue, guarda=guarda,
+              specs=specs, sem_envio=args.sem_envio)
     return 0
 
 

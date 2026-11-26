@@ -1,4 +1,4 @@
-"""v10/schema.py — tabela `trades_v10`. Tabela NOVA, sem ALTER, sem migração.
+"""v10/schema.py — tabelas `trades_v10` e `carteira_v10`. Tabelas NOVAS, sem ALTER, sem migração.
 
 Mora no mesmo arquivo do v9 (``journal/atirador_journal_v9.db``) para que uma
 consulta só cruze histórico e ciclo novo. A tabela `trades` do v9 fica
@@ -46,6 +46,19 @@ CREATE TABLE IF NOT EXISTS trades_v10 (
 CREATE INDEX IF NOT EXISTS idx_v10_setup_status ON trades_v10(setup_id, status);
 CREATE INDEX IF NOT EXISTS idx_v10_symbol       ON trades_v10(symbol);
 CREATE INDEX IF NOT EXISTS idx_v10_entry_ts     ON trades_v10(entry_ts);
+-- Série da carteira das fichas com `banca_usdt` (uma linha por passada do
+-- runner). Tabela NOVA, sem migração: é dela que sai o rebaixamento do delta.
+CREATE TABLE IF NOT EXISTS carteira_v10 (
+    ts_ms          INTEGER NOT NULL,
+    setup_id       TEXT NOT NULL,
+    config_hash    TEXT NOT NULL,
+    banca_usdt     REAL NOT NULL,
+    realizado_usdt REAL NOT NULL,
+    aberto_usdt    REAL NOT NULL,
+    nocional_usdt  REAL NOT NULL,
+    n_abertas      INTEGER NOT NULL,
+    PRIMARY KEY (setup_id, config_hash, ts_ms)
+);
 """
 
 # Ordem canônica das colunas — o INSERT do dia que houver escrita usa esta

@@ -58,7 +58,8 @@ from v10.runner import _bar_ms
 from v10.schema import TABELA
 
 __all__ = ["JANELA_PADRAO_MS", "LIMITE_TELEGRAM", "NOCIONAL_USDT", "RECENTES",
-           "bloco", "bloco_delta", "build_delta", "build_report", "fatiar",
+           "NOME_EXIBICAO", "bloco", "bloco_carteira", "bloco_delta", "build_delta",
+           "carteira", "build_report", "fatiar",
            "ler_marca", "run", "run_delta"]
 
 # Nocional de referência por trade. Constante declarada, não parâmetro: o dia em
@@ -373,7 +374,251 @@ def bloco_delta(conn, spec, desde_ms, ate_ms, falhas=None, venue_alt=None) -> st
     return "\n".join(L)
 
 
-def build_delta(conn, specs, desde_ms, ate_ms, coleta=None, venue=None) -> str:
+# --- DELTA POR SEÇÕES: fichas com `banca_usdt` (kis_3489_final_4h) -----------
+# LEITURA DO ABERTO (a mesma em todas as seções): o "não realizado" de uma
+# aberta é SÓ a fração restante marcada no último close; o que as parciais dela
+# já executaram entra no REALIZADO. `pnl_corrente_pct` do runner traz as duas
+# coisas somadas (realizado + resto), então aqui o resto é
+# `pnl_corrente_pct - pnl_realizado_pct`. Somar as duas no aberto contaria a
+# parcial duas vezes na banca. Custo: 2 × `custo_bps_por_perna` POR FRAÇÃO —
+# parcial paga a fração dela, o resto paga a fração restante; somadas, 2 pernas
+# cheias, a mesma conta do runner para o trade fechado.
+_ROTULO_MODO = {"shadow": "paper"}
+# Nome de exibição do cabeçalho. Fica AQUI, fora da ficha: na ficha entraria no
+# `config_hash` e trocar um rótulo abriria uma série nova. Sem entrada, sai o
+# `setup_id`.
+NOME_EXIBICAO = {"kis_3489_final_4h": "KIS 34/89 4h"}
+_MOTIVOS = ("stop", "flip")      # sempre impressos; outro motivo só se > 0
+
+
+def _br(x, casas: int = 2, sinal: bool = True) -> str:
+    """Número em formato brasileiro (milhar ponto, decimal vírgula). Com
+    `sinal`, sempre explícito — e o negativo usa o menos tipográfico."""
+    v = float(x)
+    if round(v, casas) == 0:
+        v = 0.0                                   # nada de "−0,00"
+    txt = f"{abs(v):,.{casas}f}".replace(",", "_").replace(".", ",").replace("_", ".")
+    if not sinal:
+        return ("−" if v < 0 else "") + txt
+    return ("−" if v < 0 else "+") + txt
+
+
+def _estado(row) -> dict:
+    try:
+        return json.loads(row["exit_state_json"] or "{}") or {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _perna_bps(row, preco, fracao: float, custo: float) -> float:
+    """Líquido em bps de UMA parcial, já ponderado pela fração dela."""
+    entry = float(row["entry_price"])
+    sg = 1.0 if row["direction"] == "LONG" else -1.0
+    bruto = sg * (float(preco) - entry) / entry * 10_000.0 if entry else 0.0
+    return float(fracao) * (bruto - 2.0 * custo)
+
+
+def _resto_bps(row, custo: float):
+    """Não realizado (bps) da fração restante de uma aberta. `None` sem marca."""
+    s = _estado(row)
+    pct = s.get("pnl_corrente_pct")
+    if pct is None:
+        return None
+    fr = float(s.get("fracao_restante", 1.0))
+    resto_pct = float(pct) - float(s.get("pnl_realizado_pct") or 0.0)
+    return resto_pct * 100.0 - fr * 2.0 * custo
+
+
+def _perna_stop_bps(row, custo: float) -> float:
+    """Líquido (bps) SÓ da perna que saiu no stop: a fração restante na saída.
+
+    `pnl_pct` do trade = realizado das parciais + fração restante × retorno da
+    saída, então a perna é `pnl_pct - pnl_realizado_pct`, menos o custo da
+    fração dela. Sem estado de parciais (outro modelo), é o trade inteiro."""
+    s = _estado(row)
+    fr = float(s.get("fracao_restante", 1.0))
+    perna_pct = float(row["pnl_pct"] or 0.0) - float(s.get("pnl_realizado_pct") or 0.0)
+    return perna_pct * 100.0 - fr * 2.0 * custo
+
+
+def _ler(conn, spec):
+    return conn.execute(
+        "SELECT symbol, direction, entry_ts, entry_price, status, exit_ts, "
+        f"pnl_pct, pnl_bps_liq, exit_state_json FROM {TABELA} "
+        "WHERE setup_id=? AND config_hash=?",
+        (spec.setup_id, spec.config_hash)).fetchall()
+
+
+def carteira(conn, spec, rows=None) -> dict:
+    """Retrato da carteira AGORA, em USDT. Puro: só lê `trades_v10`.
+
+    É a linha que o runner grava em `carteira_v10` a cada passada e a base das
+    seções Carteira/Abertas do delta. Nocional das abertas = `mao_usdt` × fração
+    restante (o tamanho que de fato segue na mão).
+    """
+    ep = spec.exit_params or {}
+    mao = float(ep["mao_usdt"])
+    custo = float(getattr(spec, "custo_bps_por_perna", 0.0) or 0.0)
+    u = mao / 10_000.0
+    rows = _ler(conn, spec) if rows is None else rows
+    realizado = aberto = nocional = 0.0
+    sem_marca = 0
+    abertas = [r for r in rows if r["status"] == "OPEN"]
+    for r in rows:
+        if r["status"] != "OPEN":
+            realizado += _liq(r, custo) * u       # trade inteiro, com parciais
+    for r in abertas:
+        s = _estado(r)
+        realizado += sum(_perna_bps(r, p["preco"], p["fracao"], custo)
+                         for p in s.get("parciais") or []) * u
+        nocional += mao * float(s.get("fracao_restante", 1.0))
+        b = _resto_bps(r, custo)
+        if b is None:
+            sem_marca += 1
+        else:
+            aberto += b * u
+    return {"banca_usdt": float(ep["banca_usdt"]), "realizado_usdt": realizado,
+            "aberto_usdt": aberto, "nocional_usdt": nocional,
+            "n_abertas": len(abertas), "sem_marca": sem_marca}
+
+
+def gravar_carteira(conn, spec, ts_ms) -> None:
+    """Uma linha em `carteira_v10`. Idempotente no `(setup, config, ts_ms)`."""
+    c = carteira(conn, spec)
+    conn.execute(
+        "INSERT OR REPLACE INTO carteira_v10 (ts_ms, setup_id, config_hash, "
+        "banca_usdt, realizado_usdt, aberto_usdt, nocional_usdt, n_abertas) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (int(ts_ms), spec.setup_id, spec.config_hash, c["banca_usdt"],
+         c["realizado_usdt"], c["aberto_usdt"], c["nocional_usdt"],
+         c["n_abertas"]))
+    conn.commit()
+
+
+def rebaixamento(bancas, inicial) -> tuple:
+    """(atual, máximo) em % do pico, sobre a série de banca total.
+
+    O pico começa na banca inicial: a carteira nasce nela, e uma série que já
+    começasse abaixo dela teria a queda inicial escondida."""
+    pico, atual, maximo = float(inicial), 0.0, 0.0
+    for b in bancas:
+        pico = max(pico, float(b))
+        atual = (pico - float(b)) / pico * 100.0 if pico > 0 else 0.0
+        maximo = max(maximo, atual)
+    return atual, maximo
+
+
+def _data_janela(desde_ms, ate_ms) -> str:
+    """`14/11 08:00 → 12:00 UTC`; a data do fim só sai se mudar de dia."""
+    d = datetime.fromtimestamp(int(desde_ms) / 1000, timezone.utc)
+    a = datetime.fromtimestamp(int(ate_ms) / 1000, timezone.utc)
+    fim = a.strftime("%H:%M") if a.date() == d.date() else a.strftime("%d/%m %H:%M")
+    return f"{d.strftime('%d/%m %H:%M')} → {fim} UTC"
+
+
+def _secao(titulo: str) -> str:
+    return f"━━━━━━ {titulo} ━━━━━━"
+
+
+def _lado(rotulo: str, n: int, usdt: float, extra: str = "") -> str:
+    return f"   {rotulo.ljust(5)} {n} → {_br(usdt)}{extra}"
+
+
+def bloco_carteira(conn, spec, desde_ms, ate_ms, falhas=None, venue_alt=None,
+                   guarda=None) -> str:
+    """Delta por seções de uma ficha com `banca_usdt`. Puro: só lê o DB.
+
+    Fechadas e Parciais são da JANELA `(desde, ate]`; Abertas, Carteira e Saúde
+    saem SEMPRE — são o heartbeat. `falhas`/`guarda` `None` = sem informação da
+    run (delta rodado sozinho), impresso como `n/d`, nunca como zero.
+    """
+    ep = spec.exit_params or {}
+    mao, banca0 = float(ep["mao_usdt"]), float(ep["banca_usdt"])
+    custo = float(getattr(spec, "custo_bps_por_perna", 0.0) or 0.0)
+    u = mao / 10_000.0
+    rows = _ler(conn, spec)
+    fechados = [r for r in rows if r["status"] != "OPEN"]
+    abertas = [r for r in rows if r["status"] == "OPEN"]
+    c = carteira(conn, spec, rows)
+
+    modo = _ROTULO_MODO.get(spec.mode, spec.mode)
+    alav = ep.get("alav")
+    L = [f"{NOME_EXIBICAO.get(spec.setup_id, spec.setup_id)} · {modo} · banca {_br(banca0, 0, False)} · "
+         f"mão {_br(mao, 0, False)}" + (f" · {_br(alav, 0, False)}x" if alav else "")]
+
+    # FECHADAS NA JANELA — trade inteiro (inclui as parciais que ele teve)
+    janela = [r for r in fechados if _na_janela(r["exit_ts"], desde_ms, ate_ms)]
+    L += [_secao("FECHADAS NA JANELA"),
+          f"{len(janela)} trades → {_br(sum(_liq(r, custo) for r in janela) * u)} USDT"]
+    for direcao, rot in (("SHORT", "Short"), ("LONG", "Long")):
+        lado = [r for r in janela if r["direction"] == direcao]
+        if not lado:
+            continue
+        mot = [str(r["status"]).lower() for r in lado]
+        nomes = list(_MOTIVOS) + sorted(set(mot) - set(_MOTIVOS))
+        extra = "".join(f" · {m} {mot.count(m)}" for m in nomes
+                        if m in _MOTIVOS or mot.count(m))
+        L.append(_lado(rot, len(lado), sum(_liq(r, custo) for r in lado) * u, extra))
+
+    # PARCIAIS — execuções com ts na janela, SÓ de trades que seguem abertos no
+    # fim dela. Parcial de trade que fechou na janela já está no resultado do
+    # trade inteiro em Fechadas; repeti-la aqui seria contar duas vezes.
+    vivos = [r for r in rows
+             if r["exit_ts"] is None or int(r["exit_ts"]) > int(ate_ms)]
+    pernas = [(p, r) for r in vivos for p in _estado(r).get("parciais") or []
+              if _na_janela(p.get("ts_ms"), desde_ms, ate_ms)]
+    if pernas:
+        fr = [round(float(p["fracao"]) * 100) for p, _ in pernas]
+        grupos = " · ".join(f"{fr.count(f)} × {f}%" for f in sorted(set(fr), reverse=True))
+        tot = sum(_perna_bps(r, p["preco"], p["fracao"], custo) for p, r in pernas) * u
+        L.append(f"Parciais: {len(pernas)} → {_br(tot)} USDT ({grupos})")
+    else:
+        L.append("Parciais: 0")
+
+    # ABERTAS — só a fração restante (ver LEITURA DO ABERTO acima)
+    L += [_secao("ABERTAS"),
+          f"{len(abertas)} posições → {_br(c['aberto_usdt'])} USDT (não realizado)"
+          + (f" · {c['sem_marca']} sem marcação" if c["sem_marca"] else "")]
+    for direcao, rot in (("SHORT", "Short"), ("LONG", "Long")):
+        lado = [r for r in abertas if r["direction"] == direcao]
+        if lado:
+            v = sum(b for b in (_resto_bps(r, custo) for r in lado) if b is not None)
+            L.append(_lado(rot, len(lado), v * u))
+
+    # CARTEIRA
+    banca = banca0 + c["realizado_usdt"] + c["aberto_usdt"]
+    # Custo dos stops: só a perna que saiu no stop (liquidação fica fora — tem
+    # contador próprio na Saúde). A contagem é de trades.
+    stops = [r for r in fechados if str(r["status"]).lower() == "stop"]
+    serie = [row[0] for row in conn.execute(
+        "SELECT banca_usdt + realizado_usdt + aberto_usdt FROM carteira_v10 "
+        "WHERE setup_id=? AND config_hash=? ORDER BY ts_ms",
+        (spec.setup_id, spec.config_hash))] or [banca]
+    dd_atual, dd_max = rebaixamento(serie, banca0)
+    expo = c["nocional_usdt"] / banca if banca > 0 else 0.0
+    margem = c["nocional_usdt"] / float(alav) if alav else None
+    L += [_secao("CARTEIRA"),
+          f"Banca: {_br(banca, 2, False)} USDT ({_br((banca - banca0) / banca0 * 100, 1)}%)",
+          f"Realizado acumulado: {_br(c['realizado_usdt'])} USDT",
+          f"Stops acumulados: {_br(sum(_perna_stop_bps(r, custo) for r in stops) * u)} USDT "
+          f"({len(stops)} stops)",
+          f"Exposição {_br(expo, 1, False)}×"
+          + ("" if margem is None else f" · margem {_br(margem, 0, False)} USDT"),
+          f"Rebaixamento: atual {_br(dd_atual, 1, False)}% · "
+          f"máximo {_br(dd_max, 1, False)}%"]
+
+    # SAÚDE
+    n = len(spec.symbols)
+    coleta = "n/d" if falhas is None else f"{n - len(falhas)}/{n}"
+    liqs = sum(1 for r in fechados if str(r["status"]).lower() == "liquidacao")
+    L += [_secao("SAÚDE"),
+          f"Coleta {coleta} · guarda {'n/d' if guarda is None else len(guarda)}"
+          f" · liquidações {liqs}" + _fmt_venue(venue_alt)]
+    return "\n".join(L)
+
+
+def build_delta(conn, specs, desde_ms, ate_ms, coleta=None, venue=None,
+                guarda=None) -> str:
     """Um `bloco_delta` por setup, com a janela no cabeçalho. NÃO levanta.
 
     `specs` default é :data:`v10.registro.ATIVOS`, não o REGISTRO inteiro: uma
@@ -385,18 +630,27 @@ def build_delta(conn, specs, desde_ms, ate_ms, coleta=None, venue=None) -> str:
     (delta rodado sozinho) não imprime nada — ausência de informação não é
     afirmação de que a coleta foi limpa. `venue` é o par disso para a corretora
     que serviu (``{setup_id: ["SYMBOL@venue", ...]}``), com a mesma leitura da
-    ausência: nada impresso não quer dizer "tudo OKX".
+    ausência: nada impresso não quer dizer "tudo OKX". `guarda` (mesma forma)
+    traz os símbolos barrados pela guarda de :func:`v10.runner._abrir`.
+
+    Ficha com ``exit_params["banca_usdt"]`` sai no formato por SEÇÕES
+    (:func:`bloco_carteira`); as demais seguem no de uma linha por evento.
     """
     if specs is None:
         from v10.registro import ATIVOS
         specs = ATIVOS
     if isinstance(specs, dict):
         specs = list(specs.values())
-    L = [f"⚡ <b>[V10Δ]</b> {_utc_min_of_ms(desde_ms)} → "
-         f"{_utc_min_of_ms(ate_ms)} (UTC)"]
+    L = [f"⚡ <b>[V10Δ]</b> {_data_janela(desde_ms, ate_ms)}"]
     for spec in specs:
         sid = getattr(spec, "setup_id", "?")
         try:
+            if "banca_usdt" in (getattr(spec, "exit_params", None) or {}):
+                L.append(bloco_carteira(conn, spec, desde_ms, ate_ms,
+                                        falhas=(coleta or {}).get(sid),
+                                        venue_alt=(venue or {}).get(sid),
+                                        guarda=(guarda or {}).get(sid)))
+                continue
             L.append(bloco_delta(conn, spec, desde_ms, ate_ms,
                                  falhas=(coleta or {}).get(sid),
                                  venue_alt=(venue or {}).get(sid)))
@@ -530,7 +784,8 @@ def run(now: datetime | None = None, send_fn=None, specs=None, db_path=None,
 
 
 def run_delta(now: datetime | None = None, send_fn=None, specs=None,
-              db_path=None, log=None, coleta=None, venue=None):
+              db_path=None, log=None, coleta=None, venue=None, guarda=None,
+              sem_envio=False):
     """Delta da janela e avanço da marca. -> `(mensagem, enviado)`.
 
     A marca só avança se o envio confirmar. Envio que falha NÃO perde evento: a
@@ -539,7 +794,11 @@ def run_delta(now: datetime | None = None, send_fn=None, specs=None,
     `coleta` (``{setup_id: [símbolos que falharam]}``) vem da MESMA invocação
     que rodou os setups — é por isso que `main` chama as duas coisas juntas. Um
     delta rodado sozinho passa `None` e não afirma nada sobre a coleta. `venue`
-    (mesma forma) traz os símbolos servidos fora da corretora primária.
+    (mesma forma) traz os símbolos servidos fora da corretora primária, e
+    `guarda` os barrados pela guarda.
+
+    `sem_envio`: a mensagem vai para o LOG, nada é enviado e a marca NÃO
+    avança — é a leitura prévia antes de ligar o Telegram.
     """
     log = log or logging.getLogger("v10.relatorio")
     now = now or datetime.now(timezone.utc)
@@ -552,7 +811,10 @@ def run_delta(now: datetime | None = None, send_fn=None, specs=None,
             log.info("[v10] sem marca anterior: janela inicial de "
                      f"{JANELA_PADRAO_MS // 60_000} min")
         msg = build_delta(conn, specs, desde_ms, ate_ms, coleta=coleta,
-                          venue=venue)
+                          venue=venue, guarda=guarda)
+        if sem_envio:
+            log.info("[v10] --sem-envio: delta NAO enviado, marca parada\n" + msg)
+            return msg, False
         ok = _enviar(msg, send_fn, log)
         if ok:
             gravar_marca(conn, ate_ms)

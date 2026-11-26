@@ -150,7 +150,7 @@ def test_build_delta_poe_a_janela_no_cabecalho_e_isola_o_que_estoura(tmp_path):
     txt = relatorio.build_delta(conn, [ruim, _spec(setup_id="bom_4h")],
                                 T0, T0 + BAR_4H)
     assert txt.splitlines()[0].startswith("⚡ <b>[V10Δ]</b> ")
-    assert "→" in txt.splitlines()[0] and "(UTC)" in txt.splitlines()[0]
+    assert "→" in txt.splitlines()[0] and txt.splitlines()[0].endswith(" UTC")
     assert "delta indisponível: KeyError" in txt                # erro VISIVEL
     assert "bom_4h" in txt and "sem eventos" in txt             # o bom saiu
 

@@ -155,7 +155,7 @@ def test_tabela_e_indices_criados(tmp_path):
         "SELECT name FROM sqlite_master WHERE type='table'")}
     indices = {r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'")}
-    assert tabelas == {TABELA}          # nao cria, nao toca, nao migra `trades`
+    assert tabelas == {TABELA, "carteira_v10"}  # nao cria, nao toca, nao migra `trades`
     assert indices == {"idx_v10_setup_status", "idx_v10_symbol", "idx_v10_entry_ts"}
 
 
