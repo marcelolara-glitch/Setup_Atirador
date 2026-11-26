@@ -160,9 +160,11 @@ def test_build_delta_usa_os_ATIVOS_por_padrao(tmp_path):
     # cada 4h e pareceria estar sendo observada.
     from v10.registro import ATIVOS
     txt = relatorio.build_delta(_conn(tmp_path), None, T0, T0 + BAR_4H)
-    assert [s.setup_id for s in ATIVOS] == ["kis_regime_4h", "kis_3489_60t_4h"]
-    assert "kis_regime_4h" in txt and "kis_3489_60t_4h" in txt
-    assert "donchian_a_4h" not in txt              # segue desligada, segue fora
+    # briefing 4 (25/11/2026): só a final roda; as antigas saem do delta
+    assert [s.setup_id for s in ATIVOS] == ["kis_3489_final_4h"]
+    assert "KIS 34/89 4h · paper" in txt          # nome de exibição da final
+    for fora in ("kis_regime_4h", "kis_3489_60t_4h", "donchian_a_4h"):
+        assert fora not in txt, fora
 
 
 # --- a marca da janela --------------------------------------------------------
@@ -246,13 +248,12 @@ def test_donchian_a_esta_desligado_no_registro():
     # Rodar o DONCHIAN-A aqui abriria uma SEGUNDA instancia do mesmo desenho, e
     # o relogio de observacao do Estagio 2 nao pode reiniciar. A ficha fica —
     # documentacao, e o quadro diario a lista com o aviso dela.
-    from v10.registro import (ATIVOS, DONCHIAN_A_4H, KIS_3489_60T_4H,
-                              KIS_REGIME_4H, REGISTRO)
-    assert DONCHIAN_A_4H.executar is False and KIS_REGIME_4H.executar is True
+    from v10.registro import ATIVOS, DONCHIAN_A_4H, KIS_3489_FINAL_4H, REGISTRO
+    assert DONCHIAN_A_4H.executar is False
     assert set(REGISTRO) == {"kis_regime_4h", "kis_3489_60t_4h",
                              "donchian_a_4h", "kis_3489_final_4h"}  # nao sumiu
     assert DONCHIAN_A_4H not in ATIVOS
-    assert ATIVOS == [KIS_REGIME_4H, KIS_3489_60T_4H]
+    assert ATIVOS == [KIS_3489_FINAL_4H]                    # briefing 4
 
 
 # --- deploy -------------------------------------------------------------------

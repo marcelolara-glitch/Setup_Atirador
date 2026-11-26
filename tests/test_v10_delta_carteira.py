@@ -228,10 +228,11 @@ def test_build_delta_despacha_so_quem_tem_banca(tmp_path):
 
 
 def test_ficha_desligada_fora_do_delta_padrao(tmp_path):
-    from v10.registro import KIS_3489_FINAL_4H
-    assert KIS_3489_FINAL_4H.executar is False
+    # briefing 4 (25/11/2026): a final ligou; a 60T é a ficha desligada agora
+    from v10.registro import KIS_3489_60T_4H
+    assert KIS_3489_60T_4H.executar is False
     txt = relatorio.build_delta(connect(str(tmp_path / "j.db")), None, T0, T0 + BAR)
-    assert "kis_3489_final_4h" not in txt
+    assert "kis_3489_60t_4h" not in txt
 
 
 def test_sem_envio_loga_nao_envia_nao_avanca_marca(tmp_path, caplog):

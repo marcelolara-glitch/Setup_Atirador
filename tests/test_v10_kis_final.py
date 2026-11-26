@@ -265,8 +265,8 @@ def test_ficha_declara_o_que_o_briefing_pediu():
                              "gatilho": "toque", "janela_barras": 1000,
                              "mao_usdt": 450, "banca_usdt": 10000, "alav": 5,
                              "mmr": 0.01}
-    assert (s.mode, s.executar, s.estado_ciclo) == ("shadow", False,
-                                                    "proposto")
+    assert (s.mode, s.executar, s.estado_ciclo) == ("shadow", True,
+                                                    "proposto")  # briefing 4
     assert s.custo_bps_por_perna == 5.0
     assert REGISTRO["kis_3489_final_4h"] is s
     assert adaptador("kis_final") is KisFinal and "kis_final" in ADAPTADORES
