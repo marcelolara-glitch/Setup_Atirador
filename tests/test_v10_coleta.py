@@ -57,7 +57,9 @@ def test_config_hash_dos_tres_setups_inalterados(capsys):
         print("\n  config_hash apos o PR da coleta:")
         for sid, h in obtido.items():
             print(f"    {sid:<20} {h}  ({'OK' if esperado.get(sid) == h else 'MUDOU'})")
-    assert obtido == esperado
+    # a kis_3489_final_4h (briefing 2, 25/11) entra sem mexer nas três
+    assert {k: obtido[k] for k in esperado} == esperado
+    assert set(obtido) == set(esperado) | {"kis_3489_final_4h"}
 
 
 # --- 2. backoff e falha nomeada ----------------------------------------------

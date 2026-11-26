@@ -111,12 +111,20 @@ def _atualizar(spec, adap, conn, symbol, velas, agora_ms) -> int:
                 s["pnl_corrente_pct"] = _pnl_pct(
                     novo["exit_params"].get("direction"), float(r["entry_price"]),
                     s["ultimo_close"])
+                # Modelo com parciais (`kis_final`): marca = pernas já
+                # realizadas + o resto no close. Sem a chave, nada muda.
+                if "fracao_restante" in s:
+                    s["pnl_corrente_pct"] = (
+                        float(s.get("pnl_realizado_pct") or 0.0)
+                        + float(s["fracao_restante"]) * s["pnl_corrente_pct"])
             conn.execute(
                 f"UPDATE {TABELA} SET exit_state_json=?, max_runup=?, "
                 "max_drawdown=? WHERE id=?", (json.dumps(s), ru, dd, r["id"]))
             continue
         direction = novo["exit_params"].get("direction")
         pnl = _pnl_pct(direction, float(r["entry_price"]), float(preco))
+        if s.get("pnl_pct") is not None:      # pernas ponderadas (kis_final)
+            pnl = float(s["pnl_pct"])
         conn.execute(
             f"UPDATE {TABELA} SET status=?, exit_ts=?, exit_price=?, pnl_pct=?, "
             "pnl_bps_liq=?, max_runup=?, max_drawdown=?, exit_state_json=? "

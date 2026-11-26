@@ -383,3 +383,9 @@ def adaptador(exit_model: str):
             f"(conhecidos: {sorted(ADAPTADORES)})"
         )
     return ADAPTADORES[exit_model]
+
+
+# `kis_final` mora no módulo dele (porte do motor do sandbox) e se registra em
+# ADAPTADORES ao ser importado. O import fica no FIM para que o ciclo
+# exits <-> kis_final resolva nos dois sentidos de importação.
+import v10.kis_final  # noqa: E402,F401

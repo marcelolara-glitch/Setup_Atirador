@@ -62,11 +62,14 @@ FONTES_INFRA = {"shadow.donchian_a", "shadow.vigia"}
 # Infra do v10: a ficha em si, e o modulo do DONCHIAN-A — que ali NAO e infra, e
 # a instancia em producao da janela pre-registrada, de onde a ficha copia canal,
 # ATR e parametros de saida. Sai desta lista no dia em que a janela fechar.
-FONTES_INFRA_V10 = {"v10.spec", "shadow.donchian_a"}
+FONTES_INFRA_V10 = {"v10.spec", "shadow.donchian_a", "v10.kis_final"}
 # Os DOIS consumidores da lista branca (adendo 2), com a infra que cada um pode
 # alcancar alem das fontes de sinal. Consumidor novo entra aqui de proposito.
+# `v10/kis_final.py` (briefing 2, 25/11): o setup final do KIS 34/89 tira
+# inversao/portao da lista branca e o ATR de Wilder do espelho do DONCHIAN-A.
 CONSUMIDORES = {"shadow/kis_regime.py": FONTES_INFRA,
-                "v10/registro.py": FONTES_INFRA_V10}
+                "v10/registro.py": FONTES_INFRA_V10,
+                "v10/kis_final.py": {"shadow.donchian_a", "v10.exits"}}
 # `shadow/kis_regime.py` teve o cron desativado em 23/08. O v10 nao pode
 # depender do apendice aposentado — nem por constante, nem por funcao.
 APOSENTADO = "shadow.kis_regime"
@@ -296,7 +299,8 @@ def test_kis_regime_importa_de_backtest_so_a_lista_branca():
 # --- adendo 2: a mesma trava vale para o consumidor v10 ----------------------
 def test_os_consumidores_da_lista_branca_sao_estes_dois():
     # Consumidor novo entra EDITANDO esta linha, nunca por import solto.
-    assert set(CONSUMIDORES) == {"shadow/kis_regime.py", "v10/registro.py"}
+    assert set(CONSUMIDORES) == {"shadow/kis_regime.py", "v10/registro.py",
+                                 "v10/kis_final.py"}
     assert all((ROOT / rel).exists() for rel in CONSUMIDORES)
 
 
