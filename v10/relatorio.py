@@ -58,7 +58,8 @@ from v10.runner import _bar_ms
 from v10.schema import TABELA
 
 __all__ = ["JANELA_PADRAO_MS", "LIMITE_TELEGRAM", "NOCIONAL_USDT", "RECENTES",
-           "bloco", "bloco_carteira", "bloco_delta", "build_delta", "carteira", "build_report", "fatiar",
+           "NOME_EXIBICAO", "bloco", "bloco_carteira", "bloco_delta", "build_delta",
+           "carteira", "build_report", "fatiar",
            "ler_marca", "run", "run_delta"]
 
 # Nocional de referência por trade. Constante declarada, não parâmetro: o dia em
@@ -383,6 +384,10 @@ def bloco_delta(conn, spec, desde_ms, ate_ms, falhas=None, venue_alt=None) -> st
 # parcial paga a fração dela, o resto paga a fração restante; somadas, 2 pernas
 # cheias, a mesma conta do runner para o trade fechado.
 _ROTULO_MODO = {"shadow": "paper"}
+# Nome de exibição do cabeçalho. Fica AQUI, fora da ficha: na ficha entraria no
+# `config_hash` e trocar um rótulo abriria uma série nova. Sem entrada, sai o
+# `setup_id`.
+NOME_EXIBICAO = {"kis_3489_final_4h": "KIS 34/89 4h"}
 _MOTIVOS = ("stop", "flip")      # sempre impressos; outro motivo só se > 0
 
 
@@ -422,6 +427,18 @@ def _resto_bps(row, custo: float):
     fr = float(s.get("fracao_restante", 1.0))
     resto_pct = float(pct) - float(s.get("pnl_realizado_pct") or 0.0)
     return resto_pct * 100.0 - fr * 2.0 * custo
+
+
+def _perna_stop_bps(row, custo: float) -> float:
+    """Líquido (bps) SÓ da perna que saiu no stop: a fração restante na saída.
+
+    `pnl_pct` do trade = realizado das parciais + fração restante × retorno da
+    saída, então a perna é `pnl_pct - pnl_realizado_pct`, menos o custo da
+    fração dela. Sem estado de parciais (outro modelo), é o trade inteiro."""
+    s = _estado(row)
+    fr = float(s.get("fracao_restante", 1.0))
+    perna_pct = float(row["pnl_pct"] or 0.0) - float(s.get("pnl_realizado_pct") or 0.0)
+    return perna_pct * 100.0 - fr * 2.0 * custo
 
 
 def _ler(conn, spec):
@@ -526,7 +543,7 @@ def bloco_carteira(conn, spec, desde_ms, ate_ms, falhas=None, venue_alt=None,
 
     modo = _ROTULO_MODO.get(spec.mode, spec.mode)
     alav = ep.get("alav")
-    L = [f"{spec.setup_id} · {modo} · banca {_br(banca0, 0, False)} · "
+    L = [f"{NOME_EXIBICAO.get(spec.setup_id, spec.setup_id)} · {modo} · banca {_br(banca0, 0, False)} · "
          f"mão {_br(mao, 0, False)}" + (f" · {_br(alav, 0, False)}x" if alav else "")]
 
     # FECHADAS NA JANELA — trade inteiro (inclui as parciais que ele teve)
@@ -543,8 +560,12 @@ def bloco_carteira(conn, spec, desde_ms, ate_ms, falhas=None, venue_alt=None,
                         if m in _MOTIVOS or mot.count(m))
         L.append(_lado(rot, len(lado), sum(_liq(r, custo) for r in lado) * u, extra))
 
-    # PARCIAIS — execuções com ts na janela, de abertas e de fechadas
-    pernas = [(p, r) for r in rows for p in _estado(r).get("parciais") or []
+    # PARCIAIS — execuções com ts na janela, SÓ de trades que seguem abertos no
+    # fim dela. Parcial de trade que fechou na janela já está no resultado do
+    # trade inteiro em Fechadas; repeti-la aqui seria contar duas vezes.
+    vivos = [r for r in rows
+             if r["exit_ts"] is None or int(r["exit_ts"]) > int(ate_ms)]
+    pernas = [(p, r) for r in vivos for p in _estado(r).get("parciais") or []
               if _na_janela(p.get("ts_ms"), desde_ms, ate_ms)]
     if pernas:
         fr = [round(float(p["fracao"]) * 100) for p, _ in pernas]
@@ -566,6 +587,8 @@ def bloco_carteira(conn, spec, desde_ms, ate_ms, falhas=None, venue_alt=None,
 
     # CARTEIRA
     banca = banca0 + c["realizado_usdt"] + c["aberto_usdt"]
+    # Custo dos stops: só a perna que saiu no stop (liquidação fica fora — tem
+    # contador próprio na Saúde). A contagem é de trades.
     stops = [r for r in fechados if str(r["status"]).lower() == "stop"]
     serie = [row[0] for row in conn.execute(
         "SELECT banca_usdt + realizado_usdt + aberto_usdt FROM carteira_v10 "
@@ -577,7 +600,7 @@ def bloco_carteira(conn, spec, desde_ms, ate_ms, falhas=None, venue_alt=None,
     L += [_secao("CARTEIRA"),
           f"Banca: {_br(banca, 2, False)} USDT ({_br((banca - banca0) / banca0 * 100, 1)}%)",
           f"Realizado acumulado: {_br(c['realizado_usdt'])} USDT",
-          f"Stops acumulados: {_br(sum(_liq(r, custo) for r in stops) * u)} USDT "
+          f"Stops acumulados: {_br(sum(_perna_stop_bps(r, custo) for r in stops) * u)} USDT "
           f"({len(stops)} stops)",
           f"Exposição {_br(expo, 1, False)}×"
           + ("" if margem is None else f" · margem {_br(margem, 0, False)} USDT"),

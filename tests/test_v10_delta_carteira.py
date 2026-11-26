@@ -5,21 +5,25 @@ Journal sintético com custo 0 e mão 450 (1 bps = 0,045 USDT), conferido à mã
   janela (T0, T0+4h]
   FECHADAS na janela         bps      USDT
     S1 SHORT stop           -300    -13,50
-    S2 SHORT flip           +500    +22,50   (teve parcial 25% @94 na janela)
+    S2 SHORT flip           +500    +22,50   (parcial 25% @94 NA janela: já
+                                               dentro do trade, fora de Parciais)
     S3 SHORT flip           +100     +4,50
-    L1 LONG  stop           -200     -9,00
+    L1 LONG  stop            +50     +2,25   (parcial 50% @106 = +3% realizado;
+                                               resto 0,5 no stop a -5% -> perna
+                                               -250 bps = -11,25)
     L2 LONG  liquidacao    -2000    -90,00
-    -> 5 trades -85,50 · Short 3 +13,50 · Long 2 -99,00
+    -> 5 trades -74,25 · Short 3 +13,50 · Long 2 -87,75
   fechada ANTES (exit = T0)  L0 LONG stop -100 -4,50  (fora: janela semiaberta)
   ABERTAS
     O1 LONG  parcial 50% @103 na janela (+150 bps -> +6,75); resto 0,5 @102 -> +4,50
     O2 SHORT parcial 50% @97 ANTES     (+150 bps -> +6,75); resto 0,5 @104 -> -9,00
     O3 LONG  sem parcial, -1%                                         -> -4,50
     -> 3 posições -9,00 · Short 1 -9,00 · Long 2 +0,00
-  PARCIAIS na janela: O1 (50%) + S2 (25%) = 2 -> +6,75 + 6,75 = +13,50
-  REALIZADO = fechadas (-85,50 - 4,50) + parciais das abertas (6,75 + 6,75) = -76,50
-  BANCA = 10.000 - 76,50 - 9,00 = 9.914,50 (-0,9%)
-  STOPS = S1 + L1 + L0 = -27,00 (3)
+  PARCIAIS na janela, só de quem segue aberto: O1 (50%) = 1 -> +6,75
+  REALIZADO = fechadas (-74,25 - 4,50) + parciais das abertas (6,75 + 6,75) = -65,25
+  BANCA = 10.000 - 65,25 - 9,00 = 9.925,75 (-0,7%)
+  STOPS = só a perna do stop: S1 -13,50 + L1 -11,25 + L0 -4,50 = -29,25 (3)
+          (L1 fechou POSITIVO e ainda assim entra negativo)
   NOCIONAL = 450 × (0,5 + 0,5 + 1) = 900 -> exposição 0,1× · margem 180 (5x)
 """
 
@@ -76,7 +80,9 @@ def _journal(conn, sp):
     _linha(conn, sp, "S2", "SHORT", status="FLIP", exit_ts=dentro, bps=500,
            estado={"parciais": [{"ts_ms": T0 + H, "fracao": 0.25, "preco": 94.0}]})
     _linha(conn, sp, "S3", "SHORT", status="FLIP", exit_ts=T0 + BAR, bps=100)
-    _linha(conn, sp, "L1", "LONG", status="STOP", exit_ts=dentro, bps=-200)
+    _linha(conn, sp, "L1", "LONG", status="STOP", exit_ts=dentro, bps=50,
+           estado={"fracao_restante": 0.5, "pnl_realizado_pct": 3.0,
+                   "parciais": [{"ts_ms": T0 + H, "fracao": 0.5, "preco": 106.0}]})
     _linha(conn, sp, "L2", "LONG", status="LIQUIDACAO", exit_ts=dentro, bps=-2000)
     _linha(conn, sp, "L0", "LONG", status="STOP", exit_ts=T0, bps=-100)
     _linha(conn, sp, "O1", "LONG", estado=_aberta(0.5, 1.5, 2.0,
@@ -95,24 +101,75 @@ def test_secoes_conferidas_a_mao(tmp_path):
     esperado = [
         "kis_teste_4h · paper · banca 10.000 · mão 450 · 5x",
         "━━━━━━ FECHADAS NA JANELA ━━━━━━",
-        "5 trades → −85,50 USDT",
+        "5 trades → −74,25 USDT",
         "   Short 3 → +13,50 · stop 1 · flip 2",
-        "   Long  2 → −99,00 · stop 1 · flip 0 · liquidacao 1",
-        "Parciais: 2 → +13,50 USDT (1 × 50% · 1 × 25%)",
+        "   Long  2 → −87,75 · stop 1 · flip 0 · liquidacao 1",
+        "Parciais: 1 → +6,75 USDT (1 × 50%)",
         "━━━━━━ ABERTAS ━━━━━━",
         "3 posições → −9,00 USDT (não realizado)",
         "   Short 1 → −9,00",
         "   Long  2 → +0,00",
         "━━━━━━ CARTEIRA ━━━━━━",
-        "Banca: 9.914,50 USDT (−0,9%)",
-        "Realizado acumulado: −76,50 USDT",
-        "Stops acumulados: −27,00 USDT (3 stops)",
+        "Banca: 9.925,75 USDT (−0,7%)",
+        "Realizado acumulado: −65,25 USDT",
+        "Stops acumulados: −29,25 USDT (3 stops)",
         "Exposição 0,1× · margem 180 USDT",
-        "Rebaixamento: atual 0,9% · máximo 0,9%",
+        "Rebaixamento: atual 0,7% · máximo 0,7%",
         "━━━━━━ SAÚDE ━━━━━━",
         "Coleta 65/65 · guarda 1 · liquidações 1",
     ]
     assert txt.splitlines() == esperado
+
+
+def _so_um(tmp_path, sym, direction, **kw):
+    conn, sp = connect(str(tmp_path / "j.db")), _spec()
+    _linha(conn, sp, sym, direction, **kw)
+    conn.commit()
+    return relatorio.bloco_carteira(conn, sp, T0, T0 + BAR).splitlines()
+
+
+def test_parcial_de_trade_fechado_na_janela_nao_aparece_em_parciais(tmp_path):
+    est = {"parciais": [{"ts_ms": T0 + H, "fracao": 0.5, "preco": 103.0}]}
+    L = _so_um(tmp_path, "X", "LONG", status="FLIP", exit_ts=T0 + 2 * H,
+               bps=250, estado=est)
+    assert "Parciais: 0" in L
+    assert "1 trades → +11,25 USDT" in L            # a parcial está aqui dentro
+
+
+def test_parcial_de_trade_que_fecha_depois_da_janela_aparece(tmp_path):
+    # Fechou DEPOIS do fim da janela: no fim dela ainda estava aberto.
+    est = {"parciais": [{"ts_ms": T0 + H, "fracao": 0.5, "preco": 103.0}]}
+    L = _so_um(tmp_path, "X", "LONG", status="FLIP", exit_ts=T0 + 2 * BAR,
+               bps=250, estado=est)
+    assert "Parciais: 1 → +6,75 USDT (1 × 50%)" in L
+
+
+def test_stop_depois_de_parcial_conta_so_a_perna_do_stop(tmp_path):
+    # Parcial 50% a +3%, resto no stop a -5%: trade +0,5% (+2,25), perna -11,25.
+    est = {"fracao_restante": 0.5, "pnl_realizado_pct": 3.0,
+           "parciais": [{"ts_ms": T0 - 1, "fracao": 0.5, "preco": 106.0}]}
+    L = _so_um(tmp_path, "X", "LONG", status="STOP", exit_ts=T0 + H, bps=50,
+               estado=est)
+    assert "Stops acumulados: −11,25 USDT (1 stops)" in L
+    assert "1 trades → +2,25 USDT" in L
+
+
+def test_liquidacao_fica_fora_dos_stops(tmp_path):
+    L = _so_um(tmp_path, "X", "LONG", status="LIQUIDACAO", exit_ts=T0 + H,
+               bps=-2000)
+    assert "Stops acumulados: +0,00 USDT (0 stops)" in L
+    assert L[-1].endswith("liquidações 1")
+
+
+def test_nome_de_exibicao_fora_da_ficha(tmp_path):
+    from v10.registro import KIS_3489_FINAL_4H as F
+    conn = connect(str(tmp_path / "j.db"))
+    sp = _spec(setup_id=F.setup_id)
+    assert relatorio.bloco_carteira(conn, sp, T0, T0 + BAR).startswith(
+        "KIS 34/89 4h · paper")
+    # Sem entrada no dicionário: o setup_id.
+    assert relatorio.bloco_carteira(conn, _spec(), T0, T0 + BAR).startswith(
+        "kis_teste_4h · paper")
 
 
 def test_parcial_paga_custo_so_da_sua_fracao(tmp_path):
