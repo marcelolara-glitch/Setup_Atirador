@@ -119,6 +119,9 @@ KIS_REGIME_4H = SetupSpec(
     detector_params=dict(PARAMS_KIS_REGIME),
     custo_bps_por_perna=TAKER_BPS,
     mode="shadow",
+    # DESLIGADA em 25/11/2026 (briefing 4): só a kis_3489_final_4h roda. O
+    # histórico dela no journal fica; `executar` está fora do hash.
+    executar=False,
     estado_ciclo="reprovado_holdout",
     aviso=("hold-out de 65 dias: -769 bps em 66 trades, 1 de 6 tokens positivo, "
            "contra critério travado ANTES do número. SEM stop e SEM cap de "
@@ -219,9 +222,10 @@ KIS_3489_60T_4H = SetupSpec(
     detector_params=dict(PARAMS_KIS_3489),
     custo_bps_por_perna=TAKER_BPS,
     mode="shadow",
-    # LIGADA em 31/08. Carga medida antes: 65 símbolos em 21,0s, RSS de pico
-    # 92 MiB, venue_alt vazio. O cron não muda — ATIVOS é derivado de executar.
-    executar=True,
+    # LIGADA em 31/08 (65 símbolos em 21,0s, RSS de pico 92 MiB). DESLIGADA
+    # em 25/11/2026 (briefing 4): só a kis_3489_final_4h roda. O histórico no
+    # journal fica; `executar` está fora do hash.
+    executar=False,
     estado_ciclo="proposto",
     aviso=("celula do EIXO 1 (varredura de horizonte), ainda NAO validada em "
            "hold-out proprio: o resultado que a motiva saiu da MESMA janela em "
@@ -328,7 +332,7 @@ KIS_3489_FINAL_4H = SetupSpec(
     detector_params=dict(PARAMS_KIS_FINAL),
     custo_bps_por_perna=TAKER_BPS,
     mode="shadow",
-    executar=False,                       # liga no briefing 4
+    executar=True,                        # ligada no briefing 4 (25/11/2026)
     estado_ciclo="proposto",
     aviso=("candidato do sandbox de 23-25/11/2026 (kis_grade, célula "
            "k3_p3-6_f50-25_t0). A janela do forward é por CONTAGEM de trades, "

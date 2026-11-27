@@ -108,8 +108,9 @@ def test_o_registro_tem_as_tres_fichas_e_a_nova_executa():
     # esta em `tests/test_v10_liga_kis_3489.py`.
     assert set(REGISTRO) == {"kis_regime_4h", "kis_3489_60t_4h", "donchian_a_4h",
                              "kis_3489_final_4h"}        # final: briefing 2
-    assert KIS_3489_60T_4H.executar is True
-    assert [s.setup_id for s in reg.ATIVOS] == ["kis_regime_4h", "kis_3489_60t_4h"]
+    # desligada no briefing 4 (25/11/2026): ver tests/test_v10_liga_kis_final.py
+    assert KIS_3489_60T_4H.executar is False
+    assert [s.setup_id for s in reg.ATIVOS] == ["kis_3489_final_4h"]
 
 
 def test_a_ficha_nova_declara_o_que_o_briefing_pediu():

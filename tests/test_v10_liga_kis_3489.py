@@ -95,19 +95,14 @@ def test_a_serie_de_trades_da_ficha_nova_nao_se_parte():
     """O motivo de (1) importar: o hash sob o qual a ficha foi revisada
     DESLIGADA e o mesmo sob o qual ela grava LIGADA. As linhas novas caem na
     mesma serie de `trades_v10` — que e o ponto inteiro de `FORA_DO_HASH`."""
-    assert KIS_3489_60T_4H.executar is True
+    # desligada no briefing 4 (25/11/2026); o hash segue o mesmo
     assert KIS_3489_60T_4H.config_hash == "82488baa3086"
     assert replace(KIS_3489_60T_4H, executar=False).config_hash == "82488baa3086"
 
 
 # --- 2. ATIVOS passa a ter dois setups ----------------------------------------
-def test_ativos_passa_a_ter_dois_setups(capsys):
-    ids = [s.setup_id for s in ATIVOS]
-    with capsys.disabled():
-        print(f"\n  ATIVOS ({len(ids)}): {ids}")
-    assert len(ATIVOS) == 2
-    assert ids == ["kis_regime_4h", "kis_3489_60t_4h"]
-    assert ATIVOS == [KIS_REGIME_4H, KIS_3489_60T_4H]
+# O estado vigente de ATIVOS mora em tests/test_v10_liga_kis_final.py
+# (briefing 4, 25/11/2026: só a kis_3489_final_4h).
 
 
 def test_ativos_e_derivado_do_registro_pelo_proprio_executar():
@@ -128,7 +123,7 @@ def test_donchian_continua_desligado_e_kis_regime_intocada():
     pre-registrada em vez de somar evidencia."""
     assert DONCHIAN_A_4H.executar is False
     assert DONCHIAN_A_4H not in ATIVOS
-    assert KIS_REGIME_4H.executar is True          # ja era True antes do PR
+    assert KIS_REGIME_4H.executar is False         # desligada no briefing 4
 
 
 # --- 3. ligar a coleta nao promove o desenho ----------------------------------
