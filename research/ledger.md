@@ -1443,14 +1443,69 @@ RESSALVA REGISTRADA ANTES DO DADO: O trecho não é virgem no sentido estrito �
 
 O primeiro briefing do sandbox de 14/11 aplicou controles da camada 3 (regressão byte-idêntica, grade fechada como barreira) a uma rodada de camada 2, e mandou aplicar um filtro kNN que nunca foi codificado nem especificado no repo (o dossiê de 31/10 ficou no chat; scratch.md da branch sandbox está vazio desde a abertura). Causa: o REGIME.md e o ledger inteiro não foram lidos antes de escrever. A regra estava registrada (REGIME.md, commit 4534a7b; entrada de 12/09 acima). Briefing substituído pelo v3. Contribui: as instruções do Projeto no claude.ai ainda carregam o briefing de 19/07 com as regras anteriores a 12/09 (pré-registro antes do dado, regressão byte-idêntica), em contradição com o REGIME.md.
 
+## 2026-11-22 — DECISÕES DO MARCELO SOBRE O MÉTODO
+ 
+1. Claude não cria régua de aceite, veredito, trava nem proteção sem pedido. Rodada entrega resultado interpretado + recomendação; seguir, repetir ou parar é decisão do Marcelo.
+2. Carteira de referência para todo teste de setup: `backtest/carteira.py` (sandbox), banca 10.000 USD, 300 USD de nocional por trade, banca registrada no fechamento de cada dia.
+3. Banca isolada por setup e por variante. Carteira consolidada só nas camadas 4/5.
+4. Saída na inversão no toque do gatilho, sem esperar o fechamento (T5s), passa a ser o padrão do KIS.
+5. AIO graduado (TradeIQ): frente encerrada. Linhas das rodadas de 16 a 22/11 em `research/scratch.md` (sandbox).
+
+## 2026-11-23 — EMENDAS DO REGIME (três, decisão do Marcelo)
+ 
+Donas das regras: `research/REGIME.md`, seção "Emendas". Aqui só o apontador.
+- Camada 3: retirado "maioria dos trimestres" do portão de entrada. PR #168, merge `fea89d8`.
+- Regras de estudo são do Marcelo e circunstanciais; instrumentos não recusam simulação por regra de estudo, só por integridade do dado (vazamento de futuro, entrada inválida) ou da máquina (memória). Retirada a regra de janela única do 1h/15m. PR #169, merge `9cef865`. No código do sandbox: recusas de "só 4h", teto de data T1 e `--end` antes do NOVO retiradas; guarda de horário virou aviso; teto de RSS virou `--teto-rss` (sandbox `d6fabce` e `314135d`).
+- Camada 2: retirada a regra do minuto 16. PR #170, merge `2baa15b`.
+CONSEQUÊNCIA NESTE LEDGER: as travas de "gasta-se uma vez só" (21/08 e 14/11) deixam de valer como regra. Ficam como histórico.
+
+## 2026-11-16 a 25/11 — SANDBOX: KIS 34/89 da entrada à saída final
+ 
+Dono dos números por rodada: `research/scratch.md` (sandbox) e os CSVs `logs/kis_grade_resumo_*.csv` na VM. Aqui só o que decidiu o caminho.
+- 22/11 — três setups no período 31/08→14/11 (`backtest/holdout_2026.py`): KIS_E0, KIS_E1-3, AIO_G1. Seguiu o KIS_E1-3 (stop 3 ATR). Números no log `holdout_2026_*` (VM).
+- 23/11 — refino de saída (`kis_refino`, log `kis_refino_20261123_0146`), grade de 84 saídas (`kis_grade`, `_0241`) e sensibilidade do stop (`_0329`): parciais em ATR reduzem a queda e quase zeram o lado contra a tendência; stop 3 ATR é topo local da região 2,5–3,5 (vizinhos 10–20% abaixo no mesmo risco, todos acima de sem parciais). Saída por tempo, filtro de amplitude, limite de posições, entrada sem fechamento e teto de duração: descartados.
+- 23/11 — KIS em 1h (backfill de 1h das 65 moedas desde 17/05/2024, 0 buracos): com indicadores em barras de 1h, negativo em H2 e no NOVO nas 14 células (`_0007`); com indicadores ×4 (mesmo horizonte do 4h), positivo nos três períodos mas abaixo do 4h no mesmo risco (`_0131`). Frente 1h fechada.
+- 24/11 — escada de stop após as parciais (`_0305`): piora no mesmo risco (3/6: 4.048 contra 4.578 USD); perde no episódio de nov/2024. Descartada.
+- PERSISTE: a banca do candidato fica 201 dias abaixo do pico em H2 (05/02→fim de ago/2026) em todas as saídas testadas. É entrada ou mercado, não saída nem tempo gráfico.
+  
+## 2026-11-25 — SETUP FINAL DO KIS 34/89 (decisão do Marcelo)
+ 
+Célula `k3_p3-6_f50-25_t0` do `kis_grade`:
+  KIS 34/89, 4h, 65 moedas (`SYMBOLS_KIS_3489`), entrada no fechamento (E1), confirmação 2,
+  portão EMA21 inclinação ≥ 0,02 ATR/barra em 5 barras + ADX13 ≥ 11;
+  stop inicial 3 × ATR14 fixo; parciais limite 50% em +3 ATR e 25% em +6 ATR;
+  resto na inversão no toque do gatilho; sem teto; 5 bps por perna.
+Dimensionamento (decisão do Marcelo): banca 10.000 USD, mão 450 USD de nocional por trade, queda tolerável 50% da banca, 5x margem isolada. Base: maior queda histórica do candidato 3.383 USD (24%) com mão de 300; exposição máxima ~2,1× a banca com mão de 450.
+Portão da camada 3 (REGIME vigente): positivo nas duas metades — sim; n ≥ 30 — sim; queda tolerável — 50%, definida acima.
+ 
+## 2026-11-25 — CAMADA 0 FECHADA E SETUP FINAL NO v10
+ 
+- Camada 0 (PR #171, merge `c7ca74b`): guarda em `_abrir` (posição OPEN no mesmo símbolo bloqueia nova entrada, qualquer direção, com WARNING e lista `guarda`); janela longa opcional `janela_barras` com coleta paginada da OKX (1.000 velas de 4h conferidas na VM para BTC, XLM e HYPE: sem buraco, sem repetição). Fecha o defeito de 10/09 (semente da EMA89) e o caso XLMUSDT.
+- Setup final no v10 (PRs #172 e #173, merges `5e307da` e `042f011`): motor `v10/kis_final.py` portado do `kis_refino` (sandbox `9bb1f68`); ficha `kis_3489_final_4h`, `config_hash` 79bbf2bcc366.
+- CONFERÊNCIA POR REPROCESSAMENTO (`scripts/paridade_kis_final.py`, log `logs/paridade_kis_final_run_20261126_0114.log`): v10 sobre o NOVO (31/08 16:00 → 14/11 12:00) contra o sandbox (`kis_grade_20261125_0305.csv`): fechados 194/194 iguais, abertos no fim 60/60, max |dif| 0,005 bps (arredondamento do CSV). Com 5x: 0 liquidações em 254. O v10 roda o mesmo setup que foi medido.
+- Mensagem de 4h por seções (PR #174, merge `ed93ba5`): fechadas, parciais de trades abertos, abertas, carteira (banca, realizado, custo acumulado dos stops, exposição, margem, rebaixamento atual e máximo) e saúde; série `carteira_v10` gravada a cada run.
+- PR #175 (merge `d55c127`): `kis_3489_final_4h` executar=True; `kis_regime_4h` e `kis_3489_60t_4h` executar=False (`executar` fora do hash; históricos preservados).
+  
+## 2026-11-27 — FORWARD LIGADO: kis_3489_final_4h (paper)
+ 
+Início: 2026-11-27 00:25 UTC (primeira run, `--sem-envio`): 65/65 moedas, 0 falhas, guarda 0, 0 posições (nenhum sinal na última barra). Cron `cron-atirador-v10` reinstalado às 00:30 UTC; antigos com ponto no nome. Primeira run automática 04:16 UTC.
+Ficha: `kis_3489_final_4h`, `config_hash` 79bbf2bcc366, modo shadow (paper).
+Rampa: as posições entram conforme os sinais aparecem; as primeiras ~2,5 semanas são rampa, não regime (mesma leitura de 30/08).
+Janela (REGIME, camada 3): por contagem de trades com ≥ 2 episódios em direções opostas; data-limite só como teto. O n e o teto são do Marcelo (ver PENDENTES).
+ 
 ## PENDENTES (pré-registrados)
-- Sandbox "KIS: saída + filtro kNN" (briefing v3, 14/11): etapa 1 saída sobre código existente; etapa 2 detector kNN novo. Só dados até 2026-08-26.
-- Hold-out do 34/89 (trava de 14/11): rodar uma vez, depois da lista de finalistas fechada. Antes, completar velas 4h dos 65 tokens até 14/11 (backfill_okx).
-- Camada 0, pré-requisito de qualquer promoção ao v10: guarda de OPEN em _abrir; warmup que converge para EMA89 (store ou paginador; velas() tem teto de 299 barras).
-- v10/registro.py: gravar na ficha 82488baa3086 executar=False e estado_ciclo=invalidado_coletor (decidido em 10/09, nunca aplicado). Hoje só o cron desligado impede a coleta.
-- Instruções do Projeto no claude.ai: trocar o briefing de 19/07 por um apontador para research/REGIME.md (só o Marcelo edita).
-- H-42 e N=240: fila ancorada no DONCHIAN-A, encerrado em 14/11. Decisão do Marcelo se seguem, em que ordem.
-- VM: investigar consumo de memória (swap 841/1023 MB em 14/11).
+- Forward `kis_3489_final_4h`: Marcelo define o n de trades da janela e a data-teto; e se mantém os critérios operacionais de desligamento de 09/09 (run ausente em 2 barras seguidas; falhas > 0 em 3 runs seguidas; símbolo ausente sem registro de delistagem).
+- Conferir a primeira mensagem real do Telegram contra `trades_v10` e `carteira_v10`.
+- `research/scratch.md` (sandbox): gravar as linhas de resultado de 23 a 24/11 que estão nos documentos do Projeto (`arquivo/entrega_2026-11/scratch_kis_*`): refino, grade, stop, 1h, 1h ×4, escada. Hoje o scratch só tem as linhas de entrega desses instrumentos.
+- Registrar aqui os números da rodada `holdout_2026` de 22/11 (log na VM).
+- KIS final em 8h, 12h e 1D na régua H1/H2/NOVO (próxima conversa; exige estender o `kis_grade` para tempos maiores que 4h).
+- Setups novos: reversão à média, trio Supertrend (Hull Suite, AlphaTrend, Pivot Point SuperTrend), par assimétrico, lista pessoal do Marcelo.
+- Quadro diário (00:20 UTC) ainda no formato antigo e listando as 4 fichas; remodelar se o Marcelo quiser.
+- `kis_3489_60t_4h` (82488baa3086): `estado_ciclo=invalidado_coletor` decidido em 10/09 nunca aplicado (só `executar=False`, em 25/11).
+- Parada de H2 do candidato (201 dias abaixo do pico): entrada ou mercado. Sem frente aberta.
+- H-42 e N=240: fila ancorada no DONCHIAN-A, encerrado em 14/11. Decisão do Marcelo se seguem.
+- VM: memória (swap 841/1023 MB em 14/11); disco com os journals antigos — limpeza só se ficar crítico (decisão de 25/11).
 - Auditoria de indexação posicional (replay/sweep/null_model).
 - Hardening do juice (contiguidade por timestamp).
 - Higiene de logs v8.
+ 
