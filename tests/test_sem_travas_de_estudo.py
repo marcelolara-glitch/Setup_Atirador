@@ -201,7 +201,7 @@ def test_teto_rss_parametro_continua_parando_e_volta_ao_default(db, tmp_path):
 
 
 @pytest.mark.parametrize("argv", [["--teto-rss", "0"], ["--teto-rss", "x"],
-                                  ["--tf", "8h"]])
+                                  ["--tf", "6h"]])
 def test_entrada_invalida_aborta_antes_do_store(argv, monkeypatch):
     def proibido(*a, **k):
         raise AssertionError("leu o store")
@@ -246,7 +246,7 @@ def test_escala_converte_duracoes_e_4h_fica_igual():
     assert kr.nomes_simb(e4) == kr.CEL_SIMB
     assert g.tetos_do_tf(e1) == [0, 512, 1024, 1536]
     with pytest.raises(ValueError):
-        kr.escala("8h")
+        kr.escala("6h")
 
 
 def _serie_1h(n, seed=3):

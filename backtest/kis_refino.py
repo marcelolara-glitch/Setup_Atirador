@@ -62,6 +62,9 @@
 # 4h (borda 48, teto 256, T1 6/12/24) viram a mesma duracao em barras do tf
 # (`escala`); os nomes das celulas levam o numero em barras do tf (em 1h:
 # BASE_1024, T1_24/48/96). Conferencias contra kis_saida/holdout_2026 so em 4h.
+# 27/11/2026: 8h/12h/1D agregados do 4h (`le_velas`), fator fracao com
+# duracao arredondada para cima (`em_barras`); NOVO pela barra de fechamento
+# do tf (`janela_tf`).
 #
 # ESCALA DOS INDICADORES (24/11/2026): `escala(tf, ind, r)` / `indicadores`
 # multiplicam por `ind` os comprimentos (EMA 34/89, EMA21 e lookback 5 do
@@ -76,6 +79,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import random
 import sys
 import time
@@ -102,7 +106,7 @@ from backtest.kis_regime import (ATR_LEN, INCL_LOOKBACK,            # noqa: E402
 from backtest.kis_saida import (BAR_4H_MS, COST_FWD_BPS, H1, H2,   # noqa: E402
                                 TETO_ISO, _guarda_relogio, _iso, _ms,
                                 conecta_com_teto)
-from backtest.kis_tf import CTX                                      # noqa: E402
+from backtest.kis_tf import AGREGA, CTX, agregar                      # noqa: E402
 from backtest.kis_trail import (COST_BPS, _dentro, _quarter,      # noqa: E402
                                 _rss_mib, add_teto_rss, define_teto_rss,
                                 teto_rss)
@@ -137,19 +141,68 @@ def escala(tf: str, ind: int = 1, r: float = 1.0) -> dict:
     So muda o que e DURACAO: borda de exclusao do sandbox (BORDA = 48 barras
     de 4h = 8 dias), teto do caminho e do hold (EXT_CAP = 256 de 4h = 42,7
     dias; BASE_<cap>) e as saidas por tempo do T1 (6/12/24 de 4h = 24/48/96
-    h). Em 4h, fator 1: tudo identico ao de antes. tf sem duracao conhecida
-    (fora de excursion._BAR_MS) ou que nao divide 4h -> ValueError."""
+    h). Em 4h, fator 1: tudo identico ao de antes. tf que divide 4h (15m, 1h)
+    tem fator inteiro; tf multiplo de 4h (8h, 12h, 1D, 27/11/2026: velas
+    agregadas do 4h por `le_velas`) tem fator fracao 1/2, 1/3, 1/6, e a
+    duracao em barras arredonda PARA CIMA (`em_barras`: 256 -> 128/86/43).
+    Outro tf -> ValueError."""
+    from fractions import Fraction
     from backtest.excursion import _BAR_MS            # tardio, como no kis_tf
     bar = _BAR_MS.get(tf)
-    if bar is None or BAR_4H_MS % bar:
-        raise ValueError(f"tf '{tf}': use um de {sorted(_BAR_MS)}")
-    f = BAR_4H_MS // bar
+    if bar is None and tf in AGREGA:
+        bar = AGREGA[tf] * BAR_4H_MS
+    if bar is None or (BAR_4H_MS % bar and bar % BAR_4H_MS):
+        raise ValueError(f"tf '{tf}': use um de {sorted(_BAR_MS)} ou "
+                         f"{sorted(AGREGA)}")
+    f = BAR_4H_MS // bar if BAR_4H_MS % bar == 0 else Fraction(BAR_4H_MS, bar)
     if not (isinstance(ind, int) and ind >= 1 and r > 0):
         raise ValueError(f"escala de indicadores {ind!r} / r {r!r}: inteiro "
                          ">= 1 e r > 0")
-    return {"tf": tf, "bar_ms": bar, "fator": f, "borda": BORDA * f,
-            "cap": EXT_CAP * f, "t1_ns": tuple(n * f for n in T1_NS),
+    esc = {"tf": tf, "bar_ms": bar, "fator": f}
+    return {**esc, "borda": em_barras(BORDA, esc),
+            "cap": em_barras(EXT_CAP, esc),
+            "t1_ns": tuple(em_barras(n, esc) for n in T1_NS),
             **indicadores(ind, r)}
+
+
+def em_barras(n4h: int, esc: dict) -> int:
+    """n barras de 4h na MESMA duracao em barras do tf de `esc`. Fator inteiro
+    (15m, 1h, 4h): n x fator, a conta de sempre. Fator fracao (8h, 12h, 1D):
+    arredondado para cima (12h: 256 -> 86)."""
+    f = esc["fator"]
+    return n4h * f if isinstance(f, int) else math.ceil(n4h * f)
+
+
+def agregado(esc: dict):
+    """Barras de 4h por barra do tf quando o tf e agregado do 4h (8h 2, 12h 3,
+    1D 6); None quando o tf vem direto do store."""
+    return AGREGA.get(esc["tf"])
+
+
+def le_velas(conn, sym: str, esc: dict, end_ms: int) -> list:
+    """Velas do simbolo ate end_ms (exclusivo). tf agregado: le o 4h e agrega
+    em memoria por `kis_tf.agregar` (blocos alinhados a 00:00 UTC; bloco
+    incompleto, nas pontas ou por buraco, descartado: nenhuma barra do tf
+    termina depois de end_ms se end_ms e multiplo de 4h). Outro tf: a leitura
+    de sempre."""
+    from backtest.candle_store import read_candles
+    n = agregado(esc)
+    if n is None:
+        return read_candles(conn, sym, esc["tf"], start_ms=None,
+                            end_ms=end_ms - 1)
+    return agregar(read_candles(conn, sym, "4h", start_ms=None,
+                                end_ms=end_ms - 1), n)
+
+
+def janela_tf(esc: dict, janela=JANELA) -> tuple:
+    """Janela de entrada do NOVO no tf. Ate 4h: a de sempre (ts da barra).
+    tf > 4h (27/11/2026): a entrada vale pelo FECHAMENTO da barra do tf, na
+    mesma faixa de fechamentos do 4h (2026-08-31 20:00 .. 2026-11-14 16:00):
+    a janela em ts de abertura recua bar_ms - 4h nas duas pontas."""
+    d = esc["bar_ms"] - BAR_4H_MS
+    if d <= 0 or janela is None:
+        return janela
+    return (janela[0] - d, janela[1] - d)
 
 
 def indicadores(ind: int = 1, r: float = 1.0) -> dict:
@@ -677,21 +730,21 @@ def coleta(conn, symbols: list, tf: str, teto_ms: int, end_ms: int,
     """Uma leitura por simbolo (ate end_ms); sandbox = prefixo ts < teto.
     `conferir` liga a referencia do holdout_2026 (so faz sentido em 4h: o
     `trades_kis` mede em barras de 4h)."""
-    from backtest.candle_store import read_candles
     from backtest.holdout_2026 import novo_cont as nc_h, trades_kis
     esc = esc or escala(tf)
+    jan = janela_tf(esc)
     tr = {m: {c: [] for c in nomes_simb(esc)} for m in ("sandbox", "novo")}
     cont = {m: novo_cont() for m in ("sandbox", "novo")}
     cam = {"sandbox": {}, "novo": {}}
     amp, ref_novo, sem, rss = {}, {}, [], _rss_mib()
     for sym in symbols:
-        cndl = read_candles(conn, sym, tf, start_ms=None, end_ms=end_ms - 1)
+        cndl = le_velas(conn, sym, esc, end_ms)
         if not cndl:
             sem.append(sym)
             continue
         sb = [c for c in cndl if c["ts"] < teto_ms]
         for modo, cv in (("sandbox", sb), ("novo", cndl)):
-            for cel, lst in trades_simbolo(cv, sym, modo, cont[modo],
+            for cel, lst in trades_simbolo(cv, sym, modo, cont[modo], jan,
                                            esc=esc).items():
                 tr[modo][cel].extend(lst)
         if conferir:
@@ -705,7 +758,7 @@ def coleta(conn, symbols: list, tf: str, teto_ms: int, end_ms: int,
                 x[0] += 1 if up else 0
                 x[1] += 1
         cam["sandbox"][sym] = cart.caminho(sb, _ms(H1[0]))
-        cam["novo"][sym] = cart.caminho(cndl, JANELA[0])
+        cam["novo"][sym] = cart.caminho(cndl, jan[0])
         del cndl, sb, a
         rss = _rss_mib()
         if rss > teto_rss():
@@ -761,7 +814,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="KIS 34/89 E1-3: refinamentos "
                                  "e carteira (sandbox)")
     ap.add_argument("--tf", default="4h", type=_arg_tf,
-                    help="tempo grafico (15m, 1h, 4h); default 4h")
+                    help="tempo grafico (15m, 1h, 4h; 8h, 12h, 1D agregados "
+                         "do 4h em memoria); default 4h")
     ap.add_argument("--end", default=END_ISO,
                     help='exclusivo, UTC; default "%(default)s"')
     ap.add_argument("--store", default=str(ROOT / "backtest" / "candles_v9.db"))

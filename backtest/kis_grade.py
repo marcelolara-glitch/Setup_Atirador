@@ -54,6 +54,16 @@
 # contra o kis_refino ligada em todo tf. Em 4h nada muda (gabarito de bytes em
 # tests/test_sem_travas_de_estudo.py).
 #
+# TEMPO GRAFICO MAIOR (27/11/2026): `--tf 8h | 12h | 1D`. Velas agregadas em
+# memoria do 4h (`kis_refino.le_velas` -> `kis_tf.agregar`, blocos alinhados a
+# 00:00 UTC, bloco incompleto descartado). Mesma regra do 1h com fator fracao
+# (1/2, 1/3, 1/6) e duracao arredondada para cima: borda 48 -> 24/16/8,
+# caminho/hold 256 -> 128/86/43, tetos default 128/256/384 -> 64/128/192,
+# 43/86/128, 22/43/64. NOVO: entrada pelo FECHAMENTO da barra do tf, na faixa
+# de fechamentos do 4h (`kis_refino.janela_tf`); H1/H2 seguem pela data do ts
+# da barra, como no 4h. Conferencia contra o kis_refino ligada. Barra do
+# sandbox que termina depois do teto aborta.
+#
 # ESCALA DOS INDICADORES (24/11/2026): `--escala-indicadores F` (default 1 =
 # tudo como antes, gabarito de bytes em 4h e 1h). F > 1 multiplica os
 # comprimentos dos indicadores e do sinal (`kis_refino.indicadores`): EMA 34/89
@@ -206,8 +216,8 @@ def _cel(k: float, p, f, t: int, e: int = 0) -> dict:
 
 def tetos_do_tf(esc: dict) -> list:
     """Default do eixo de teto no tf: TETOS (barras de 4h) na MESMA duracao
-    em barras do tf (1h: 0 512 1024 1536)."""
-    return [t * esc["fator"] for t in TETOS]
+    em barras do tf (1h: 0 512 1024 1536; 12h: 0 43 86 128, para cima)."""
+    return [kr.em_barras(t, esc) for t in TETOS]
 
 
 def celulas(ks=STOPS, parciais=PARCIAIS, fracoes=FRACOES,
@@ -327,18 +337,21 @@ def coleta(conn, symbols: list, tf: str, teto_ms: int, end_ms: int,
     gatilhos UMA vez (o `kr.gatilhos` e causal: o do prefixo sandbox e o
     prefixo do da serie inteira; os trades do sandbox nunca leem alem do
     prefixo), e o BASE/T5s do proprio kis_refino (conferencia e REF_T5s)."""
-    from backtest.candle_store import read_candles
     esc = esc or kr.escala(tf)
+    jan = kr.janela_tf(esc)
     dados, cont, sem = {}, {m: kr.novo_cont() for m in ("sandbox", "novo")}, []
     ref = {"BASE": {"sandbox": [], "novo": []},
            "T5s": {"sandbox": [], "novo": []}}
     rss = _rss_mib()
     for sym in symbols:
-        cndl = read_candles(conn, sym, tf, start_ms=None, end_ms=end_ms - 1)
+        cndl = kr.le_velas(conn, sym, esc, end_ms)
         if not cndl:
             sem.append(sym)
             continue
         n_sb = bisect_left([c["ts"] for c in cndl], teto_ms)
+        if n_sb and cndl[n_sb - 1]["ts"] + esc["bar_ms"] > teto_ms:
+            raise SystemExit(f"[kis_grade] {sym}: barra do sandbox termina "
+                             f"depois do teto {TETO_ISO}; ABORTADO.")
         v = Velas(cndl)
         x = kr._ind(esc)
         gL, gS, _st = kr.gatilhos(cndl, None, *x["ema"], x["conf"])
@@ -346,10 +359,12 @@ def coleta(conn, symbols: list, tf: str, teto_ms: int, end_ms: int,
         d = {"v": v, "n_sb": n_sb}
         for modo, cv in (("sandbox", cndl[:n_sb]), ("novo", cndl)):
             d[modo] = {"evs": [_ev_compacto(e) for e in
-                               kr.eventos(cv, modo, cont[modo], esc=esc)],
+                               kr.eventos(cv, modo, cont[modo], jan,
+                                          esc=esc)],
                        "gL": gL, "gS": gS}
             if conferir:
-                r = kr.trades_simbolo(cv, sym, modo, kr.novo_cont(), esc=esc)
+                r = kr.trades_simbolo(cv, sym, modo, kr.novo_cont(), jan,
+                                      esc=esc)
                 ref["BASE"][modo].extend(r["BASE"])
                 ref["T5s"][modo].extend(r["T5s"])
                 del r
@@ -363,7 +378,7 @@ def coleta(conn, symbols: list, tf: str, teto_ms: int, end_ms: int,
                               f"apos {sym}; PARANDO.")
     cam = {"sandbox": {s: d["v"].prefixo(d["n_sb"]).caminho(_ms(H1[0]))
                        for s, d in dados.items()},
-           "novo": {s: d["v"].caminho(JANELA[0]) for s, d in dados.items()}}
+           "novo": {s: d["v"].caminho(jan[0]) for s, d in dados.items()}}
     return {"dados": dados, "cont": cont, "sem": sem, "ref": ref, "cam": cam,
             "rss": rss}
 
@@ -378,13 +393,13 @@ def mede_r(conn, symbols: list, tf: str, ind: int,
     from backtest.candle_store import read_candles
     from backtest.excursion import _wilder_atr
     from backtest.kis_saida import BAR_4H_MS
-    bar_ms = kr.escala(tf)["bar_ms"]
+    esc = kr.escala(tf)
+    bar_ms = esc["bar_ms"]
     n_tf, ini, fim = kr.ATR_LEN * ind, _ms(ini_iso), _ms(fim_iso)
     rs, fora = array("d"), []
     for sym in symbols:
         c4 = read_candles(conn, sym, "4h", start_ms=None, end_ms=fim - 1)
-        ct = read_candles(conn, sym, tf, start_ms=None,
-                          end_ms=fim - 1)
+        ct = kr.le_velas(conn, sym, esc, fim)
         if not c4 or not ct:
             fora.append(sym)
             continue
@@ -557,7 +572,8 @@ def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="KIS 34/89: grade de "
                                  "sensibilidade das saidas (sandbox)")
     ap.add_argument("--tf", default="4h", type=kr._arg_tf,
-                    help="tempo grafico (15m, 1h, 4h); default 4h")
+                    help="tempo grafico (15m, 1h, 4h; 8h, 12h, 1D agregados "
+                         "do 4h em memoria); default 4h")
     ap.add_argument("--end", default=END_ISO,
                     help='exclusivo, UTC; default "%(default)s"')
     ap.add_argument("--store", default=str(ROOT / "backtest" / "candles_v9.db"))
@@ -692,9 +708,17 @@ def main(argv=None) -> int:
                f"EMA 34/89, ATR14, ADX13, confirmacao 2 e portao 0.02 "
                f"em barras de {args.tf}; stop e parciais em ATR14 do tf. "
                f"Conferencia contra o kis_refino ligada (o mesmo `eventos` e "
-               f"`trades_simbolo` com a mesma escala). ") +
-            f"Fechamento diario da "
-            f"carteira: barra das {24 - esc['bar_ms'] // 3_600_000}:00 UTC.")
+               f"`trades_simbolo` com a mesma escala). ")
+            + (f"Velas de {args.tf} agregadas em memoria de "
+               f"{kr.agregado(esc)} velas de 4h (`kis_tf.agregar`, blocos "
+               f"alinhados a 00:00 UTC; bloco incompleto descartado). NOVO: "
+               f"entrada pelo fechamento da barra de {args.tf}, fechamentos "
+               f"{_iso(JANELA[0] + kr.BAR_4H_MS)}.."
+               f"{_iso(JANELA[1] + kr.BAR_4H_MS)} UTC. "
+               if kr.agregado(esc) else "") +
+            "Fechamento diario da carteira: "
+            + ("a propria barra diaria." if esc["bar_ms"] == 86_400_000 else
+               f"barra das {24 - esc['bar_ms'] // 3_600_000}:00 UTC."))
     kr.log_vazios(log, ativos, args.end)
     try:
         mx = conn.execute("SELECT MAX(ts) FROM candles").fetchone()[0]
